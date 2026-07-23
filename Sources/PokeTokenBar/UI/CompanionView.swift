@@ -429,7 +429,7 @@ struct DexSummaryHeader: View {
     }
 }
 
-/// 도감 — 잡은 라인(초기→최종 전부) 목록.
+/// 도감 — 현재 키우는 포켓몬과 졸업해 영구 보존된 라인 목록.
 struct CollectionView: View {
     let store: CompanionStore
     @State private var selectedRarity: Rarity?
@@ -504,6 +504,14 @@ private struct DexEntryRow: View {
                     .padding(.horizontal, 5).padding(.vertical, 1)
                     .background(rarityColor(entry.rarity)).foregroundStyle(.white)
                     .clipShape(Capsule())
+                if store.isActiveDexEntry(entry) {
+                    Text(store.l.dexRaising.uppercased())
+                        .font(.system(size: 8, weight: .bold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.accentColor.opacity(0.14))
+                        .foregroundStyle(Color.accentColor)
+                        .clipShape(Capsule())
+                }
                 if entry.isShiny { Text("✨").font(.system(size: 10)) }
                 Spacer()
                 if let nature = entry.nature {
