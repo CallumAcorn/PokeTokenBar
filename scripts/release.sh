@@ -58,11 +58,11 @@ doc_check() {
       echo "  ✗ UI 를 바꾼 신규 기능이 있는데 assets/ 에 **새로 추가된** 파일이 없습니다:"
       echo "$ui_feats" | sed 's/^/       /'
       echo "     → 새 화면·새 표면이면 전용 스크린샷을 만들어 README(ko/ja 포함)와 랜딩에 넣으세요."
-      echo "     → 이미지가 정말 불필요한 기능이면: PTB_ALLOW_MISSING_FEATURE_ASSET=1 로 사유를 알고 통과."
-      # 경고(return 1, y/N 프롬프트)와 달리 return 2 는 호출부에서 즉시 중단시킨다 —
-      # 이 게이트가 `yes y` 나 습관적 y 로 흘러가면 존재 이유가 없다.
-      [[ "${PTB_ALLOW_MISSING_FEATURE_ASSET:-0}" == "1" ]] || return 2
-      echo "     (PTB_ALLOW_MISSING_FEATURE_ASSET=1 — 통과)"
+      echo "     → 이미지가 정말 불필요하다고 판단되면 그 판단을 커밋에 남기세요(feat 가 아닌 타입으로)."
+      # 예외 없음. 경고(return 1, y/N 프롬프트)와 달리 return 2 는 호출부에서 즉시 중단시킨다 —
+      # 환경변수 우회구를 두면 결국 그 변수가 습관이 된다. 통과시키려면 에셋을 만들거나
+      # 커밋 타입을 바꿔야 한다(= 판단을 기록으로 남겨야 한다).
+      return 2
     fi
   fi
   cat <<'CHECK'
