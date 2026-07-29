@@ -44,6 +44,13 @@ PokeTokenBar는 당신이 이미 태우고 있는 AI 코딩 토큰(Claude Code �
 
 <table>
 <tr>
+<td width="45%" align="center"><img src="assets/floating-pet.gif" width="340" alt="바탕화면 플로팅 펫 — 호버 콜아웃과 우클릭 메뉴"></td>
+<td width="55%" valign="middle">
+<h3>🐾 바탕화면에 두기</h3>
+파트너를 메뉴바 밖 바탕화면으로 꺼내 48~192px 원하는 크기로 둘 수 있어요. 호버하면 오늘 사용량, 클릭하면 팝오버, 우클릭하면 메뉴, 드래그로 위치 이동 — 한도 알림은 펫 위 말풍선으로도 떠요.
+</td>
+</tr>
+<tr>
 <td width="55%" valign="middle">
 <h3>메뉴바 속 파트너</h3>
 움직이는 Gen-V 스프라이트가 오늘 토큰 합계(compact, 예: <code>200.7M</code>) 옆에 삽니다. 오늘 비용(<code>$</code>)이나 공식 한도 <code>%</code> 를 더하거나 — 전부 꺼서 캐릭터만 남길 수도 있어요.
