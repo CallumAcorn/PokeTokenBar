@@ -14,6 +14,14 @@ final class LocalUsageReaderTests: XCTestCase {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try? lines.joined(separator: "\n").write(to: folder.appendingPathComponent(name), atomically: true, encoding: .utf8)
     }
+    private func copyCodexForkFixture(_ name: String, to dir: URL) throws -> URL {
+        let source = try XCTUnwrap(
+            Bundle.module.url(forResource: name, withExtension: "jsonl", subdirectory: "CodexFork")
+        )
+        let destination = dir.appendingPathComponent("\(name).jsonl")
+        try FileManager.default.copyItem(at: source, to: destination)
+        return destination
+    }
 
     // MARK: ModelPricing
 
@@ -68,11 +76,28 @@ final class LocalUsageReaderTests: XCTestCase {
 
     // MARK: Codex 파싱 (input=total−cached, cacheRead=cached, output, cacheWrite=0)
 
+    private func codexLine(ts: String, input: Int = 1_000, cached: Int = 200,
+                           output: Int = 50, reasoning: Int = 10, cacheWrite: Int = 0) -> String {
+        return """
+        {"type":"event_msg","timestamp":"\(ts)","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":\(input),"cached_input_tokens":\(cached),"cache_write_input_tokens":\(cacheWrite),"output_tokens":\(output),"reasoning_output_tokens":\(reasoning),"total_tokens":\(input + output)}}}}
+        """
+    }
+
+    private func forkedSessionMeta(ts: String) -> String {
+        """
+        {"type":"session_meta","timestamp":"\(ts)","payload":{"id":"child","forked_from_id":"parent","parent_thread_id":"parent","thread_source":"subagent"}}
+        """
+    }
+
+    private func forkedSubagentSessionMeta(ts: String) -> String {
+        """
+        {"type":"session_meta","timestamp":"\(ts)","payload":{"id":"child","parent_thread_id":"parent","thread_source":"subagent","cli_version":"0.145.0"}}
+        """
+    }
+
     func testCodexParsing() {
         let dir = tempDir()
-        let line = """
-        {"type":"event_msg","timestamp":"2026-06-30T11:00:00.000Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":1050}}}}
-        """
+        let line = codexLine(ts: "2026-06-30T11:00:00.000Z")
         write([line], to: dir, name: "rollout-x.jsonl", sub: "2026/06/30")
         let entries = LocalUsageReader.codexEntries(modifiedSince: .distantPast, root: dir)
         XCTAssertEqual(entries.count, 1)
@@ -81,6 +106,95 @@ final class LocalUsageReaderTests: XCTestCase {
         XCTAssertEqual(e.cacheRead, 200)
         XCTAssertEqual(e.output, 50)
         XCTAssertEqual(e.cacheWrite, 0)
+    }
+
+    func testCodexForkedRolloutDropsLeadingReplayBurst() {
+        let dir = tempDir()
+        write([
+            forkedSessionMeta(ts: "2026-07-29T01:00:00.000Z"),
+            codexLine(ts: "2026-07-29T01:00:00.010Z", output: 50),
+            codexLine(ts: "2026-07-29T01:00:00.020Z", output: 51),
+            codexLine(ts: "2026-07-29T01:00:03.000Z", output: 52),
+        ], to: dir, name: "rollout-child.jsonl", sub: "child")
+
+        let entries = LocalUsageReader.codexEntries(modifiedSince: .distantPast, root: dir)
+
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].output, 52)
+    }
+
+    func testCodexForkDropsReplayBurstThatStartsAfterMetadataDelay() {
+        let dir = tempDir()
+        write([
+            forkedSubagentSessionMeta(ts: "2026-07-29T01:00:00.000Z"),
+            codexLine(ts: "2026-07-29T01:00:03.000Z", output: 1),
+            codexLine(ts: "2026-07-29T01:00:03.010Z", output: 2),
+            codexLine(ts: "2026-07-29T01:00:03.020Z", output: 3),
+            codexLine(ts: "2026-07-29T01:00:43.000Z", output: 99),
+        ], to: dir, name: "rollout-child.jsonl", sub: "child")
+
+        let entries = LocalUsageReader.codexEntries(modifiedSince: .distantPast, root: dir)
+
+        XCTAssertEqual(entries.map(\.output), [99])
+    }
+
+    func testCodexForkKeepsRealTurnsAfterReplayBurstWhenTheyAreLessThanTwoSecondsApart() {
+        let dir = tempDir()
+        write([
+            forkedSubagentSessionMeta(ts: "2026-07-29T01:00:00.000Z"),
+            codexLine(ts: "2026-07-29T01:00:00.010Z", output: 1),
+            codexLine(ts: "2026-07-29T01:00:00.020Z", output: 2),
+            codexLine(ts: "2026-07-29T01:00:00.030Z", output: 3),
+            codexLine(ts: "2026-07-29T01:00:01.530Z", output: 11),
+            codexLine(ts: "2026-07-29T01:00:03.030Z", output: 22),
+            codexLine(ts: "2026-07-29T01:00:04.530Z", output: 33),
+            codexLine(ts: "2026-07-29T01:01:00.000Z", output: 44),
+        ], to: dir, name: "rollout-child.jsonl", sub: "child")
+
+        let entries = LocalUsageReader.codexEntries(modifiedSince: .distantPast, root: dir)
+
+        XCTAssertEqual(entries.map(\.output), [11, 22, 33, 44])
+    }
+
+    func testCodexForkDetectsMetadataAfterLeadingNonTokenRecord() {
+        let dir = tempDir()
+        write([
+            #"{"type":"turn_context","timestamp":"2026-07-29T01:00:00.000Z","payload":{}}"#,
+            forkedSubagentSessionMeta(ts: "2026-07-29T01:00:00.001Z"),
+            codexLine(ts: "2026-07-29T01:00:00.010Z", output: 1),
+            codexLine(ts: "2026-07-29T01:00:03.000Z", output: 99),
+        ], to: dir, name: "rollout-child.jsonl", sub: "child")
+
+        let entries = LocalUsageReader.codexEntries(modifiedSince: .distantPast, root: dir)
+
+        XCTAssertEqual(entries.map(\.output), [99])
+    }
+
+    func testCodexManualForkFixtureKeepsOnlyPostReplayUsage() throws {
+        let child = try copyCodexForkFixture("child", to: tempDir())
+        let entries = LocalUsageReader.parseCodexFile(child, fmt: LocalUsageReader.localDayFormatter())
+
+        // 실제 `codex fork` 파일: child meta(forked_from_id only) 뒤에 parent meta와
+        // 8개 부모 token_count가 재삽입된다. 이후 0 토큰 이벤트는 보존하고, 새 turn만 집계한다.
+        XCTAssertEqual(entries.map(\.total), [0, 28_138])
+    }
+
+    func testCodexManualForkFixtureKeepsParentAndChildUsageOnTheirOwnDays() throws {
+        let dir = tempDir()
+        let parent = try copyCodexForkFixture("parent", to: dir)
+        _ = try copyCodexForkFixture("child", to: dir)
+        let fmt = LocalUsageReader.localDayFormatter()
+        let parentEntries = LocalUsageReader.parseCodexFile(parent, fmt: fmt)
+        let parentDay = try XCTUnwrap(parentEntries.first?.localDay)
+        let entries = LocalUsageReader.codexEntries(modifiedSince: .distantPast, root: dir)
+        let childDay = try XCTUnwrap(entries.first { $0.total == 28_138 }?.localDay)
+
+        XCTAssertEqual(LocalUsageReader.daily(entries: entries, localDay: parentDay)?.totalTokens, 312_814)
+        XCTAssertEqual(LocalUsageReader.daily(entries: entries, localDay: childDay)?.totalTokens, 28_138)
+        XCTAssertEqual(
+            LocalUsageReader.period(entries: entries, periodKey: "fixture", fromDay: parentDay, toDay: childDay).totalTokens,
+            340_952
+        )
     }
 
     // MARK: 기간 집계 + 활성 블록
