@@ -45,6 +45,25 @@ doc_check() {
       echo "     → 변경된 화면이면 assets 스크린샷 재생성 (README.md/ko/ja 각 언어)."
       warn=1
     fi
+
+    # 새 UI 기능 → **신규** 에셋 커버리지 (하드 게이트).
+    # 위 staleness 는 "에셋이 하나라도 바뀌었나"만 본다 → 기존 스크린샷만 다시 그려도 통과한다.
+    # 2.5.0 이 정확히 그 경로로 새 나갔다: 플로팅 펫(신규 기능)이 README·랜딩에 이미지 하나 없이 배포됐고,
+    # settings.png 를 갱신해 둔 탓에 위 검사는 조용히 통과했다. 신규 기능은 신규 에셋을 요구한다.
+    local ui_feats new_assets
+    ui_feats=$(git log "$last_tag"..HEAD --format='%s' -- 'Sources/PokeTokenBar/UI/' 2>/dev/null \
+                 | grep -iE '^(feat|feature)[(:]' || true)
+    new_assets=$(git diff --name-only --diff-filter=A "$last_tag"..HEAD -- 'assets/' 2>/dev/null)
+    if [[ -n "$ui_feats" && -z "$new_assets" ]]; then
+      echo "  ✗ UI 를 바꾼 신규 기능이 있는데 assets/ 에 **새로 추가된** 파일이 없습니다:"
+      echo "$ui_feats" | sed 's/^/       /'
+      echo "     → 새 화면·새 표면이면 전용 스크린샷을 만들어 README(ko/ja 포함)와 랜딩에 넣으세요."
+      echo "     → 이미지가 정말 불필요한 기능이면: PTB_ALLOW_MISSING_FEATURE_ASSET=1 로 사유를 알고 통과."
+      # 경고(return 1, y/N 프롬프트)와 달리 return 2 는 호출부에서 즉시 중단시킨다 —
+      # 이 게이트가 `yes y` 나 습관적 y 로 흘러가면 존재 이유가 없다.
+      [[ "${PTB_ALLOW_MISSING_FEATURE_ASSET:-0}" == "1" ]] || return 2
+      echo "     (PTB_ALLOW_MISSING_FEATURE_ASSET=1 — 통과)"
+    fi
   fi
   cat <<'CHECK'
   ─ 수동 체크리스트 (내용 변경 시 갱신) ─────────────────────────────
@@ -74,7 +93,12 @@ echo "▶ 1/8 릴리스 전 테스트 게이트"
 ./scripts/test-gate.sh >/dev/null || { echo "✗ test-gate 실패 — 중단"; exit 1; }
 echo "  ✓ 통과"
 
-if ! doc_check; then
+# set -e 하에서 `doc_check; rc=$?` 는 실패 즉시 종료돼 rc 를 못 읽는다.
+doc_rc=0; doc_check || doc_rc=$?
+if [[ $doc_rc -eq 2 ]]; then
+  echo "중단 — 새 기능에 필요한 에셋을 먼저 만드세요(프롬프트로 넘길 수 없는 게이트)."
+  exit 1
+elif [[ $doc_rc -ne 0 ]]; then
   read -r -p "  문서 경고가 있습니다. 그래도 계속? [y/N] " a
   [[ "$a" == "y" || "$a" == "Y" ]] || { echo "중단 — 문서 먼저 갱신하세요."; exit 1; }
 fi
