@@ -284,6 +284,185 @@ enum LocalUsageReader {
         return entries
     }
 
+    // MARK: Grok 파싱
+
+    /// 세션 디렉토리에서 토큰이 담긴 유일한 파일. `chat_history.jsonl` 의 대화 아이템엔 usage 필드가
+    /// 없고 `events.jsonl` 은 턴 결과만 남기므로, 같이 스캔하면 빈 blob 으로 캐시만 불린다.
+    static let grokUpdatesFileName = "updates.jsonl"
+
+    /// Grok CLI 세션 루트. CLI 와 같은 규칙으로 `$GROK_HOME` 을 우선한다.
+    static var grokSessionsDir: URL {
+        if let home = ProcessInfo.processInfo.environment["GROK_HOME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !home.isEmpty {
+            return URL(fileURLWithPath: home).appendingPathComponent("sessions")
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".grok/sessions")
+    }
+
+    /// Grok CLI 세션 파일(`~/.grok/sessions/<id>/updates.jsonl`) 파싱.
+    ///
+    /// 턴이 끝날 때마다 durable 로 append 되는 `sessionUpdate:"turn_completed"` 라인의 `usage`
+    /// (= 그 프롬프트 한 턴의 사용량)만 읽는다. 라인 봉투는
+    /// `{"timestamp":<초>,"method":"_x.ai/session/update","params":{"sessionId":…,"update":{…},"_meta":{…}}}`.
+    ///
+    /// 같은 파일의 다른 토큰 필드(`_meta.totalTokens`, auto-compact/subagent 진행 이벤트)는 *컨텍스트
+    /// 창 크기*라 사용량이 아니다 — 섞으면 합계가 크게 부풀어 오른다. `turn_completed` 의 `usage` 만 본다.
+    /// rewind 로 버려진 분기의 턴도 그대로 센다: 되돌려도 그 토큰은 이미 청구됐다(대화 재생과 다른 질문).
+    ///
+    /// 토큰 매핑 — `Entry.total == usage.totalTokens` 가 성립하게 맞춘다:
+    /// - `inputTokens`(camelCase)는 **캐시 읽기를 포함한** 전체 프롬프트 →
+    ///   `input = inputTokens − cachedReadTokens`, `cacheRead = cachedReadTokens`.
+    /// - `input_tokens`(snake_case)는 **이미 캐시 제외** → 그대로 input. 두 표기의 의미가 서로
+    ///   달라서 값 스펠링으로 분기한다(같은 값으로 취급하면 캐시분을 두 번 뺀다).
+    /// - `output = outputTokens` (reasoning 은 output 에 포함), `cacheWrite = 0`
+    ///   (Grok 은 캐시 쓰기를 prompt 토큰에 접어 넣는다).
+    static func parseGrokFile(_ url: URL, fmt: DateFormatter) -> [Entry] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        var out: [Entry] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            // updates.jsonl 은 스트리밍 청크까지 전부 라인으로 남는다(세션당 수만 라인) →
+            // JSON 파싱 전에 문자열로 걸러낸다.
+            guard line.contains("turn_completed") else { continue }
+            autoreleasepool {   // JSONSerialization 의 autoreleased 객체를 라인마다 배출
+                if let e = parseGrokLine(String(line), fmt: fmt) { out.append(e) }
+            }
+        }
+        return dedupKeepMax(out)
+    }
+
+    static func grokEntries(modifiedSince: Date, root: URL? = nil) -> [Entry] {
+        let fmt = localDayFormatter()
+        var entries: [Entry] = []
+        for file in jsonlFiles(in: root ?? grokSessionsDir, modifiedSince: modifiedSince)
+        where isGrokUsageFile(file) {
+            entries.append(contentsOf: parseGrokFile(file, fmt: fmt))
+        }
+        // fork 세션이 부모 updates 를 복사해도 턴 id 가 같아 한 번만 남는다(전역 dedup).
+        return dedupKeepMax(entries)
+    }
+
+    /// 집계 대상 파일인가 — 사용량이 담긴 `updates.jsonl` 이고, 서브에이전트 세션이 아닌 것.
+    ///
+    /// 서브에이전트 세션의 토큰은 부모 턴 usage 에 이미 접혀 들어오므로(RecordSubagentUsage) 여기서
+    /// 또 세면 이중 집계다. CLI 가 세션 목록에서 숨기는 것과 같은 판정(`session_kind` 접두사)을 쓴다.
+    ///
+    /// **파일 선택 단계에서 판정한다** — 파싱 결과 캐시(blob)는 `updates.jsonl` 의 mtime·size 로만
+    /// 무효화되는데 이 판정의 근거는 옆 파일(`summary.json`)이다. 파싱 안에서 걸러내면 "summary 가
+    /// 아직 session_kind 를 못 쓴 시점에 파싱된" 서브에이전트 세션이 blob 에 그대로 굳어 이중집계가
+    /// 영구화된다(파일이 더 안 바뀌므로 캐시가 계속 히트). 선택 단계는 매 새로고침 재평가돼 자연 복구된다.
+    ///
+    /// 알려진 한계: 부모 턴이 끝난 뒤 완료된 서브에이전트는 부모 프롬프트 원장이 아니라 세션 원장에만
+    /// 접히므로 그만큼 과소집계된다. 매 턴 도는 이중집계보다 작아서 택한 쪽이고, 그 경우 CLI 는 부모
+    /// bill 에 usageIsIncomplete 를 세워 비용도 신뢰 대상에서 빠진다.
+    static func isGrokUsageFile(_ url: URL) -> Bool {
+        guard url.lastPathComponent == grokUpdatesFileName else { return false }
+        return !grokSessionIsSubagent(url.deletingLastPathComponent())
+    }
+
+    /// `summary.json` 의 `session_kind` 가 서브에이전트 계열(subagent/subagent_fork/subagent_resume)인가.
+    /// 파일이 없거나 못 읽으면 사용자 세션으로 본다 — CLI 는 세션 생성 시 summary 를 먼저 쓰므로
+    /// 부재는 "턴이 아직 없는 새 세션"(= 셀 것도 없음)이다.
+    private static func grokSessionIsSubagent(_ sessionDir: URL) -> Bool {
+        // `hidden` 은 쓰지 않는다 — 사용자가 직접 숨긴 정상 세션까지 빠져 과소집계가 된다.
+        // 서브에이전트는 생성 시점에 session_kind 가 반드시 찍히므로 이 신호만으로 충분하다.
+        guard let data = try? Data(contentsOf: sessionDir.appendingPathComponent("summary.json")),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let kind = obj["session_kind"] as? String else { return false }
+        return kind.hasPrefix("subagent")
+    }
+
+    private static func parseGrokLine(_ line: String, fmt: DateFormatter) -> Entry? {
+        // 디스크 라인은 봉투 → 알림 → 업데이트 세 겹이다:
+        //   {timestamp:<초>, method:"_x.ai/session/update", params:{sessionId, update:{sessionUpdate,…}, _meta}}
+        // `method` 없는 구형 라인은 알림 그 자체(봉투 없음)라 한 겹으로 받는다.
+        guard let data = line.data(using: .utf8),
+              let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let notification = (envelope["params"] as? [String: Any]) ?? envelope
+        guard let update = notification["update"] as? [String: Any],
+              (update["sessionUpdate"] as? String) == "turn_completed",
+              let usage = update["usage"] as? [String: Any] else { return nil }
+        let meta = notification["_meta"] as? [String: Any]
+        // 재생 표시가 붙은 라인은 건너뛴다. 주 방어는 아래 턴 id dedup 이고 이건 보조다
+        // (재생은 대개 전송 경로에만 표시가 붙어 디스크엔 안 남는다).
+        if boolValue(meta?["isReplay"]) { return nil }
+        // 턴 식별자는 `prompt_id` 뿐이다. 세션 경로를 섞지 않아 fork 가 부모 updates 를 복사해도
+        // 같은 턴이 하나로 접힌다(전역 유일한 uuid — 합성 턴은 접두사 붙은 uuid). `_meta.eventId`
+        // 같은 대체 키는 쓰지 않는다: 전역 유일성이 보장되지 않아 서로 다른 세션의 턴을 합쳐버릴 수 있다.
+        guard let turnID = nonEmpty(update["prompt_id"] as? String),
+              let date = grokDate(envelope: envelope, meta: meta) else { return nil }
+
+        // `null` 을 "값 있음"으로 착각하면 캐시분을 잘못 빼거나 토큰을 0으로 만든다 → intOrNil.
+        let output = intOrNil(usage["outputTokens"]) ?? intOrNil(usage["output_tokens"]) ?? 0
+        let reportedCacheRead = intOrNil(usage["cachedReadTokens"]) ?? intOrNil(usage["cached_read_tokens"]) ?? 0
+        let (input, cacheRead): (Int, Int)
+        if let full = intOrNil(usage["inputTokens"]) {
+            // 캐시 읽기는 프롬프트의 부분집합이라 전체보다 클 수 없다. clamp 로 identity 를 지킨다
+            // (max(0,·) 로 뭉개면 input+cacheRead 가 inputTokens 를 넘어 total 이 조용히 부풀었다).
+            let clamped = min(reportedCacheRead, full)
+            (input, cacheRead) = (full - clamped, clamped)
+        } else {
+            // 헤드리스 투영은 input_tokens 가 이미 캐시 제외값이다.
+            (input, cacheRead) = (intOrNil(usage["input_tokens"]) ?? 0, reportedCacheRead)
+        }
+        // 소스가 말하는 total 과 어긋나면 남는 분을 output 에 귀속시켜 identity 를 맞춘다
+        // (모델별 행 합산 방식이 바뀌어 부분합이 어긋나도 합계는 소스를 따르게 — 다른 리더와 같은 규칙).
+        if let reportedTotal = intOrNil(usage["totalTokens"]) ?? intOrNil(usage["total_tokens"]) {
+            let parts = input + output + cacheRead
+            if reportedTotal > parts { return grokEntry(turnID: turnID, date: date, fmt: fmt, usage: usage,
+                                                        input: input, output: output + (reportedTotal - parts),
+                                                        cacheRead: cacheRead) }
+        }
+        return grokEntry(turnID: turnID, date: date, fmt: fmt, usage: usage,
+                         input: input, output: output, cacheRead: cacheRead)
+    }
+
+    private static func grokEntry(turnID: String, date: Date, fmt: DateFormatter, usage: [String: Any],
+                                  input: Int, output: Int, cacheRead: Int) -> Entry? {
+        guard input + output + cacheRead > 0 else { return nil }   // 0 토큰 턴(취소 등)은 기록하지 않는다
+        return Entry(
+            id: "grok|\(turnID)", date: date, localDay: fmt.string(from: date),
+            model: grokModel(usage) ?? "grok",
+            input: input, output: output, cacheWrite: 0, cacheRead: cacheRead,
+            explicitCost: grokCost(usage))
+    }
+
+    /// 표시용 모델명 — per-model 내역의 키에서 고른다. 토큰이 가장 많은 행이 대표(동수는 이름 순).
+    /// 숫자는 항상 totals 로 집계한다(행 합계와 totals 가 어긋날 여지를 만들지 않는다).
+    private static func grokModel(_ usage: [String: Any]) -> String? {
+        guard let byModel = (usage["modelUsage"] as? [String: Any])
+                ?? (usage["model_usage"] as? [String: Any]) else { return nil }
+        var best: (model: String, total: Int)?
+        for (model, raw) in byModel.sorted(by: { $0.key < $1.key }) {
+            let fields = raw as? [String: Any] ?? [:]
+            let total = intOrNil(fields["totalTokens"]) ?? intOrNil(fields["total_tokens"]) ?? 0
+            if best == nil || total > best!.total { best = (model, total) }
+        }
+        return best.flatMap { nonEmpty($0.model) }
+    }
+
+    /// 서버가 계산한 비용만 쓴다(1e10 ticks = $1). 부분합·불완전 집계 플래그가 서 있으면 버린다
+    /// (Grok 모델 단가표가 없으므로 추정 대신 0 — 금액 오표시를 만들지 않는다).
+    private static func grokCost(_ usage: [String: Any]) -> Double? {
+        if boolValue(usage["usageIsIncomplete"]) || boolValue(usage["usage_is_incomplete"]) { return nil }
+        if boolValue(usage["costIsPartial"]) || boolValue(usage["cost_is_partial"]) { return nil }
+        let ticks = doubleOrNil(usage["costUsdTicks"]) ?? doubleOrNil(usage["cost_usd_ticks"]) ?? 0
+        return ticks > 0 ? ticks / 1e10 : nil
+    }
+
+    /// 턴 시각은 `_meta.agentTimestampMs`(에이전트가 그 턴에 찍은 시각)를 **우선**한다.
+    /// 봉투 `timestamp` 는 *기록* 시각(Unix 초)이고 fork 가 부모 updates 를 복사할 때 새로 찍히므로,
+    /// 그것만 쓰면 포크된 세션의 과거 사용량이 전부 포크 시점 날짜로 몰린다(주·월·오늘 합계 왜곡).
+    /// `_meta` 는 복사 시 sessionId 만 교체되고 그대로 보존돼 원래 턴 시각을 지킨다.
+    private static func grokDate(envelope: [String: Any], meta: [String: Any]?) -> Date? {
+        let ms = doubleOrNil(meta?["agentTimestampMs"]) ?? 0
+        if ms > 0 { return Date(timeIntervalSince1970: ms / 1000) }
+        let raw = doubleOrNil(envelope["timestamp"]) ?? 0
+        // 봉투는 초 단위지만, 밀리초로 오는 변형도 흡수한다(다른 로컬 리더와 같은 임계).
+        if raw > 0 { return Date(timeIntervalSince1970: raw >= 100_000_000_000 ? raw / 1_000 : raw) }
+        if let ts = envelope["timestamp"] as? String { return ISO8601Parser.date(from: ts) }
+        return nil
+    }
+
     private static func codexModel(_ line: String) -> String? {
         guard let data = line.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -374,5 +553,30 @@ enum LocalUsageReader {
         if let d = v as? Double { return Int(d) }
         if let n = v as? NSNumber { return n.intValue }
         return 0
+    }
+
+    /// 숫자가 실제로 있을 때만 값을 준다. JSON `null`(=`NSNull`)·문자열·키 부재는 모두 nil —
+    /// `usage["x"] != nil` 로 존재를 판정하면 null 이 "값 있음"으로 통과해 0 으로 뭉개진다.
+    private static func doubleOrNil(_ v: Any?) -> Double? {
+        guard let n = v as? NSNumber, !(v is NSNull) else { return nil }
+        let d = n.doubleValue
+        return d.isFinite ? d : nil
+    }
+
+    private static func intOrNil(_ v: Any?) -> Int? {
+        guard let d = doubleOrNil(v) else { return nil }
+        guard d > 0 else { return 0 }                            // 음수 토큰은 없다
+        return d >= Double(Int.max) ? Int.max : Int(d)            // 비정상 큰 값에 트랩되지 않게
+    }
+
+    private static func boolValue(_ v: Any?) -> Bool {
+        if let b = v as? Bool { return b }
+        if let n = v as? NSNumber { return n.boolValue }
+        return false
+    }
+
+    private static func nonEmpty(_ v: String?) -> String? {
+        guard let t = v?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+        return t
     }
 }
