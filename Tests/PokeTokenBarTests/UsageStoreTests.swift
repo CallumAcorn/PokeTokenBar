@@ -12,13 +12,15 @@ private enum StubError: Error { case boom }
 private final class FakeUsageProvider: UsageProvider, @unchecked Sendable {
     let id: String
     let displayName: String
+    let reportsCost: Bool
     nonisolated(unsafe) var daily: DailyUsage?
     nonisolated(unsafe) var enrichment = ProviderEnrichment()
     nonisolated(unsafe) var failDaily = false
 
-    init(id: String, displayName: String, daily: DailyUsage? = nil) {
+    init(id: String, displayName: String, daily: DailyUsage? = nil, reportsCost: Bool = true) {
         self.id = id
         self.displayName = displayName
+        self.reportsCost = reportsCost
         self.daily = daily
     }
     func fetchDaily() async throws -> DailyUsage? {
@@ -826,5 +828,63 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(UsageStore.friendlyLimitError(LimitsError.credentialFormat, l), l.limitRefreshNoCredential)
         XCTAssertEqual(UsageStore.friendlyLimitError(LimitsError.keychainInteractionNotAllowed, l), l.limitRefreshGeneric)
         XCTAssertEqual(UsageStore.friendlyLimitError(StubError.boom, l), l.limitRefreshGeneric)   // 비 LimitsError
+    }
+
+    // MARK: Cursor provider aggregation
+
+    func testCursorProviderFlowsThroughAggregation() async {
+        let cursor = FakeUsageProvider(id: "cursor", displayName: "Cursor", daily: todayDaily(8_000))
+        cursor.enrichment = ProviderEnrichment(
+            activeBlock: nil, blocksOK: true,
+            weekTotal: PeriodUsage(period: "w", totalTokens: 50_000, totalCost: 0),
+            monthTotal: PeriodUsage(period: "m", totalTokens: 200_000, totalCost: 0),
+            periodsOK: true)
+        let store = makeStore(providers: [cursor])
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertEqual(store.todayTotalTokens, 8_000, "Cursor today tokens should aggregate")
+        XCTAssertEqual(store.weekTotalTokens, 50_000, "Cursor week tokens should aggregate")
+        XCTAssertEqual(store.monthTotalTokens, 200_000, "Cursor month tokens should aggregate")
+        XCTAssertEqual(store.snapshot(preferring: "cursor")?.providerID, "cursor",
+                       "Cursor snapshot should be accessible by preferring id")
+    }
+
+    func testCursorAndClaudeCombinedAggregation() async {
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(100_000))
+        let cursor = FakeUsageProvider(id: "cursor", displayName: "Cursor", daily: todayDaily(50_000))
+        let store = makeStore(providers: [claude, cursor])
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertEqual(store.todayTotalTokens, 150_000, "Claude + Cursor today tokens should sum")
+        XCTAssertEqual(store.snapshots.count, 2, "Both providers should have snapshots")
+    }
+
+    func testCursorContributesZeroToTodayCostTotal() async {
+        let claude = FakeUsageProvider(
+            id: "claude_code", displayName: "Claude Code",
+            daily: todayDaily(100_000, cost: 1.25))
+        let cursor = FakeUsageProvider(
+            id: "cursor", displayName: "Cursor",
+            daily: todayDaily(50_000, cost: 9.99), reportsCost: false)
+        let store = makeStore(providers: [claude, cursor])
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertEqual(store.todayTotalTokens, 150_000)
+        XCTAssertEqual(store.todayCostTotal, 1.25, accuracy: 0.000_001,
+                       "Cursor is tokens-only — invented cost must not enter todayCostTotal")
+        XCTAssertEqual(store.snapshot(preferring: "cursor")?.reportsCost, false)
+        XCTAssertEqual(store.snapshot(preferring: "claude_code")?.reportsCost, true)
+    }
+
+    func testCursorOnlyDoesNotSurfaceZeroDollarCostInMenu() async {
+        let cursor = FakeUsageProvider(
+            id: "cursor", displayName: "Cursor",
+            daily: todayDaily(50_000, cost: 9.99), reportsCost: false)
+        let store = makeStore(providers: [cursor])
+        store.showTokensInMenu = true
+        store.showCostInMenu = true
+        store.showLimitInMenu = false
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertTrue(store.costingSnapshots.isEmpty)
+        XCTAssertFalse(store.showsCost)
+        XCTAssertEqual(store.menuLines, [TokenFormatter.compact(50_000)],
+                       "Cursor-only must not render $0.00 / $0.0 in the menu bar")
     }
 }

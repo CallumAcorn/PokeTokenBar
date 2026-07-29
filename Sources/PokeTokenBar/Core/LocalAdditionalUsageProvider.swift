@@ -4,6 +4,7 @@ import SQLite3
 private enum LocalAdditionalSource: String, Sendable {
     case opencode
     case hermes
+    case cursor
 }
 
 /// OpenCode usage from its local SQLite database and legacy message files.
@@ -38,6 +39,23 @@ struct LocalHermesProvider: UsageProvider {
     }
 }
 
+/// Cursor IDE usage from its local SQLite chat database (cursorDiskKV table).
+struct LocalCursorProvider: UsageProvider {
+    let id = "cursor"
+    let displayName = "Cursor"
+    let reportsCost = false
+
+    func fetchDaily() async throws -> DailyUsage? {
+        let entries = await LocalAdditionalUsageCache.shared.entries(for: .cursor)
+        return LocalUsageReader.daily(entries: entries, localDay: LocalUsageReader.todayKey())
+    }
+
+    func fetchEnrichment() async -> ProviderEnrichment {
+        let entries = await LocalAdditionalUsageCache.shared.entries(for: .cursor)
+        return enrichment(entries: entries)
+    }
+}
+
 private func enrichment(entries: [LocalUsageReader.Entry]) -> ProviderEnrichment {
     let now = Date()
     let monthStart = LocalUsageReader.startOfMonth(now)
@@ -64,10 +82,12 @@ private actor LocalAdditionalUsageCache {
         let loadedAt: Date
         let monthKey: String
         let entries: [LocalUsageReader.Entry]
+        /// Cursor `cursorDiskKV` has no time column — per-DB rowid high-water for append-only bubbles.
+        let highWaterByPath: [String: Int64]
     }
 
     private var cached: [LocalAdditionalSource: Cached] = [:]
-    private var inFlight: [LocalAdditionalSource: Task<[LocalUsageReader.Entry], Never>] = [:]
+    private var inFlight: [LocalAdditionalSource: Task<(entries: [LocalUsageReader.Entry], highWaterByPath: [String: Int64]), Never>] = [:]
 
     func entries(for source: LocalAdditionalSource) async -> [LocalUsageReader.Entry] {
         let now = Date()
@@ -77,35 +97,60 @@ private actor LocalAdditionalUsageCache {
            now.timeIntervalSince(value.loadedAt) < 30 {
             return value.entries
         }
-        if let task = inFlight[source] { return await task.value }
+        if let task = inFlight[source] { return await task.value.entries }
 
         // 스캔 하한은 enrichment 의 세 윈도우(블록·주·월) 중 가장 이른 시작 — 월초 경계 흡수.
         // (Claude/Codex/Gemini 경로와 이 단일 소스를 공유해 과거의 window 드리프트를 원천 차단.)
         let periodStart = LocalUsageReader.enrichmentScanStart(now: now)
-        // OpenCode messages are immutable. After the cold monthly read, only query
-        // records at and after the newest cached timestamp (with a small overlap).
+        // OpenCode messages / Cursor bubbles are append-only. After the cold monthly read,
+        // only query records past the newest cached watermark (with a small OpenCode overlap).
         // This keeps minute-by-minute refreshes cheap even for large databases.
         let since: Date
-        if source == .opencode, let newest = previous?.entries.map(\.date).max() {
-            since = max(periodStart, newest.addingTimeInterval(-1))
-        } else {
+        let afterRowIDByPath: [String: Int64]
+        switch source {
+        case .opencode:
+            if let newest = previous?.entries.map(\.date).max() {
+                since = max(periodStart, newest.addingTimeInterval(-1))
+            } else {
+                since = periodStart
+            }
+            afterRowIDByPath = [:]
+        case .cursor:
             since = periodStart
+            afterRowIDByPath = previous?.highWaterByPath ?? [:]
+        case .hermes:
+            since = periodStart
+            afterRowIDByPath = [:]
         }
         let existing = previous?.entries ?? []
         let task = Task.detached(priority: .utility) {
-            let loaded: [LocalUsageReader.Entry] = switch source {
-            case .opencode: LocalAdditionalUsageReader.openCodeEntries(modifiedSince: since)
-            case .hermes: LocalAdditionalUsageReader.hermesEntries(modifiedSince: since)
+            () -> (entries: [LocalUsageReader.Entry], highWaterByPath: [String: Int64]) in
+            switch source {
+            case .opencode:
+                let loaded = LocalAdditionalUsageReader.openCodeEntries(modifiedSince: since)
+                return (LocalUsageReader.dedupKeepMax(existing + loaded), [:])
+            case .hermes:
+                return (LocalAdditionalUsageReader.hermesEntries(modifiedSince: since), [:])
+            case .cursor:
+                let loaded = LocalAdditionalUsageReader.cursorEntries(
+                    modifiedSince: since, afterRowIDByPath: afterRowIDByPath)
+                // DB rewrite / VACUUM can drop max(rowid) below the watermark — discard
+                // the stale in-memory set and take the full rescan result.
+                if loaded.didReset {
+                    return (loaded.entries, loaded.highWaterByPath)
+                }
+                return (
+                    LocalUsageReader.dedupKeepMax(existing + loaded.entries),
+                    loaded.highWaterByPath)
             }
-            return source == .opencode
-                ? LocalUsageReader.dedupKeepMax(existing + loaded)
-                : loaded
         }
         inFlight[source] = task
-        let entries = await task.value
+        let result = await task.value
         inFlight[source] = nil
-        cached[source] = Cached(loadedAt: now, monthKey: monthKey, entries: entries)
-        return entries
+        cached[source] = Cached(
+            loadedAt: now, monthKey: monthKey, entries: result.entries,
+            highWaterByPath: result.highWaterByPath)
+        return result.entries
     }
 }
 
@@ -202,7 +247,7 @@ enum LocalAdditionalUsageReader {
     ) -> [LocalUsageReader.Entry] {
         let cutoff = Int64(modifiedSince.timeIntervalSince1970 * 1000)
         let recentSQL = "SELECT id, session_id, data FROM message WHERE time_created >= ?1"
-        var rows = query(database, sql: recentSQL, bindMillis: cutoff) { statement in
+        var rows = query(database, sql: recentSQL, bindInt64: cutoff) { statement in
             parseOpenCodeDatabaseRow(statement)
         }
         // Older OpenCode databases did not expose time_created as a column.
@@ -234,7 +279,7 @@ enum LocalAdditionalUsageReader {
         FROM sessions
         WHERE model IS NOT NULL AND TRIM(model) != '' AND started_at >= ?1
         """
-        return query(database, sql: sql, bindMillis: Int64(modifiedSince.timeIntervalSince1970)) { statement in
+        return query(database, sql: sql, bindInt64: Int64(modifiedSince.timeIntervalSince1970)) { statement in
             guard let id = columnText(statement, 0)?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !id.isEmpty,
                   let model = columnText(statement, 1)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -252,6 +297,226 @@ enum LocalAdditionalUsageReader {
                 cacheRead: columnInt(statement, 7),
                 cost: actualCost > 0 ? actualCost : estimatedCost)
         } ?? []
+    }
+
+    // MARK: Cursor database
+
+    struct CursorLoadResult: Sendable {
+        var entries: [LocalUsageReader.Entry]
+        var highWaterByPath: [String: Int64]
+        /// True when any DB was rescanned from scratch (watermark invalidated).
+        var didReset: Bool
+
+        /// Convenience for single-database tests.
+        var highWaterRowID: Int64 { highWaterByPath.values.max() ?? 0 }
+    }
+
+    static var defaultCursorRoots: [URL] {
+        environmentPaths("CURSOR_DATA_DIR") ?? [
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage"),
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Cursor Nightly/User/globalStorage"),
+        ]
+    }
+
+    static func cursorEntries(
+        modifiedSince: Date,
+        afterRowID: Int64 = 0,
+        afterRowIDByPath: [String: Int64]? = nil,
+        roots: [URL]? = nil
+    ) -> CursorLoadResult {
+        let sourceRoots = roots ?? defaultCursorRoots
+        let marks = Self.cursorWatermarks(
+            roots: sourceRoots, afterRowID: afterRowID, afterRowIDByPath: afterRowIDByPath)
+        var result = scanCursorRoots(sourceRoots, modifiedSince: modifiedSince, marks: marks)
+        if result.didReset {
+            // A partial incremental payload must not replace the cache — rescan every root cold.
+            // Keep didReset=true so the provider cache discards `existing` rather than merging.
+            let recovered = scanCursorRoots(sourceRoots, modifiedSince: modifiedSince, marks: [:])
+            result = CursorLoadResult(
+                entries: recovered.entries,
+                highWaterByPath: recovered.highWaterByPath,
+                didReset: true)
+        }
+        return result
+    }
+
+    /// Resolve per-database watermarks. An empty marks map means cold-scan every root.
+    private static func cursorWatermarks(
+        roots: [URL],
+        afterRowID: Int64,
+        afterRowIDByPath: [String: Int64]?
+    ) -> [String: Int64] {
+        if let afterRowIDByPath { return afterRowIDByPath }
+        guard afterRowID > 0 else { return [:] }
+        return Dictionary(uniqueKeysWithValues: roots.map { root in
+            (cursorDatabaseURL(from: root).path, afterRowID)
+        })
+    }
+
+    private static func cursorDatabaseURL(from root: URL) -> URL {
+        root.pathExtension == "vscdb" ? root : root.appendingPathComponent("state.vscdb")
+    }
+
+    private static func scanCursorRoots(
+        _ sourceRoots: [URL],
+        modifiedSince: Date,
+        marks: [String: Int64]
+    ) -> CursorLoadResult {
+        var entries: [LocalUsageReader.Entry] = []
+        var highWaterByPath: [String: Int64] = [:]
+        var didReset = false
+        for root in sourceRoots {
+            let database = cursorDatabaseURL(from: root)
+            let pathKey = database.path
+            let watermark = marks[pathKey] ?? 0
+            let loaded = cursorDatabaseEntries(database, modifiedSince: modifiedSince, afterRowID: watermark)
+            entries += loaded.entries
+            highWaterByPath[pathKey] = loaded.highWaterRowID
+            if loaded.didReset { didReset = true }
+        }
+        return CursorLoadResult(
+            entries: LocalUsageReader.dedupKeepMax(entries.filter { $0.date >= modifiedSince }),
+            highWaterByPath: highWaterByPath,
+            didReset: didReset)
+    }
+
+    /// Exposed for regression tests — incremental plan must walk rowids, not the key index.
+    static func cursorIncrementalQueryPlan(database: URL, afterRowID: Int64) -> String? {
+        guard afterRowID > 0 else { return nil }
+        let sql = """
+        EXPLAIN QUERY PLAN
+        SELECT rowid, key, value FROM cursorDiskKV NOT INDEXED
+        WHERE rowid > ?1 AND key GLOB 'bubbleId:*'
+        """
+        return explainQueryPlan(database, sql: sql, bindInt64: afterRowID)
+    }
+
+    private struct CursorDatabaseLoad {
+        var entries: [LocalUsageReader.Entry]
+        var highWaterRowID: Int64
+        var didReset: Bool
+    }
+
+    private static func cursorDatabaseEntries(
+        _ database: URL,
+        modifiedSince: Date,
+        afterRowID: Int64
+    ) -> CursorDatabaseLoad {
+        // cursorDiskKV: key TEXT UNIQUE, value BLOB. No time column — filter by createdAt in JSON.
+        // Cold start (afterRowID == 0): GLOB uses the key index over bubbleId:* only.
+        // Incremental: NOT INDEXED + rowid > ? forces a rowid walk of *new* rows only.
+        // Without NOT INDEXED, SQLite prefers the key index and re-walks all bubble keys.
+        //
+        // A failed MAX(rowid) is *not* a shrink: open/prepare can fail while Cursor writes
+        // state.vscdb. Collapsing nil → 0 would wipe the cache for up to one refreshInterval.
+        guard let maxRowID = scalarInt64(database, sql: "SELECT MAX(rowid) FROM cursorDiskKV") else {
+            return CursorDatabaseLoad(entries: [], highWaterRowID: afterRowID, didReset: false)
+        }
+        let didReset = afterRowID > 0 && maxRowID < afterRowID
+        let effectiveAfter = didReset ? 0 : afterRowID
+
+        let sql: String
+        let bind: Int64?
+        if effectiveAfter == 0 {
+            sql = "SELECT rowid, key, value FROM cursorDiskKV WHERE key GLOB 'bubbleId:*'"
+            bind = nil
+        } else {
+            sql = """
+            SELECT rowid, key, value FROM cursorDiskKV NOT INDEXED
+            WHERE rowid > ?1 AND key GLOB 'bubbleId:*'
+            """
+            bind = effectiveAfter
+        }
+
+        // Incomplete scans (BUSY / interrupt) return nil — keep the prior watermark.
+        guard let rows = query(database, sql: sql, bindInt64: bind, row: {
+            statement -> (Int64, LocalUsageReader.Entry?) in
+            let rowID = sqlite3_column_int64(statement, 0)
+            let entry = parseCursorBubbleRow(statement, modifiedSince: modifiedSince)
+            return (rowID, entry)
+        }) else {
+            return CursorDatabaseLoad(entries: [], highWaterRowID: afterRowID, didReset: false)
+        }
+
+        var highWater: Int64 = 0
+        var entries: [LocalUsageReader.Entry] = []
+        for (rowID, entry) in rows {
+            highWater = max(highWater, rowID)
+            if let entry { entries.append(entry) }
+        }
+        // Preserve watermark when an incremental miss returns no new rows.
+        if highWater == 0 { highWater = effectiveAfter }
+        return CursorDatabaseLoad(entries: entries, highWaterRowID: highWater, didReset: didReset)
+    }
+
+    private static func parseCursorBubbleRow(
+        _ statement: OpaquePointer,
+        modifiedSince: Date
+    ) -> LocalUsageReader.Entry? {
+        guard let key = columnText(statement, 1),
+              let payload = columnText(statement, 2),
+              let object = jsonObject(data: Data(payload.utf8)) else { return nil }
+        return parseCursorBubble(object, key: key, modifiedSince: modifiedSince)
+    }
+
+    /// Parse a single Cursor chat bubble JSON blob into a usage entry.
+    /// Bubble schema (from cursorDiskKV): `tokenCount.{inputTokens, outputTokens}`,
+    /// `createdAt` (ISO 8601 string or epoch number), `modelType` (nullable).
+    static func parseCursorBubble(
+        _ object: Object,
+        key: String,
+        modifiedSince: Date
+    ) -> LocalUsageReader.Entry? {
+        guard let tokenCount = object["tokenCount"] as? Object else { return nil }
+        let input = intValue(tokenCount["inputTokens"])
+        let output = intValue(tokenCount["outputTokens"])
+        guard input + output > 0 else { return nil }
+        guard let date = flexibleDateValue(object["createdAt"]) else { return nil }
+        guard date >= modifiedSince else { return nil }
+        let model = stringValue(object["modelType"]) ?? "unknown"
+        return makeEntry(
+            id: "cursor|\(key)",
+            date: date,
+            model: model,
+            input: input,
+            output: output)
+    }
+
+    private static let iso8601Lock = NSLock()
+    // ISO8601DateFormatter is not Sendable; access is serialized by `iso8601Lock`.
+    nonisolated(unsafe) private static let iso8601Fractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    nonisolated(unsafe) private static let iso8601Plain: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    /// Reuses locked static formatters — Cursor cold scans parse thousands of `createdAt` rows.
+    private static func parseISO8601(_ string: String) -> Date? {
+        iso8601Lock.lock()
+        let cached: Date?
+        if let date = iso8601Fractional.date(from: string) {
+            cached = date
+        } else if let date = iso8601Plain.date(from: string) {
+            cached = date
+        } else {
+            cached = nil
+        }
+        iso8601Lock.unlock()
+        // Odd fractional widths (e.g. microseconds) — rare for Cursor bubbles.
+        return cached ?? ISO8601Parser.date(from: string)
+    }
+
+    /// Accepts ISO-8601 strings or epoch numbers (seconds / millis), matching OpenCode.
+    private static func flexibleDateValue(_ value: Any?) -> Date? {
+        if let string = value as? String { return parseISO8601(string) }
+        return dateValue(value)
     }
 
     // MARK: Shared utilities
@@ -346,7 +611,7 @@ enum LocalAdditionalUsageReader {
     private static func query<T>(
         _ databaseURL: URL,
         sql: String,
-        bindMillis: Int64? = nil,
+        bindInt64: Int64? = nil,
         row: (OpaquePointer) -> T?
     ) -> [T]? {
         guard FileManager.default.fileExists(atPath: databaseURL.path) else { return [] }
@@ -360,15 +625,43 @@ enum LocalAdditionalUsageReader {
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
               let statement else { return nil }
         defer { sqlite3_finalize(statement) }
-        if let bindMillis { sqlite3_bind_int64(statement, 1, bindMillis) }
+        if let bindInt64 { sqlite3_bind_int64(statement, 1, bindInt64) }
 
         var result: [T] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            autoreleasepool {
-                if let value = row(statement) { result.append(value) }
+        while true {
+            let step = sqlite3_step(statement)
+            if step == SQLITE_ROW {
+                autoreleasepool {
+                    if let value = row(statement) { result.append(value) }
+                }
+                continue
             }
+            // Distinguish a finished scan from BUSY / interrupt — partial rows must not
+            // advance the Cursor watermark past bubbles we never read.
+            guard step == SQLITE_DONE else { return nil }
+            break
         }
         return result
+    }
+
+    private static func scalarInt64(_ databaseURL: URL, sql: String) -> Int64? {
+        let rows = query(databaseURL, sql: sql) { statement -> Int64 in
+            sqlite3_column_int64(statement, 0)
+        }
+        return rows?.first
+    }
+
+    private static func explainQueryPlan(
+        _ databaseURL: URL,
+        sql: String,
+        bindInt64: Int64? = nil
+    ) -> String? {
+        let rows = query(databaseURL, sql: sql, bindInt64: bindInt64) { statement -> String in
+            // EXPLAIN QUERY PLAN columns: id, parent, notused, detail
+            columnText(statement, 3) ?? ""
+        }
+        guard let rows, !rows.isEmpty else { return nil }
+        return rows.joined(separator: " | ")
     }
 
     private static func columnText(_ statement: OpaquePointer, _ index: Int32) -> String? {
