@@ -231,7 +231,15 @@ final class CompanionStore {
         if !state.installBaselineSet {
             // 설치 기준선 — 실제 데이터가 도착한 시점의 today 를 baseline 으로(이전 사용량 미카운트).
             // 데이터 도착 전(기동 직후 빈 새로고침)에는 잡지 않는다.
-            guard hasUsageData else { displayState = .egg; return }
+            guard hasUsageData else {
+                // 세이브 불러오기가 baseline 판정을 이 경로에 넘겼을 수 있다(SaveTransfer.rebasedForThisDevice).
+                // 그 경우 개체는 이미 들어와 있으므로 알로 표시하면 안 되고, 진화 라인 로드도 계속 재시도해야
+                // 한다 — 새 Mac 은 AI CLI 를 처음 쓸 때까지 hasUsageData 가 false 라 여기서 막히면 그날 내내
+                // 알로 보인다(재시작해도 동일).
+                displayState = state.active == nil ? .egg : .idle
+                kickLineLoadIfNeeded()
+                return
+            }
             state.installBaselineSet = true
             state.claimedTodayTokens = todayTokens
             state.lastDate = todayDate
@@ -635,6 +643,7 @@ final class CompanionStore {
         // 내렸다가(hatch 자체 가드 통과용) hatch 를 호출해, 그 await 창에서 다른 update 틱이
         // 두 번째 종을 롤하는 경합이 있었다. hatchCore 는 isHatching 을 재검사하지 않으므로
         // 여기서 소유한 락 하나로 롤·부화가 원자적으로 보호된다.
+        let generation = activeGeneration
         isHatching = true
         defer { isHatching = false }
         // 프리패칭된 종이 있으면 그대로 사용(라인·스프라이트 예열됨 → 딜레이 ~0), 없으면 지금 롤.
@@ -645,8 +654,25 @@ final class CompanionStore {
             base = await chooseBase()
         }
         guard let base else { return }   // 네트워크 불안정 → 알 유지, 다음 update 틱에 재시도
+        // 세대 검사는 **여기서** 해야 한다. `chooseBase()` 대기 창에서 상태가 통째로 교체되면
+        // (세이브 불러오기) 그 뒤에 진입하는 hatchCore 는 *교체 이후*의 세대를 캡처해 자기 가드가
+        // 무조건 통과한다 — 옛 롤 결과가 불러온 개체를 덮어쓰고 save() 로 디스크에 박힌다.
+        guard activeGeneration == generation, state.active == nil else {
+            AppLog.write("hatch: discarded before core — subject replaced during species roll")
+            kickLineLoadIfNeeded()
+            return
+        }
         state.pendingHatchID = nil
         await hatchCore(baseID: base)
+    }
+
+    /// 부화가 폐기된 뒤 남은 개체(대개 방금 불러온 개체)의 진화 라인을 다시 로드한다.
+    /// `loadCurrentLine` 은 `!isHatching` 을 요구하므로 부화 중에 걸린 로드는 조용히 실패한다 —
+    /// 아무도 재시도하지 않으면 다음 update 틱(기본 120초)까지 이름이 "Token Egg" 로 남는다.
+    /// Task 본문은 현재 동기 실행(= defer 로 isHatching 해제)이 끝난 뒤 돌므로 락이 이미 풀려 있다.
+    private func kickLineLoadIfNeeded() {
+        guard state.active != nil, currentLine == nil else { return }
+        Task { await loadCurrentLine() }
     }
 
     // MARK: 알 프리패칭
@@ -659,12 +685,15 @@ final class CompanionStore {
     /// 전부 성공하면 부화 순간 네트워크 0. 실패 지점부터 다음 update 틱에 이어서 재시도.
     private func ensureEggPrefetch() async {
         guard state.active == nil, !isHatching, !prefetchInFlight else { return }
+        let generation = activeGeneration
         prefetchInFlight = true
         defer { prefetchInFlight = false }
 
         if state.pendingHatchID == nil {
             guard let id = await chooseBase() else { return }   // 오프라인 → 다음 틱 재시도
-            guard state.active == nil else { return }           // await 사이 부화 완료 케이스 방어
+            // await 사이에 부화가 끝났거나(active != nil) 상태가 통째로 교체됐으면(세이브 불러오기)
+            // 이 롤을 버린다 — 안 그러면 불러온 알의 pre-roll 을 남의 롤로 덮어쓴다.
+            guard state.active == nil, activeGeneration == generation else { return }
             state.pendingHatchID = id
             save()
         }
@@ -701,8 +730,17 @@ final class CompanionStore {
 
     /// 실제 부화 로직 — isHatching 락은 호출자(hatch / hatchIfNeeded)가 소유·해제한다.
     private func hatchCore(baseID: Int) async {
+        let generation = activeGeneration
         guard let line = try? await provider.line(baseSpeciesID: baseID) else {
             AppLog.write("hatch: line fetch failed for base \(baseID) — egg kept, retry next tick")
+            return
+        }
+        // 라인 fetch 창(네트워크) 동안 활성 개체가 교체됐으면 이 부화 결과를 폐기한다. 세이브 불러오기가
+        // 그 창에 들어오면, 여기서 멈추지 않는 한 갓 부화한 개체가 방금 불러온 개체를 덮어쓴다.
+        // (loadCurrentLine·revealDitto 와 같은 세대 가드 — isHatching 락은 같은 앱 내 중복 부화만 막는다.)
+        guard activeGeneration == generation else {
+            AppLog.write("hatch: discarded — active subject replaced during line fetch")
+            kickLineLoadIfNeeded()
             return
         }
         currentLine = line
@@ -857,6 +895,77 @@ final class CompanionStore {
         }
     }
 
+    // MARK: 세이브 이전 (기기 교체)
+
+    /// 덮어쓰기 확인에 쓸 "이 기기의 현재 진행" 요약.
+    var transferSummary: SaveSummary { SaveSummary(state: state) }
+
+    /// 저장 패널에 채울 기본 파일명. 봉투의 `exportedAt` 과 **같은 시계**에서 뽑는다 — 뷰가 따로
+    /// `Date()` 를 부르면 파일명 날짜와 내용의 날짜가 갈릴 수 있다(자정 경계).
+    var suggestedExportFileName: String { SaveTransfer.suggestedFileName(date: clock()) }
+
+    /// 내보내기 페이로드. 파일 쓰기는 호출자(UI)가 사용자가 고른 위치에 수행한다.
+    func exportedSaveData(appVersion: String, deviceName: String) throws -> Data {
+        try SaveTransfer.encode(state: state, appVersion: appVersion, deviceName: deviceName, now: clock())
+    }
+
+    /// 검증된 세이브를 이 기기에 적용 — 기존 상태 백업 → 기기 기준 재정렬 → 저장 → 라인 재로딩.
+    /// 백업을 못 남기면 **적용하지 않고** throw 한다 — 확인창이 "직전 상태가 남는다"고 약속하므로,
+    /// 그 약속을 못 지키는 채로 덮어쓰면 사용자는 되돌릴 수단 없이 진행을 잃는다.
+    func applySave(_ envelope: SaveEnvelope, todayTokens: Int, todayDate: String, hasUsageData: Bool) throws {
+        try backupStateBeforeImport()
+        state = SaveTransfer.rebasedForThisDevice(envelope.state,
+                                                  current: state,
+                                                  todayTokens: todayTokens,
+                                                  todayDate: todayDate,
+                                                  hasUsageData: hasUsageData)
+        // 이전 개체 기준으로 진행 중이던 비동기·연출을 전부 무효화한다. activeGeneration 을 올리지
+        // 않으면 먼저 떠 있던 라인 로드가 완료되며 새로 불러온 개체를 덮어쓴다.
+        activeGeneration += 1
+        currentLine = nil
+        prefetchedLineID = nil
+        justEvolvedTo = nil
+        justGraduated = nil
+        eventUntil = nil
+        celebration = nil
+        // 이전 개체 기준의 1회성 피드백(사탕 +XP·민트 성격)도 비운다 — 안 비우면 불러온 직후 남의
+        // 개체에 대한 "+XP" 가 새 개체 위에 떠오른다.
+        candyFeedbackAmount = 0
+        mintFeedbackNature = nil
+        displayState = state.active != nil ? .idle : .egg
+        save()
+        if state.active != nil { Task { await loadCurrentLine() } }
+        AppLog.write("save imported from \(envelope.sourceDevice): dex=\(state.dex.count) lifetime=\(state.usedSinceInstall)")
+    }
+
+    /// 덮어쓰기 직전 현재 상태를 옆에 남긴다 — 잘못 불러왔을 때 되돌릴 수단.
+    /// 슬롯을 하나만 쓰면 두 번째 불러오기가 **원본**을 덮어써, "잘못 불러왔으니 되돌린다"는 바로 그
+    /// 상황에서 되돌릴 대상이 사라진다. 불러올 때마다 새 슬롯을 쓰고 오래된 것부터 정리한다.
+    @discardableResult
+    private func backupStateBeforeImport() throws -> URL {
+        guard let data = try? JSONEncoder().encode(state) else { throw SaveTransferError.backupFailed }
+        let dir = fileURL.deletingLastPathComponent()
+        let backup = dir.appendingPathComponent(SaveTransfer.backupFileName(date: clock()))
+        do {
+            try data.write(to: backup, options: .atomic)
+        } catch {
+            AppLog.write("save import aborted — backup write failed: \(error)")
+            throw SaveTransferError.backupFailed
+        }
+        pruneImportBackups(in: dir)
+        return backup
+    }
+
+    /// 최근 N 개만 남기고 오래된 백업을 지운다. 파일명이 `yyyy-MM-dd-HHmmss` 라 사전순 = 시간순이다.
+    private func pruneImportBackups(in dir: URL) {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return }
+        let backups = names.filter { $0.hasPrefix(SaveTransfer.backupFilePrefix) }.sorted()
+        guard backups.count > SaveTransfer.backupsToKeep else { return }
+        for stale in backups.dropLast(SaveTransfer.backupsToKeep) {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(stale))
+        }
+    }
+
     // MARK: 영속
     private func load() {
         guard let data = try? Data(contentsOf: fileURL) else { return }   // 파일 없음 = 신규 설치
@@ -869,7 +978,10 @@ final class CompanionStore {
             AppLog.write("companion state decode failed — original backed up to \(backup.lastPathComponent), starting fresh")
             return
         }
-        state = s
+        // 불러오기 경계와 같은 정규화를 디스크에서 읽을 때도 건다. 불러오기만 막으면 **이미 저장된**
+        // 극단값은 그대로 남아, 앱이 매 기동마다 같은 값을 읽어 산술 트랩으로 죽는 상태를 못 벗어난다
+        // (디코드는 *성공*하므로 위의 .corrupt 복구도 발동하지 않는다). 여기서 걸면 자가 복구된다.
+        state = SaveTransfer.sanitized(s)
     }
     private func save() {
         guard let data = try? JSONEncoder().encode(state) else { return }
