@@ -226,12 +226,17 @@ final class CompanionStore {
 
     // MARK: 갱신 (AppDelegate 가 UsageStore 값으로 호출)
 
-    func update(todayTokens: Int, todayDate: String, monthTotal: Int,
+    func update(todayTokensByProvider: [String: Int], todayDate: String, monthTotal: Int,
                 burnTier: BurnTier, limitWarning: Bool, hasUsageData: Bool) {
+        let todayTokens = todayTokensByProvider.values.reduce(0, +)
+        // `hasUsageData`는 표시용 snapshot 존재 여부이고, 이 map은 오늘 날짜가 확인된
+        // provider 데이터만 담는다. stale snapshot이나 today == nil carrier만 있는 refresh는
+        // ledger의 기준점을 움직일 수 있는 관측으로 취급하지 않는다.
+        let hasCurrentProviderData = hasUsageData && !todayTokensByProvider.isEmpty
         if !state.installBaselineSet {
             // 설치 기준선 — 실제 데이터가 도착한 시점의 today 를 baseline 으로(이전 사용량 미카운트).
             // 데이터 도착 전(기동 직후 빈 새로고침)에는 잡지 않는다.
-            guard hasUsageData else {
+            guard hasCurrentProviderData else {
                 // 세이브 불러오기가 baseline 판정을 이 경로에 넘겼을 수 있다(SaveTransfer.rebasedForThisDevice).
                 // 그 경우 개체는 이미 들어와 있으므로 알로 표시하면 안 되고, 진화 라인 로드도 계속 재시도해야
                 // 한다 — 새 Mac 은 AI CLI 를 처음 쓸 때까지 hasUsageData 가 false 라 여기서 막히면 그날 내내
@@ -241,19 +246,78 @@ final class CompanionStore {
                 return
             }
             state.installBaselineSet = true
-            state.claimedTodayTokens = todayTokens
+            state.claimedTodayTokensByProvider = todayTokensByProvider
             state.lastDate = todayDate
             save()
         } else {
-            if todayDate != state.lastDate { state.lastDate = todayDate; state.claimedTodayTokens = 0 }
-            if todayTokens > state.claimedTodayTokens {
-                let delta = todayTokens - state.claimedTodayTokens
-                state.claimedTodayTokens = todayTokens
-                state.usedSinceInstall += delta
-                if state.active == nil {
-                    state.eggUsage += delta   // 알 인큐베이션 누적
+            // `today == nil` carrier만 남거나 파싱이 실패한 refresh는 현재 map이 비어 있을 수
+            // 있다. 그런 관측으로 날짜·ledger를 움직이면 다음 정상 snapshot을 당일 전체 신규
+            // 사용량으로 오인할 수 있으므로, 유효한 사용량이 있는 refresh만 ledger를 갱신한다.
+            if hasCurrentProviderData {
+                let dateChanged = todayDate != state.lastDate
+                if state.claimedTodayTokensByProvider == nil {
+                    // 구버전 세이브에는 aggregate high-water mark만 있어 프로바이더별로 분해할 수 없다.
+                    // 첫 유효 관측을 새 장부의 기준점으로만 저장해 과거 사용량을 소급 지급하지 않는다.
+                    state.claimedTodayTokensByProvider = todayTokensByProvider
+                    state.lastDate = todayDate
+                    AppLog.write("companion provider ledger seeded date=\(todayDate) providers=\(todayTokensByProvider.keys.sorted().joined(separator: ","))")
+                } else if dateChanged {
+                    // 일자별 snapshot은 서로 비교할 수 없다. 새 날짜에는 이전 날짜의 ledger를
+                    // 기준으로 삼지 않고, 현재 날짜의 누적값 전체를 새 날짜 사용량으로 적립한다.
+                    // 단, 위의 nil migration 경로는 구버전 aggregate를 분해할 수 없으므로 seed만 한다.
+                    //
+                    // 이전 날짜에 이미 알려진 provider가 첫 새로고침에서 빠질 수 있다(오늘 데이터
+                    // 없음, stale 응답, 일시 실패). 그 provider를 아예 ledger에서 제거하면 같은
+                    // 날짜에 복구될 때 현재 누적값을 "이미 적립한 값"으로 seed해 사용량이 누락된다.
+                    // 이전 날짜의 숫자는 비교에 사용할 수 없으므로, 알려진 provider의 새 날짜 기준을
+                    // 0으로 열어 둔다. 이후 복구된 현재 날짜 값은 그 날짜의 실제 사용량으로 적립되고,
+                    // 같은 날짜의 부분 응답에서는 이 기준을 그대로 보존한다.
+                    state.lastDate = todayDate
+                    var newLedger = Dictionary(uniqueKeysWithValues:
+                        state.claimedTodayTokensByProvider!.keys.map { ($0, 0) })
+                    for (providerID, current) in todayTokensByProvider {
+                        newLedger[providerID] = current
+                    }
+                    state.claimedTodayTokensByProvider = newLedger
+                    let delta = todayTokensByProvider.values.reduce(0, +)
+                    if delta > 0 {
+                        state.usedSinceInstall += delta
+                        if state.active == nil {
+                            state.eggUsage += delta
+                        } else {
+                            applyUsage(delta)
+                        }
+                    }
                 } else {
-                    applyUsage(delta)
+                    var ledger = state.claimedTodayTokensByProvider ?? [:]
+                    var delta = 0
+                    for (providerID, current) in todayTokensByProvider {
+                        guard let previous = ledger[providerID] else {
+                            // 새로 관측된 프로바이더의 과거 로그를 소급하지 않는다. 이후 refresh부터
+                            // 해당 프로바이더의 증가분을 추적할 수 있도록 현재 값을 seed한다.
+                            ledger[providerID] = current
+                            continue
+                        }
+                        if current < previous {
+                            // 전체 합계가 아니라 해당 프로바이더의 line만 rebase한다. 다른 프로바이더가
+                            // 이번 refresh에서 보고하지 않았거나 carrier snapshot만 남은 경우에는 map에
+                            // line 자체가 없으므로 기존 기준값을 건드리지 않는다.
+                            ledger[providerID] = current
+                            AppLog.write("companion usage regression provider=\(providerID) date=\(todayDate) previous=\(previous) current=\(current) drop=\(previous - current) — rebased provider ledger")
+                            continue
+                        }
+                        delta += current - previous
+                        ledger[providerID] = current
+                    }
+                    state.claimedTodayTokensByProvider = ledger
+                    if delta > 0 {
+                        state.usedSinceInstall += delta
+                        if state.active == nil {
+                            state.eggUsage += delta   // 알 인큐베이션 누적
+                        } else {
+                            applyUsage(delta)
+                        }
+                    }
                 }
             }
         }
@@ -289,7 +353,7 @@ final class CompanionStore {
 
     /// 토큰 증분을 현재 포켓몬에 적용 — 임계 도달 시 진화/졸업.
     /// 라인 미로딩(재시작 직후·오프라인)이어도 사용량은 항상 적립한다 — 여기서 드롭하면
-    /// claimedTodayTokens 는 이미 전진해 델타가 영구 유실된다. 진화 판정만 라인 로드 후로 미룬다.
+    /// 프로바이더별 ledger 는 이미 전진해 델타가 영구 유실된다. 진화 판정만 라인 로드 후로 미룬다.
     func applyUsage(_ delta: Int) {
         guard state.active != nil else { return }
         state.active!.usedAtStage += delta
@@ -965,11 +1029,12 @@ final class CompanionStore {
     /// 검증된 세이브를 이 기기에 적용 — 기존 상태 백업 → 기기 기준 재정렬 → 저장 → 라인 재로딩.
     /// 백업을 못 남기면 **적용하지 않고** throw 한다 — 확인창이 "직전 상태가 남는다"고 약속하므로,
     /// 그 약속을 못 지키는 채로 덮어쓰면 사용자는 되돌릴 수단 없이 진행을 잃는다.
-    func applySave(_ envelope: SaveEnvelope, todayTokens: Int, todayDate: String, hasUsageData: Bool) throws {
+    func applySave(_ envelope: SaveEnvelope, todayTokensByProvider: [String: Int], todayDate: String,
+                   hasUsageData: Bool) throws {
         try backupStateBeforeImport()
         state = SaveTransfer.rebasedForThisDevice(envelope.state,
                                                   current: state,
-                                                  todayTokens: todayTokens,
+                                                  todayTokensByProvider: todayTokensByProvider,
                                                   todayDate: todayDate,
                                                   hasUsageData: hasUsageData)
         // 이전 개체 기준으로 진행 중이던 비동기·연출을 전부 무효화한다. activeGeneration 을 올리지
