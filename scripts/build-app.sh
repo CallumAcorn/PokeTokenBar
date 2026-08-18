@@ -34,13 +34,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <!-- ATS 는 기본값이 이미 이렇지만 명시한다 — 감사자가 Info.plist 만 보고 "이 앱은 평문 HTTP 를
+         쓰지 않는다"를 확인할 수 있어야 하고, 나중에 예외가 추가되면 diff 에 드러난다. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key><false/>
+        <key>NSAllowsArbitraryLoadsInWebContent</key><false/>
+        <key>NSAllowsLocalNetworking</key><false/>
+    </dict>
 </dict>
 </plist>
 PLIST
 
-# 크래시/OOM(exit≠0) 시 자동 재실행 LaunchAgent(KeepAlive) — SMAppService.agent 가 등록해 launchd 가
-# 워치독으로 동작. 정상 종료(exit 0: 사용자 종료·업데이트)엔 재실행 안 함(SuccessfulExit=false).
-# ProgramArguments 는 brew 설치 경로(/Applications) 고정. codesign 전에 생성해 서명 seal 에 포함.
+# LaunchAgent 두 벌 — 정확히 하나만 등록된다(LoginItem.swift 가 전환).
+#   1) …login          RunAtLoad 만. 기본값이자 구버전과 같은 label 이라 기존 등록이 그대로 유효하다.
+#   2) …autorestart    RunAtLoad + KeepAlive. 크래시/OOM(exit≠0) 자동 재실행 — 설정에서 켤 때만.
+# 지속성 수준을 사용자가 고르게 하려고 나눴다: "로그인 시 실행"과 "죽으면 되살아남"은 다른 약속이고,
+# 후자는 엔드포인트 보안 도구가 주시하는 동작이다.
+# ProgramArguments 는 설치 경로(/Applications) 고정. codesign 전에 생성해 서명 seal 에 포함.
 mkdir -p "$APP/Contents/Library/LaunchAgents"
 cat > "$APP/Contents/Library/LaunchAgents/io.github.chattymin.poketokenbar.login.plist" <<AGENT
 <?xml version="1.0" encoding="UTF-8"?>
@@ -48,6 +59,23 @@ cat > "$APP/Contents/Library/LaunchAgents/io.github.chattymin.poketokenbar.login
 <plist version="1.0">
 <dict>
     <key>Label</key><string>io.github.chattymin.poketokenbar.login</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/$APP_NAME.app/Contents/MacOS/$APP_NAME</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>LimitLoadToSessionType</key><string>Aqua</string>
+    <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>
+AGENT
+
+cat > "$APP/Contents/Library/LaunchAgents/io.github.chattymin.poketokenbar.autorestart.plist" <<AGENT
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>io.github.chattymin.poketokenbar.autorestart</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Applications/$APP_NAME.app/Contents/MacOS/$APP_NAME</string>
@@ -64,12 +92,16 @@ cat > "$APP/Contents/Library/LaunchAgents/io.github.chattymin.poketokenbar.login
 </plist>
 AGENT
 
-echo "==> codesign"
+echo "==> codesign (hardened runtime)"
 SIGN_IDENTITY="${CODESIGN_IDENTITY:-PokeTokenBar Local}"
-# 안정적 Keychain ACL 을 위해서는 인증서 존재가 아니라 유효한 codesigning identity 가 필요하다.
+# --options runtime 을 붙이는 이유: 하드닝 런타임은 **라이브러리 검증**을 켠다 — 같은 팀 서명이 아닌
+# dylib 은 프로세스에 로드되지 않고, DYLD_INSERT_LIBRARIES 류 주입도 무시된다. 이 앱은 살아있는
+# Claude OAuth 토큰을 메모리에 들고 있으므로, 사용자 권한으로 도는 아무 코드나 이 프로세스에 붙을 수
+# 있는 상태여서는 안 된다. 엔타이틀먼트는 일부러 하나도 주지 않는다(가장 제한적인 구성).
+# 자체 서명 인증서로도 하드닝 런타임은 그대로 적용된다 — 공증(notarization)만 Developer ID 가 필요하다.
 if security find-identity -v -p codesigning | grep -F "\"$SIGN_IDENTITY\"" >/dev/null; then
     # 안정적 자체 서명 신원 → 재빌드해도 Keychain "항상 허용" 유지
-    codesign --force -s "$SIGN_IDENTITY" "$APP"
+    codesign --force --options runtime -s "$SIGN_IDENTITY" "$APP"
 else
     # 인증서 없음 → ad-hoc (빌드마다 cdhash 변경 = Keychain 재프롬프트 가능)
     if [[ "${PTB_REQUIRE_STABLE_SIGN:-0}" == "1" ]]; then
@@ -80,7 +112,18 @@ else
     fi
     echo "   ('$SIGN_IDENTITY' 유효 codesigning identity 없음 → ad-hoc 서명 — 로컬 개발용)"
     echo "   반복 Keychain 허용 프롬프트를 줄이려면 ./scripts/create-signing-cert.sh 실행 후 다시 빌드하세요."
-    codesign --force -s - "$APP"
+    codesign --force --options runtime -s - "$APP"
+fi
+
+# 서명 검증 — 하드닝 런타임 플래그가 실제로 붙었는지 확인한다. codesign 이 조용히 성공해 놓고
+# 플래그가 빠지면 이 스크립트의 목적 자체가 사라지므로, 확인 없이 통과시키지 않는다.
+echo "==> 서명 검증"
+codesign --verify --strict --deep "$APP"
+if codesign -d --verbose=2 "$APP" 2>&1 | grep -q 'flags=.*runtime'; then
+    echo "   ✓ hardened runtime 적용됨"
+else
+    echo "   ✗ hardened runtime 플래그가 없습니다 — 서명 단계를 확인하세요." >&2
+    exit 1
 fi
 
 echo "==> 기존 인스턴스 종료 + /Applications 설치"

@@ -128,6 +128,7 @@ final class UpdateChecker {
         kill "$brew_pid" 2>/dev/null
         for i in $(seq 1 15); do
           launchctl kickstart -k "gui/$(id -u)/io.github.chattymin.poketokenbar.login" 2>/dev/null && break
+          launchctl kickstart -k "gui/$(id -u)/io.github.chattymin.poketokenbar.autorestart" 2>/dev/null && break
           open "$2" 2>/dev/null && break
           sleep 1
         done
