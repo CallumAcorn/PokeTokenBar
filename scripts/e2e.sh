@@ -54,7 +54,9 @@ assert s.get("lastError", "") == "", f"lastError: {s['lastError']}"
 print(f"    today={s['todayTotalTokens']:,} providers={[p['id'] for p in s['providers']]}")
 PY
 then ok "스냅샷 구조·값 유효 + lastError 없음"; else bad "스냅샷 구조/에러 검증 실패"; fi
-if tail -n 100 "$LOG" 2>/dev/null | grep -q "phase1 done"; then ok "AppLog phase1 done"; else bad "AppLog 에 phase1 done 없음"; fi
+# `grep -q` 금지(build-app.sh 의 같은 주석 참조) — 조기 파이프 close → SIGPIPE → pipefail 아래에서
+# 통과가 실패로 뒤집힌다. tail 출력이 64KB 파이프 버퍼에 들어가면 대개 안 터져 더 위험하다(간헐 실패).
+if tail -n 100 "$LOG" 2>/dev/null | grep "phase1 done" >/dev/null; then ok "AppLog phase1 done"; else bad "AppLog 에 phase1 done 없음"; fi
 
 echo "▶ 4/5 메뉴바 status item (window server)"
 cat > /tmp/ptb-e2e-win.swift <<'SWIFT'

@@ -119,7 +119,11 @@ fi
 # 플래그가 빠지면 이 스크립트의 목적 자체가 사라지므로, 확인 없이 통과시키지 않는다.
 echo "==> 서명 검증"
 codesign --verify --strict --deep "$APP"
-if codesign -d --verbose=2 "$APP" 2>&1 | grep -q 'flags=.*runtime'; then
+# `grep -q` 를 쓰지 않는다. -q 는 첫 매치에서 즉시 파이프를 닫아 codesign 에 SIGPIPE(141)를 주고,
+# `set -o pipefail` 아래에서는 그 신호가 파이프라인 종료코드가 된다 → **검사에 통과한 빌드가
+# 실패로 보고되고** 이 줄 아래의 설치가 통째로 건너뛰어진다(실측: 앱이 /Applications 에 안 깔림).
+# -q 를 빼면 grep 이 입력을 끝까지 읽으므로 조기 close 가 없다.
+if codesign -d --verbose=2 "$APP" 2>&1 | grep 'flags=.*runtime' >/dev/null; then
     echo "   ✓ hardened runtime 적용됨"
 else
     echo "   ✗ hardened runtime 플래그가 없습니다 — 서명 단계를 확인하세요." >&2

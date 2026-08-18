@@ -65,6 +65,26 @@ refute "cask 가 sha256 :no_check 를 쓰지 않음" "grep -qE '^[[:space:]]*sha
 refute "cask 가 quarantine 을 벗기지 않음(xattr 실행 없음)" "grep -qE '^[[:space:]]*(system_command|postflight|args:).*xattr' packaging/Casks/poke-token-bar.rb"
 expect "cask 가 sha256 을 고정" "grep -qE '^[[:space:]]*sha256[[:space:]]+\"[0-9a-f]{64}\"' packaging/Casks/poke-token-bar.rb"
 
+echo "==> 셸 함정 (pipefail + grep -q)"
+# `set -o pipefail` 인 스크립트에서 `… | grep -q` 는 매치 즉시 파이프를 닫아 앞 명령에 SIGPIPE 를
+# 주고, 그 실패가 파이프라인 종료코드가 된다 → **통과가 실패로 뒤집힌다.** build-app.sh 가 정확히
+# 이걸로 하드닝 검사에 성공한 빌드를 실패로 보고하고 /Applications 설치를 건너뛰었다.
+# 사람이 기억할 게 아니라 기계가 막아야 하는 부류라 여기서 전수 검사한다.
+# 주석은 양쪽 판정에서 제외한다 — 이 파일 자체가 함정을 **설명**하느라 두 문자열을 다 담고 있어,
+# 순진한 grep 은 자기 문서를 위반으로 신고한다(실제로 그렇게 한 번 틀렸다).
+offenders=""
+for f in scripts/*.sh; do
+  grep -E '^[[:space:]]*set[[:space:]].*pipefail' "$f" >/dev/null 2>&1 || continue
+  if grep -vE '^[[:space:]]*#' "$f" | grep -E '\|[[:space:]]*grep[^|]*[[:space:]]-[a-zA-Z]*q' >/dev/null 2>&1; then
+    offenders="$offenders $f"
+  fi
+done
+if [[ -z "$offenders" ]]; then
+  pass "pipefail 스크립트에 'grep -q' 파이프 없음"
+else
+  bad "pipefail + grep -q 조합:$offenders (-q 를 빼고 >/dev/null 로 버리세요)"
+fi
+
 echo "==> 소스 불변식"
 expect "build-app.sh 가 hardened runtime 으로 서명" "grep -q 'options runtime' scripts/build-app.sh"
 expect "release.sh 가 SHA256 을 산출" "grep -q 'shasum -a 256' scripts/release.sh"
