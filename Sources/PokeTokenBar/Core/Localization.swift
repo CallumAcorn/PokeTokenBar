@@ -144,8 +144,16 @@ struct L {
           "Hoy: \(tokens) tokens (límite \(percent))")
     }
 
-    var disableKeychain: String { t("Keychain 접근 끄기", "Disable Keychain access", "Keychainアクセスを無効化", "Desactivar acceso a Keychain") }
-    var disableKeychainHint: String { t("켜면 Keychain 접근 허용 팝업이 더 안 뜹니다 — 공식 한도(%)만 숨겨지고 토큰·비용은 그대로", "When on, no more Keychain permission pop-ups — only official limits (%) are hidden; tokens/cost stay", "オンにするとKeychain許可のポップアップが出なくなります — 公式上限(%)のみ非表示、トークン・費用はそのまま", "Al activarlo, ya no aparecerán los avisos de permiso de Keychain — solo se ocultan los límites oficiales (%), los tokens y el coste se mantienen") }
+    /// 문구가 "Keychain" 이 아니라 "자격증명"인 이유: 이 스위치는 이제 Keychain 뿐 아니라
+    /// `~/.claude/.credentials.json` 읽기까지 모두 막는다(예전엔 Keychain 만 막혀 파일은 계속 읽혔다).
+    var disableKeychain: String { t("자격증명 접근 끄기", "Disable credential access", "資格情報へのアクセスを無効化", "Desactivar acceso a credenciales") }
+    var disableKeychainHint: String { t("기본값 켬. Keychain 과 .credentials.json 을 아예 읽지 않습니다 — 공식 한도(%)만 숨겨지고 토큰·비용은 그대로", "On by default. Reads neither the Keychain nor .credentials.json — only official limits (%) are hidden; tokens/cost stay", "既定でオン。Keychain も .credentials.json も読みません — 公式上限(%)のみ非表示、トークン・費用はそのまま", "Activado por defecto. No lee ni el Keychain ni .credentials.json — solo se ocultan los límites oficiales (%), los tokens y el coste se mantienen") }
+
+    var autoRestart: String { t("크래시 시 자동 재시작", "Restart automatically after a crash", "クラッシュ時に自動再起動", "Reiniciar automáticamente tras un fallo") }
+    var autoRestartHint: String { t("끔이 기본. 켜면 launchd 워치독(KeepAlive)이 비정상 종료된 앱을 되살립니다 — 지속성이 늘어나 보안 도구가 주시할 수 있어요", "Off by default. When on, a launchd watchdog (KeepAlive) revives the app after an abnormal exit — more persistence, which security tooling may flag", "既定でオフ。オンにすると launchd のウォッチドッグ(KeepAlive)が異常終了したアプリを復帰させます — 常駐性が増し、セキュリティ製品が検知対象にすることがあります", "Desactivado por defecto. Si se activa, un vigilante de launchd (KeepAlive) revive la app tras una salida anómala — más persistencia, que las herramientas de seguridad pueden señalar") }
+
+    var shellResolution: String { t("셸로 도구 경로 찾기", "Find tool paths via your shell", "シェルでツールのパスを探す", "Buscar rutas de herramientas con tu shell") }
+    var shellResolutionHint: String { t("끔이 기본. 켜면 `$SHELL -ilc` 로 로그인 셸을 띄워 PATH 를 읽습니다 — .zshrc 전체가 앱 안에서 실행돼요. Homebrew·mise·asdf·Volta·Bun·npm·~/.local/bin 은 켜지 않아도 찾습니다", "Off by default. When on, spawns `$SHELL -ilc` to read your PATH — your whole .zshrc runs inside the app. Homebrew, mise, asdf, Volta, Bun, npm and ~/.local/bin are found without it", "既定でオフ。オンにすると `$SHELL -ilc` でログインシェルを起動して PATH を読みます — .zshrc 全体がアプリ内で実行されます。Homebrew・mise・asdf・Volta・Bun・npm・~/.local/bin はオフでも見つかります", "Desactivado por defecto. Si se activa, lanza `$SHELL -ilc` para leer tu PATH — todo tu .zshrc se ejecuta dentro de la app. Homebrew, mise, asdf, Volta, Bun, npm y ~/.local/bin se encuentran sin esto") }
     var refreshLimitToken: String { t("한도 토큰 캐시 갱신", "Refresh limit token cache", "上限トークンキャッシュを更新", "Actualizar caché del token de límite") }
     var onlyOnPress: String { t("누를 때만 Keychain 을 읽어요 — 자동 폴링은 안 읽어 팝업이 안 떠요. 토큰 만료 후 이 버튼으로 한도 갱신", "Reads Keychain only when pressed — auto-polling never does, so no pop-ups. Refresh limits here after the token expires", "押した時のみKeychainを読みます — 自動更新では読まずポップアップも出ません。トークン期限切れ後はこのボタンで上限を更新", "Solo lee Keychain al pulsar — el sondeo automático nunca lo hace, así que no aparecen avisos. Usa este botón para actualizar los límites tras la expiración del token") }
     var launchAtLogin: String { t("로그인 시 자동 시작", "Launch at login", "ログイン時に自動起動", "Iniciar al arrancar sesión") }

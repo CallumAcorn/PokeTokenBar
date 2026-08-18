@@ -424,7 +424,13 @@ final class UsageStore {
         floatingPetEnabled = d.object(forKey: "floatingPetEnabled") as? Bool ?? false
         floatingPetSize = d.object(forKey: "floatingPetSize") as? Double ?? 96
         floatingPetBubbleAlerts = d.object(forKey: "floatingPetBubbleAlerts") as? Bool ?? true
-        disableKeychainAccess = d.object(forKey: "disableKeychainAccess") as? Bool ?? false
+        // Hardened default: credential access is OFF until the user turns it on. Upstream
+        // defaults this to `false` (read the token straight away); this fork inverts it so a
+        // fresh install never touches the Claude credential without an explicit opt-in. The
+        // cost is that the official-limits row stays hidden until enabled in Settings →
+        // Advanced. `d.object(forKey:)` is nil only when the key was never written, so anyone
+        // who has already made a choice keeps it.
+        disableKeychainAccess = d.object(forKey: "disableKeychainAccess") as? Bool ?? true
 
         reschedule()
 

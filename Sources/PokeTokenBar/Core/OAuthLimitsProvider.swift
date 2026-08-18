@@ -25,6 +25,20 @@ struct OAuthLimitsProvider: ClaudeLimitsProviding, Sendable {
     private static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
     private let accessTokenCache = OAuthAccessTokenCache.shared
 
+    /// This is the one request that carries the user's OAuth bearer token, so it does not go
+    /// through `URLSession.shared`: an ephemeral configuration keeps the response out of the
+    /// on-disk URL cache and holds no cookie or credential storage that could outlive the call.
+    /// Created once and reused — a session built per request leaks its delegate queue unless
+    /// `invalidateAndCancel()` is called, and that is easy to get wrong on a throwing path.
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.urlCache = nil
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.urlCredentialStorage = nil
+        return URLSession(configuration: config)
+    }()
+
     func fetch(allowKeychainPrompt: Bool = false) async throws -> LimitStatus {
         let token = try await accessTokenCache.accessToken(allowKeychainPrompt: allowKeychainPrompt)
         var status: LimitStatus
@@ -51,8 +65,9 @@ struct OAuthLimitsProvider: ClaudeLimitsProviding, Sendable {
         var request = URLRequest(url: Self.usageURL, timeoutInterval: 15)
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await Self.session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             if http.statusCode == 429 {
                 throw LimitsError.rateLimited(retryAfter: Self.retryAfterSeconds(http))
@@ -77,6 +92,17 @@ private actor OAuthAccessTokenCache {
     private var cachedCredential: OAuthCredentialData.Credential?
 
     func accessToken(allowKeychainPrompt: Bool, bypassCache: Bool = false) throws -> String {
+        // The opt-out gate is checked FIRST — before the in-memory cache and before any
+        // credential source is touched. It previously wrapped only the Keychain read, so
+        // `~/.claude/.credentials.json` was still read on every automatic poll with the
+        // setting on, and an already-cached token kept being served after the user opted out.
+        // The setting is a promise that the app reads no credential at all; honour it here,
+        // at the single choke point every path funnels through.
+        if KeychainAccessGate.isDisabled {
+            cachedCredential = nil
+            throw LimitsError.keychainAccessDisabled
+        }
+
         if !bypassCache, let cachedCredential, !cachedCredential.isExpired {
             return cachedCredential.accessToken
         }
