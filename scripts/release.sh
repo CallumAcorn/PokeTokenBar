@@ -13,8 +13,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-REPO="chattymin/PokeTokenBar"
-TAP_REPO="chattymin/homebrew-tap"
+# 포크 기본값. 업스트림으로 배포하려면 환경변수로 덮어쓴다.
+REPO="${PTB_REPO:-CallumAcorn/PokeTokenBar}"
+TAP_REPO="${PTB_TAP_REPO:-CallumAcorn/homebrew-tap}"
 CASK_PATH="Casks/poke-token-bar.rb"
 
 # ── 문서 일관성 검토 (배포 전 항상 실행) ───────────────────────────────────
@@ -131,10 +132,17 @@ perl -pi -e "s/VERSION=\"[0-9.]+\"/VERSION=\"$VERSION\"/" scripts/build-app.sh
 
 echo "▶ 4/8 빌드 + zip (push 전 검증 — 실패해도 범프 미커밋이라 origin/main 무손상)"
 ./scripts/build-app.sh >/dev/null
-rm -f build/PokeTokenBar.zip
+rm -f build/PokeTokenBar.zip build/SHA256SUMS
 ditto -c -k --keepParent build/PokeTokenBar.app build/PokeTokenBar.zip
 BUILT=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" build/PokeTokenBar.app/Contents/Info.plist)
 [[ "$BUILT" == "$VERSION" ]] || { echo "✗ 빌드 버전 불일치: $BUILT (수동 복구: git checkout scripts/build-app.sh)"; exit 1; }
+
+# 체크섬은 릴리스와 cask 양쪽의 단일 근거다. 여기서 못 만들면 배포하지 않는다 —
+# 해시 없는 릴리스는 cask 를 :no_check 로 되돌리게 만들고, 그게 원래 문제였다.
+ZIP_SHA=$(shasum -a 256 build/PokeTokenBar.zip | awk '{print $1}')
+[[ -n "$ZIP_SHA" ]] || { echo "✗ zip SHA256 산출 실패 — 중단"; exit 1; }
+( cd build && shasum -a 256 PokeTokenBar.zip > SHA256SUMS )
+echo "  ✓ SHA256 $ZIP_SHA"
 
 echo "▶ 5/8 커밋 + push (빌드 성공 후)"
 git add scripts/build-app.sh
@@ -146,17 +154,20 @@ git push -q origin main
 echo "▶ 6/8 GitHub Release v$VERSION"
 NOTES_FILE="${PTB_NOTES_FILE:-}"
 if [[ -n "$NOTES_FILE" && -f "$NOTES_FILE" ]]; then
-  gh release create "v$VERSION" build/PokeTokenBar.zip --repo "$REPO" \
-    --title "PokeTokenBar v$VERSION" --target main --notes-file "$NOTES_FILE"
+  gh release create "v$VERSION" build/PokeTokenBar.zip build/SHA256SUMS --repo "$REPO" --title "PokeTokenBar v$VERSION" --target main --notes-file "$NOTES_FILE"
 else
-  gh release create "v$VERSION" build/PokeTokenBar.zip --repo "$REPO" \
-    --title "PokeTokenBar v$VERSION" --target main --notes "Release v$VERSION"
+  gh release create "v$VERSION" build/PokeTokenBar.zip build/SHA256SUMS --repo "$REPO" --title "PokeTokenBar v$VERSION" --target main --notes "Release v$VERSION"
 fi
 
-echo "▶ 7/8 Homebrew cask $VERSION"
+echo "▶ 7/8 Homebrew cask $VERSION (sha256 고정)"
 TMP_CASK=$(mktemp)
-gh api "repos/$TAP_REPO/contents/$CASK_PATH" --jq '.content' | base64 -d \
-  | perl -pe "s/version \"[0-9.]+\"/version \"$VERSION\"/" > "$TMP_CASK"
+gh api "repos/$TAP_REPO/contents/$CASK_PATH" --jq '.content' | base64 -d | perl -pe "s/version \"[0-9.]+\"/version \"$VERSION\"/" | perl -pe "s/^(\s*)sha256\s+.*$/\${1}sha256 \"$ZIP_SHA\"/" > "$TMP_CASK"
+# 회귀 방지 게이트: :no_check 로 되돌아간 cask 는 밀지 않는다.
+if grep -q 'sha256 :no_check' "$TMP_CASK"; then
+  echo "✗ cask 가 sha256 :no_check 입니다 — 해시 고정 실패, 중단." >&2
+  rm -f "$TMP_CASK"; exit 1
+fi
+grep -q "sha256 \"$ZIP_SHA\"" "$TMP_CASK" || { echo "✗ cask 에 sha256 이 반영되지 않았습니다 — 중단." >&2; rm -f "$TMP_CASK"; exit 1; }
 SHA=$(gh api "repos/$TAP_REPO/contents/$CASK_PATH" --jq '.sha')
 gh api -X PUT "repos/$TAP_REPO/contents/$CASK_PATH" \
   -f message="cask: poke-token-bar $VERSION" \

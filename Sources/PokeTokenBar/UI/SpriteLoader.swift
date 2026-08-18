@@ -23,6 +23,40 @@ actor SpriteStore {
         "\(speciesID)-\(shiny ? "sh" : "")\(animated ? "a" : "s")"
     }
 
+    /// Sprites are the one remote payload the app writes to disk, so the response is checked
+    /// before it lands there: right host, plausible size, and a real image header. A 200 from a
+    /// CDN is not on its own a reason to persist arbitrary bytes into Application Support.
+    static let allowedSpriteHosts: Set<String> = ["raw.githubusercontent.com"]
+    /// Largest sprite in the PokéAPI set is a few hundred KB; 5 MB is generous headroom and
+    /// still bounds what a redirect or a compromised mirror could write.
+    static let maxSpriteBytes = 5 * 1024 * 1024
+
+    /// PNG / GIF / JPEG / WebP magic numbers. Checked rather than trusting Content-Type, and
+    /// deliberately permissive across the four formats so a legitimate sprite is never rejected.
+    nonisolated static func hasImageMagic(_ data: Data) -> Bool {
+        let bytes = [UInt8](data.prefix(12))
+        guard bytes.count >= 4 else { return false }
+        if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return true }          // PNG
+        if bytes.starts(with: [0x47, 0x49, 0x46, 0x38]) { return true }          // GIF87a/89a
+        if bytes.starts(with: [0xFF, 0xD8, 0xFF]) { return true }                // JPEG
+        if bytes.count >= 12, bytes.starts(with: [0x52, 0x49, 0x46, 0x46]),
+           Array(bytes[8..<12]) == [0x57, 0x45, 0x42, 0x50] { return true }      // RIFF....WEBP
+        return false
+    }
+
+    /// Fetch sprite bytes, returning nil unless every check passes.
+    nonisolated static func fetchImageData(_ url: URL) async -> Data? {
+        guard url.scheme == "https", let host = url.host, allowedSpriteHosts.contains(host) else {
+            return nil
+        }
+        guard let (data, response) = try? await URLSession.shared.data(from: url),
+              let http = response as? HTTPURLResponse, http.statusCode == 200,
+              !data.isEmpty, data.count <= maxSpriteBytes,
+              hasImageMagic(data)
+        else { return nil }
+        return data
+    }
+
     func data(speciesID: Int, animated: Bool, shiny: Bool = false) async -> Data? {
         if animated, !PokemonAssets.hasAnimatedSprite(speciesID: speciesID) { return nil }
         let key = Self.cacheKey(speciesID: speciesID, animated: animated, shiny: shiny)
@@ -37,9 +71,7 @@ actor SpriteStore {
         case (false, false): urlStr = "\(base)/\(speciesID).png"
         case (false, true):  urlStr = "\(base)/shiny/\(speciesID).png"
         }
-        guard let url = URL(string: urlStr),
-              let (d, resp) = try? await URLSession.shared.data(from: url),
-              (resp as? HTTPURLResponse)?.statusCode == 200, !d.isEmpty else { return nil }
+        guard let url = URL(string: urlStr), let d = await Self.fetchImageData(url) else { return nil }
         try? d.write(to: file, options: .atomic)   // torn write 방지 — 크래시/강제종료 시 손상 캐시가 남지 않게
         remember(key, d)
         return d
@@ -53,8 +85,7 @@ actor SpriteStore {
         let file = dir.appendingPathComponent("\(key).png")
         if let d = try? Data(contentsOf: file) { remember(key, d); return d }
         guard let url = URL(string: "\(itemBase)/\(itemName).png"),
-              let (d, resp) = try? await URLSession.shared.data(from: url),
-              (resp as? HTTPURLResponse)?.statusCode == 200, !d.isEmpty else { return nil }
+              let d = await Self.fetchImageData(url) else { return nil }
         try? d.write(to: file, options: .atomic)
         remember(key, d)
         return d
@@ -67,8 +98,7 @@ actor SpriteStore {
         let file = dir.appendingPathComponent("egg.png")
         if let d = try? Data(contentsOf: file) { remember(key, d); return d }
         guard let url = URL(string: "\(base)/egg.png"),
-              let (d, resp) = try? await URLSession.shared.data(from: url),
-              (resp as? HTTPURLResponse)?.statusCode == 200, !d.isEmpty else { return nil }
+              let d = await Self.fetchImageData(url) else { return nil }
         try? d.write(to: file, options: .atomic)
         remember(key, d)
         return d
