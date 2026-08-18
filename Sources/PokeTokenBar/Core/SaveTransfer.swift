@@ -148,6 +148,13 @@ enum SaveTransfer {
         s.claimedTodayTokensByProvider = s.claimedTodayTokensByProvider?.reduce(into: [:]) { result, entry in
             result[entry.key] = clampToken(entry.value)
         }
+        // 인벤토리 **수량**도 산술에 쓰인다 — `buy` 의 `+= 1`, 사탕 지급의 `+= g.count`, 사용의 `- 1`.
+        // 항목 자체는 진행이라 지우지 않지만(도감·인벤토리 불변), Int.max/Int.min 이 그대로 들어오면
+        // 다음 구매 한 번이 오버플로 트랩으로 프로세스를 죽이고, 값이 이미 저장됐으므로 재기동해도
+        // 같은 상태를 읽어 다시 죽는다 — 이 함수가 막으려던 바로 그 잠금 상태다.
+        s.inventory = s.inventory.reduce(into: [:]) { result, entry in
+            result[entry.key] = clampToken(entry.value)
+        }
         // 알 보증은 "지금 품고 있는 알"에만 붙는 값이라 활성 포켓몬과 공존할 수 없다. 손편집·구버전
         // 조합으로 둘 다 들어오면 그 보증이 다음 알로 새어 영구 프리미엄이 되므로 여기서 떨군다.
         // 그 보증으로 미리 뽑아둔 종(pendingHatchID)도 함께 버린다 — 보증만 지우면 졸업 후 받는 **무료**

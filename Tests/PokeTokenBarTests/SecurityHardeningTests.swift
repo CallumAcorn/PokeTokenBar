@@ -165,3 +165,53 @@ final class SecurityHardeningTests: XCTestCase {
         return url.path
     }
 }
+
+/// Inventory bounds on the save trust boundary.
+///
+/// `SaveTransfer.sanitized()` is the single choke point for both `load()` and save import, and it
+/// exists specifically so that out-of-range values cannot reach arithmetic that traps. It clamped
+/// the token fields but not `inventory`, whose values feed `+= 1` (shop purchase) and `+= g.count`
+/// (candy grant). A save carrying `Int.max` rare candy therefore crashed the process on the next
+/// purchase, and kept crashing on relaunch because the value had been persisted.
+final class SaveInventoryBoundsTests: XCTestCase {
+
+    func testSanitizedClampsInventoryUpperBound() {
+        var state = CompanionState()
+        state.inventory[ItemKind.rareCandy.rawValue] = Int.max
+        let clean = SaveTransfer.sanitized(state)
+        XCTAssertEqual(clean.inventory[ItemKind.rareCandy.rawValue], SaveTransfer.maxTokenValue,
+                       "Int.max rare candy must be clamped — `inventory += 1` traps on overflow")
+    }
+
+    func testSanitizedClampsInventoryNegatives() {
+        var state = CompanionState()
+        state.inventory[ItemKind.mint.rawValue] = Int.min
+        let clean = SaveTransfer.sanitized(state)
+        XCTAssertEqual(clean.inventory[ItemKind.mint.rawValue], 0,
+                       "negative counts must floor at 0 — `itemCount - 1` traps at Int.min")
+    }
+
+    /// The clamp must not disturb ordinary saves.
+    func testSanitizedLeavesRealisticInventoryAlone() {
+        var state = CompanionState()
+        state.inventory[ItemKind.rareCandy.rawValue] = 12
+        state.inventory[ItemKind.shinyCharm.rawValue] = 1
+        let clean = SaveTransfer.sanitized(state)
+        XCTAssertEqual(clean.inventory[ItemKind.rareCandy.rawValue], 12)
+        XCTAssertEqual(clean.inventory[ItemKind.shinyCharm.rawValue], 1)
+    }
+
+    /// The overflow is genuinely reachable through the real purchase path, not just theoretical.
+    /// Guard the arithmetic that would trap so the assertion documents the trigger.
+    func testPurchaseArithmeticIsSafeAfterSanitising() {
+        var state = CompanionState()
+        state.inventory[ItemKind.rareCandy.rawValue] = Int.max
+        let clean = SaveTransfer.sanitized(state)
+        let count = clean.inventory[ItemKind.rareCandy.rawValue] ?? 0
+        // This is the operation CompanionStore.buy() performs. It must not overflow.
+        XCTAssertFalse(count.addingReportingOverflow(1).overflow,
+                       "sanitised inventory must survive the += 1 in buy()")
+        XCTAssertFalse(count.subtractingReportingOverflow(1).overflow,
+                       "sanitised inventory must survive the - 1 in consumeRareCandy()")
+    }
+}
