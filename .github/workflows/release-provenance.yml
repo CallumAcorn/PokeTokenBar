@@ -1,0 +1,78 @@
+name: release-provenance
+
+# Builds the tagged source on a GitHub runner, publishes the result alongside a
+# signed build-provenance attestation, and records SHA256 checksums.
+#
+# What this does and does not prove
+# ---------------------------------
+# The release zip a maintainer uploads is signed on their own Mac, so a CI build
+# can never be byte-identical to it — the code signature differs by construction.
+# What this workflow gives you is an *independent* build of the same tag, built by
+# GitHub from public source, with an attestation you can verify offline:
+#
+#     gh attestation verify PokeTokenBar-ci.zip --repo CallumAcorn/PokeTokenBar
+#
+# A backdoor present in the uploaded zip but absent from this source therefore
+# shows up as a behavioural or size difference between the two artefacts. It does
+# not, on its own, prove the uploaded zip is clean. The only way to be certain of
+# what you are running is to build from source yourself — see SECURITY.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-attest:
+    runs-on: macos-15
+    permissions:
+      contents: write      # attach artefacts to the release
+      id-token: write      # OIDC token for the attestation signature
+      attestations: write  # record the provenance attestation
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Test gate
+        run: ./scripts/test-gate.sh
+
+      - name: Build release binary
+        run: swift build -c release
+
+      # The executable, not a .app wrapper. Assembling a bundle here would duplicate
+      # build-app.sh's Info.plist and LaunchAgent generation, and the copy would drift
+      # from the real one the moment either changed. The binary is the part worth
+      # comparing anyway — the wrapper is generated metadata.
+      - name: Stage binary and checksum
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          cp .build/release/PokeTokenBar build/PokeTokenBar-ci
+          codesign --force --options runtime -s - build/PokeTokenBar-ci
+          codesign --verify --strict build/PokeTokenBar-ci
+          cd build
+          shasum -a 256 PokeTokenBar-ci > SHA256SUMS.ci
+          cat SHA256SUMS.ci
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: build/PokeTokenBar-ci
+
+      - name: Upload artefacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: poketokenbar-ci-build
+          path: |
+            build/PokeTokenBar-ci
+            build/SHA256SUMS.ci
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" build/PokeTokenBar-ci build/SHA256SUMS.ci --clobber
