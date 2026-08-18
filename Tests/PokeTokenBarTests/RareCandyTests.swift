@@ -430,6 +430,10 @@ final class RareCandyGrantIntegrationTests: XCTestCase {
         super.setUp()
         suiteName = "rc-int-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
+        // Candy grants are driven by Claude limit windows, so this suite needs limits loaded.
+        // The shipped default is credential access off; opt in explicitly rather than relying on
+        // it. (Pinned by SecurityHardeningTests.testCredentialAccessIsDisabledByDefault.)
+        defaults.set(false, forKey: "disableKeychainAccess")
     }
     override func tearDown() {
         defaults.removePersistentDomain(forName: suiteName)

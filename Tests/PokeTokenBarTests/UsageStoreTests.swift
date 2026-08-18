@@ -142,6 +142,12 @@ final class UsageStoreTests: XCTestCase {
         suiteName = "ptb-test-\(UUID().uuidString)"
         testDefaults = UserDefaults(suiteName: suiteName)
         KeychainAccessGate.isDisabled = false
+        // This suite exercises limit *display* logic against injected stub providers, so it opts
+        // in explicitly. The shipped default is the opposite (credential access off until the
+        // user enables it) — that default is pinned by
+        // SecurityHardeningTests.testCredentialAccessIsDisabledByDefault rather than left to be
+        // inferred from whichever test happens to run first.
+        testDefaults.set(false, forKey: "disableKeychainAccess")
     }
 
     override func tearDown() {
