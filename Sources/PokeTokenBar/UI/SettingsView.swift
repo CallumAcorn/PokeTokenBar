@@ -8,7 +8,10 @@ struct SettingsView: View {
     /// 팝오버 내부 화면 전환 방식 — sheet/dismiss 를 쓰지 않는다 (PopoverView 의 NOTE 참조)
     var onClose: () -> Void
     @State private var launchAtLogin = LoginItem.isEnabled
+    @State private var autoRestart = LoginItem.isAutoRestartEnabled
     @State private var launchAtLoginError: String?
+    /// 셸 해석 옵트인 — 기본은 끔(BinaryLocator 가 같은 키를 같은 기본값으로 읽는다).
+    @AppStorage(BinaryLocator.shellResolutionDefaultsKey) private var disableShellResolution = true
     @State private var reportError: String?
     @State private var advancedExpanded = false
     @State private var isCheckingUpdate = false
@@ -144,11 +147,34 @@ struct SettingsView: View {
                     .disabled(!isBundledApp)
                     .onChange(of: launchAtLogin) { _, newValue in
                         do {
-                            try LoginItem.setEnabled(newValue)   // KeepAlive 에이전트(로그인 실행+크래시 재실행)
+                            try LoginItem.setEnabled(newValue, autoRestart: autoRestart)
                             launchAtLoginError = nil
                         } catch {
                             launchAtLoginError = "\(error.localizedDescription)"
                             launchAtLogin = LoginItem.isEnabled
+                        }
+                    }
+            }
+            Divider()
+            groupRow {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(l.autoRestart)
+                    Text(l.autoRestartHint).font(.caption2).foregroundStyle(.tertiary)
+                }
+                Spacer()
+                // 로그인 실행이 꺼져 있으면 등록할 에이전트가 없다. 그대로 두면 사용자가 켠 값이
+                // 아무 데도 저장되지 않고 다음에 설정을 열 때 조용히 되돌아간다 — 비활성으로
+                // 종속 관계를 드러내는 쪽이 정직하다.
+                Toggle("", isOn: $autoRestart)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    .disabled(!isBundledApp || !launchAtLogin)
+                    .onChange(of: autoRestart) { _, newValue in
+                        do {
+                            try LoginItem.setAutoRestart(newValue)
+                            launchAtLoginError = nil
+                        } catch {
+                            launchAtLoginError = "\(error.localizedDescription)"
+                            autoRestart = LoginItem.isAutoRestartEnabled
                         }
                     }
             }
@@ -329,6 +355,20 @@ struct SettingsView: View {
                     }
                     Spacer()
                     Toggle("", isOn: $store.disableKeychainAccess)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                Divider()
+                groupRow {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(l.shellResolution)
+                        Text(l.shellResolutionHint).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    // 저장 키는 부정형(disable…)이고 라벨은 긍정형이라 여기서 뒤집는다.
+                    // 토글 후엔 경로 캐시를 비운다 — 안 그러면 다음 재기동까지 이전 판정이 남는다.
+                    Toggle("", isOn: Binding(
+                        get: { !disableShellResolution },
+                        set: { disableShellResolution = !$0; BinaryLocator.reset() }))
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
                 Divider()
