@@ -6,6 +6,19 @@ import Foundation
 /// 전략: 수동 지정(UserDefaults "<binary>Path") → 정적 경로(빠름) → 로그인+인터랙티브 셸 PATH 해석.
 /// 바이너리별로 1회 캐시(셸 호출 비용 회피).
 enum BinaryLocator {
+    /// UserDefaults key for the shell-resolution opt-out. Defaults to **disabled** in this fork:
+    /// resolving a binary by spawning `$SHELL -ilc` executes the user's entire interactive
+    /// profile (`.zshrc` and everything it sources) inside the app. That is a large amount of
+    /// third-party code running with the app's privileges just to learn a PATH entry, and the
+    /// static path list below already covers Homebrew, mise, asdf, Volta, Bun, npm and
+    /// `~/.local/bin`. Users whose tools live somewhere else can turn it back on in Settings,
+    /// or point at the binary directly with the `<binary>Path` default.
+    static let shellResolutionDefaultsKey = "disableShellResolution"
+
+    static var isShellResolutionDisabled: Bool {
+        UserDefaults.standard.object(forKey: shellResolutionDefaultsKey) as? Bool ?? true
+    }
+
     private static let lock = NSLock()
     private struct Cached { let path: String?; let at: Date }
     private nonisolated(unsafe) static var cache: [String: Cached] = [:]
@@ -90,6 +103,10 @@ enum BinaryLocator {
             return hit
         }
         // 2) 로그인+인터랙티브 셸 PATH 해석 (mise activate / nvm / fnm 등은 .zshrc 에서 PATH 주입)
+        guard !isShellResolutionDisabled else {
+            AppLog.write("\(binary) not in static paths and shell resolution is disabled — skipping shell spawn")
+            return nil
+        }
         return shellResolve(binary)
     }
 
@@ -117,8 +134,13 @@ enum BinaryLocator {
     /// 셸을 띄워 stdout 을 통째로 돌려준다(마커 추출은 호출자 몫). 값을 **여러 개** 받는 스크립트는
     /// 마커가 여러 쌍이라 `parseMarkedPath`(첫 쌍만) 로는 못 읽으므로 원문이 필요하다.
     private static func shellMarkedOutput(script: String, arguments: [String], label: String) -> String? {
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        guard FileManager.default.isExecutableFile(atPath: shell) else { return nil }
+        // Single choke point for every shell spawn in the app — the opt-out is enforced here so
+        // it covers env lookups as well as PATH resolution.
+        guard !isShellResolutionDisabled else {
+            AppLog.write("\(label) skipped — shell resolution is disabled")
+            return nil
+        }
+        guard let shell = resolveLoginShell() else { return nil }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
@@ -196,6 +218,37 @@ enum BinaryLocator {
             out[name] = value
         }
         return out
+    }
+
+    /// The shell to spawn, accepted only if the system lists it in `/etc/shells`.
+    ///
+    /// `$SHELL` is inherited environment: anything that can set it picks the binary this app
+    /// executes with the user's full profile. `/etc/shells` is root-owned and SIP-protected, so
+    /// checking membership turns "whatever the environment says" into "one of the shells this
+    /// machine sanctions". An unlisted value falls back to `/bin/zsh` rather than failing —
+    /// returning nil here would silently stop provider detection for anyone running a shell the
+    /// system does not list, which is a functional regression, not a security win.
+    static func resolveLoginShell(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        shellsFile: String = "/etc/shells",
+        fallback: String = "/bin/zsh"
+    ) -> String? {
+        let fm = FileManager.default
+        let candidate = environment["SHELL"] ?? fallback
+        let sanctioned = (try? String(contentsOfFile: shellsFile, encoding: .utf8))
+            .map { text in
+                Set(text.split(whereSeparator: \.isNewline)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty && !$0.hasPrefix("#") })
+            } ?? []
+
+        if sanctioned.contains(candidate), fm.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+        if candidate != fallback {
+            AppLog.write("SHELL '\(candidate)' is not listed in \(shellsFile) — falling back to \(fallback)")
+        }
+        return fm.isExecutableFile(atPath: fallback) ? fallback : nil
     }
 
     /// 셸 주입 방지 — ASCII 대문자·숫자·밑줄만.
