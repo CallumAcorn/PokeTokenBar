@@ -125,24 +125,30 @@ PokeTokenBar は、あなたがすでに使っている AI コーディングト
 
 macOS 14+（Apple Silicon または Intel）。それだけ — トークン使用量はローカルの Claude Code・Codex・Gemini CLI・Antigravity・OpenCode・Hermes Agent・Cursor・Grok CLI・Copilot CLI・Kiro CLI データから直接読み取り、外部の使用量 CLI は不要です。
 
-### Homebrew
+> **これはセキュリティ強化フォークです。** ダウンロードではなくソースからビルドし、既定値が 3 つ
+> アップストリームと異なります。詳細な手順: **[INSTALL.md](INSTALL.md)**（英語）。何がなぜ変わったか:
+> [SECURITY.md](SECURITY.md) と [docs/reference/fork-hardening.md](docs/reference/fork-hardening.md)。
+
+### ソースからビルド
 
 ```bash
-brew install --cask chattymin/tap/poke-token-bar
+git clone https://github.com/CallumAcorn/PokeTokenBar.git
+cd PokeTokenBar
+./scripts/verify-hardening.sh
+./scripts/build-app.sh
 ```
 
-ad-hoc／自己署名アプリのため、Cask インストール時に隔離属性を自動で除去します。
+Swift 6 ツールチェーンが必要なため Xcode 16 以降が要ります。`build-app.sh` が hardened runtime で
+署名し、`/Applications` にインストールします。
 
-### 手動インストール（Homebrew なし）
+このフォークには **リリースのダウンロードも Homebrew Cask も意図的にありません。** ダウンロードした
+ビルドは自己署名で公証されていないため Gatekeeper がブロックし、結局は隔離属性を手作業で外すことに
+なります。その回避はこのフォークがアップストリームの Cask から取り除いた動作なので、ここでは提供
+しません。自分でビルドしたバイナリには隔離属性が付かず、そのまま起動できます。
 
-Homebrew を使わない場合は、[最新リリース](https://github.com/chattymin/PokeTokenBar/releases/latest) から `PokeTokenBar.zip` をダウンロードして展開し、`PokeTokenBar.app` を `/Applications` にドラッグします。
-
-このアプリは ad-hoc／自己署名（Apple Developer アカウントでの公証なし）のため、初回起動時に Gatekeeper が「開発元が未確認」の警告を表示します。次のいずれかで一度だけ解除してください。
-
-- **Finder:** `PokeTokenBar.app` を右クリック（または Control+クリック）→ **開く** → ダイアログで再度 **開く**。
-- **ターミナル:** `xattr -dr com.apple.quarantine /Applications/PokeTokenBar.app`
-
-（Homebrew Cask は隔離属性を自動で除去するため、この手順は不要です。）
+アップストリームのリリースと Cask は [chattymin/PokeTokenBar](https://github.com/chattymin/PokeTokenBar)
+にあります。**そちらはこのフォークではなくアップストリームのビルドをインストールし**、ここに書かれた
+強化は適用されません。
 
 ### ソースからビルド
 

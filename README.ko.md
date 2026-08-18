@@ -125,24 +125,29 @@ PokeTokenBar는 당신이 이미 태우고 있는 AI 코딩 토큰(Claude Code �
 
 macOS 14+ (Apple Silicon 또는 Intel). 끝입니다 — 토큰 사용량은 로컬 Claude Code·Codex·Gemini CLI·Antigravity·OpenCode·Hermes Agent·Cursor·Grok CLI·Copilot CLI·Kiro CLI 데이터에서 직접 읽으며 외부 사용량 CLI가 필요 없습니다.
 
-### Homebrew
+> **이 저장소는 보안 강화 포크입니다.** 내려받는 대신 소스에서 빌드하며, 기본값 세 가지가 업스트림과
+> 다릅니다. 전체 안내: **[INSTALL.md](INSTALL.md)** (영문). 무엇이 왜 바뀌었는지:
+> [SECURITY.md](SECURITY.md), [docs/reference/fork-hardening.md](docs/reference/fork-hardening.md).
+
+### 소스에서 빌드
 
 ```bash
-brew install --cask chattymin/tap/poke-token-bar
+git clone https://github.com/CallumAcorn/PokeTokenBar.git
+cd PokeTokenBar
+./scripts/verify-hardening.sh
+./scripts/build-app.sh
 ```
 
-ad-hoc/자체 서명 앱이라 Cask 설치 시 격리 속성을 자동 제거합니다.
+Swift 6 툴체인이 필요하므로 Xcode 16 이상이 있어야 합니다. `build-app.sh` 가 hardened runtime 으로
+서명하고 `/Applications` 에 설치합니다.
 
-### 직접 설치 (Homebrew 없이)
+이 포크에는 **릴리스 다운로드와 Homebrew Cask 가 의도적으로 없습니다.** 내려받은 빌드는 자체 서명이고
+공증되지 않아 Gatekeeper 가 막고, 결국 격리 속성을 손으로 벗겨야 합니다. 그 우회는 이 포크가 업스트림
+Cask 에서 제거한 동작이라 여기서 다시 제공하지 않습니다. 직접 빌드한 바이너리에는 격리 속성이 붙지
+않으므로 그냥 실행됩니다.
 
-Homebrew를 쓰지 않는다면 [최신 릴리스](https://github.com/chattymin/PokeTokenBar/releases/latest)에서 `PokeTokenBar.zip`을 내려받아 압축을 풀고 `PokeTokenBar.app`을 `/Applications`로 드래그합니다.
-
-이 앱은 ad-hoc/자체 서명(Apple 개발자 계정 공증 없음)이라 첫 실행 시 Gatekeeper가 "확인되지 않은 개발자" 경고를 띄웁니다. 아래 둘 중 하나로 한 번만 해제하면 됩니다.
-
-- **Finder:** `PokeTokenBar.app`을 우클릭(또는 Control+클릭) → **열기** → 대화상자에서 **열기**를 다시 클릭.
-- **터미널:** `xattr -dr com.apple.quarantine /Applications/PokeTokenBar.app`
-
-(Homebrew Cask는 격리 속성을 자동 제거하므로 이 과정이 필요 없습니다.)
+업스트림의 릴리스와 Cask 는 [chattymin/PokeTokenBar](https://github.com/chattymin/PokeTokenBar) 에
+있습니다. **그쪽은 이 포크가 아니라 업스트림 빌드를 설치하며**, 여기 적힌 강화가 적용되지 않습니다.
 
 ### 소스 빌드
 

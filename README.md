@@ -125,24 +125,31 @@ All read locally — no external usage CLI required. Adding a tool is one provid
 
 macOS 14+ (Apple Silicon or Intel). That's it — token usage is read directly from local Claude Code, Codex, Gemini CLI, Antigravity, OpenCode, Hermes Agent, Cursor, Grok CLI, Copilot CLI, and Kiro CLI data, with no external usage CLI required.
 
-### Homebrew
+> **This is a security-hardened fork.** It is built from source rather than downloaded, and three
+> defaults differ from upstream. Full instructions: **[INSTALL.md](INSTALL.md)**. What changed and
+> why: [SECURITY.md](SECURITY.md) and [docs/reference/fork-hardening.md](docs/reference/fork-hardening.md).
+
+### Build from source
 
 ```bash
-brew install --cask chattymin/tap/poke-token-bar
+git clone https://github.com/CallumAcorn/PokeTokenBar.git
+cd PokeTokenBar
+./scripts/verify-hardening.sh
+./scripts/build-app.sh
 ```
 
-ad-hoc/self-signed; the cask strips the quarantine attribute on install.
+Needs Xcode 16+ for the Swift 6 toolchain. `build-app.sh` signs with the hardened runtime and
+installs to `/Applications`.
 
-### Manual install (without Homebrew)
+There is deliberately **no release download and no Homebrew cask** for this fork. A downloaded
+build would be self-signed and un-notarised, so Gatekeeper would block it and you would have to
+strip the quarantine attribute by hand. That bypass is one of the things this fork removed from
+the upstream cask, so it is not offered here. A binary you compile locally carries no quarantine
+attribute and simply runs.
 
-Prefer not to use Homebrew? Download `PokeTokenBar.zip` from the [latest release](https://github.com/chattymin/PokeTokenBar/releases/latest), unzip it, and drag `PokeTokenBar.app` into `/Applications`.
-
-Because the app is ad-hoc/self-signed (not notarized under an Apple Developer account), Gatekeeper shows an "unidentified developer" warning on first launch. Clear it once, either way:
-
-- **Finder:** right-click (or Control-click) `PokeTokenBar.app` → **Open** → **Open** again in the dialog.
-- **Terminal:** `xattr -dr com.apple.quarantine /Applications/PokeTokenBar.app`
-
-(The Homebrew cask strips quarantine for you, so it needs no extra step.)
+Upstream's own releases and cask are at
+[chattymin/PokeTokenBar](https://github.com/chattymin/PokeTokenBar). **They install upstream's
+build, not this one**, without the hardening described here.
 
 ### Build from source
 
