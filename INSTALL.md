@@ -5,7 +5,7 @@ The upstream project is well built and carries no malware. This fork changes how
 reach by default, and how you can verify what you are running.
 
 If you were sent here, read [What it does by default](#what-it-does-by-default) before installing.
-Three behaviours differ from upstream and one of them will look like a missing feature.
+Two behaviours differ from upstream, and the Keychain grant needs one deliberate click.
 
 ## There is no download, on purpose
 
@@ -61,11 +61,15 @@ optional if you just want the app, but they are the point of building from sourc
 least once.
 
 `build-app.sh` will print that no `PokeTokenBar Local` signing identity was found and that it is
-falling back to ad-hoc signing. **That is the expected and recommended outcome.** The hardened
-runtime is applied either way. Do not run `scripts/create-signing-cert.sh` unless you have a
-specific reason: it installs a self-signed certificate as a code-signing **trust root** in your
-login keychain, and the only thing it buys you is avoiding a repeat Keychain prompt when the app
-reads your Claude credential, which is off by default here anyway.
+falling back to ad-hoc signing. The hardened runtime is applied either way, so this is fine.
+
+**One caveat if you rebuild often.** Ad-hoc signing changes the binary's code-signature hash on
+every build, which invalidates the macOS Keychain "Always Allow" grant. The app then falls back to
+needing the refresh button until you grant access again. `scripts/create-signing-cert.sh` fixes
+that by creating a stable identity, but it also installs a self-signed certificate as a
+code-signing **trust root** in your login keychain, which is a real and permanent expansion of
+what your Mac trusts. Install it once and rarely rebuild: skip the script. Rebuild regularly and
+want limits to keep working without re-granting: run it, knowing that trade-off.
 
 `build-app.sh` quits any running copy and replaces `/Applications/PokeTokenBar.app`. It touches
 nothing else.
@@ -86,14 +90,17 @@ Expected:
 
 ## What it does by default
 
-Three defaults differ from upstream. All three are visible in
-`~/Library/Logs/PokeTokenBar.log` shortly after launch.
+Two defaults differ from upstream, plus the Keychain grant described first. All are visible
+in `~/Library/Logs/PokeTokenBar.log` shortly after launch.
 
-**Official Claude limits are hidden.** The app does not read your Claude credential unless you
-ask it to, so the "Limits (official)" row is absent. This is the change most likely to be mistaken
-for a bug. Upstream reads the credential on first launch; this fork does not. To turn it on:
-Settings → Advanced → switch **Disable credential access** off, then press the refresh button.
-macOS will prompt for Keychain access once. Log line while off:
+**Official Claude limits need one grant.** On first use, press the refresh button on the limits
+row and choose **Always Allow** at the macOS Keychain prompt. Automatic refresh will not read the
+Keychain until a silent read has been proven to work, so without that one grant the limits row
+stays stale and no background poll will ever prompt you. Choosing "Allow" rather than "Always
+Allow" leaves it needing the button each time.
+
+To switch credential reading off entirely: Settings → Advanced → **Disable credential access** on.
+Log line while off:
 
 ```
 claude limits skipped: keychain access disabled
@@ -144,8 +151,8 @@ Two things make that conversation easier:
 - The app reads **token counters only**. Prompt and response content is never parsed, stored or
   transmitted. [SECURITY.md](SECURITY.md) lists every path it touches.
 - It talks to **seven hosts**, none of which carry your usage, prompts or project paths. The only
-  request carrying anything of yours is the optional Claude limits call, which goes to Anthropic,
-  and it is off by default.
+  request carrying anything of yours is the Claude limits call, which goes to Anthropic, and can
+  be switched off entirely in Settings.
 
 Ask first. Do not strip quarantine or disable protections to make it run.
 
