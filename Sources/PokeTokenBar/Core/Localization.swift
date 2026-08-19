@@ -422,6 +422,13 @@ struct L {
           "Actualmente estás conectado a otro servidor. ¿Cambiar a \(server) y unirte a este intercambio?")
     }
     var tradeEntryPointHelp: String { t("포켓몬 거래", "Trade a Pokémon", "ポケモン交換", "Intercambiar un Pokémon") }
+    /// 링크를 탭해서 못 여는 경우(다른 기기에서 텍스트로 받음, 링크 핸들러 미등록 등)의 대안 입력.
+    var tradePasteInviteLinkPlaceholder: String {
+        t("초대 링크 붙여넣기", "Paste invite link", "招待リンクを貼り付け", "Pegar enlace de invitación")
+    }
+    var tradeInvalidInviteLink: String {
+        t("유효한 거래 링크가 아니에요", "That's not a valid trade link", "有効な交換リンクではありません", "Ese no es un enlace de intercambio válido")
+    }
 
     // MARK: Evolution lock
     var evolutionLockedHelp: String { t("진화 잠김 — 탭하면 해제(경험치는 계속 쌓여요)", "Evolution locked — tap to unlock (still earns XP)", "進化ロック中 — タップで解除（経験値は引き続き貯まります）", "Evolución bloqueada — toca para desbloquear (sigue ganando XP)") }

@@ -12,6 +12,8 @@ struct TradeView: View {
     @State private var selectedMonID: MonState.ID?
     @State private var confirmingLink: TradeDeepLink?
     @State private var copiedFeedback = false
+    @State private var pastedInviteLink = ""
+    @State private var pastedInviteError = false
 
     private var l: L { companion.l }
 
@@ -99,6 +101,8 @@ struct TradeView: View {
         return VStack(alignment: .leading, spacing: 8) {
             if let link {
                 Text(l.tradeJoinPrompt(link.server)).font(.caption).foregroundStyle(.secondary)
+            } else {
+                pasteInviteRow
             }
             Text(l.tradePickOffer).font(.caption).foregroundStyle(.secondary)
             if candidates.isEmpty {
@@ -133,6 +137,36 @@ struct TradeView: View {
                 .disabled(selectedMonID == nil)
             }
         }
+    }
+
+    /// Manual fallback for joining — the OS only ever routes `poketokenbar://` to one locally
+    /// registered app, so a link received as plain text (chat, a second local instance in dev) needs
+    /// somewhere to be pasted instead of clicked.
+    private var pasteInviteRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                TextField(l.tradePasteInviteLinkPlaceholder, text: $pastedInviteLink)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption)
+                    .onSubmit(submitPastedInviteLink)
+                Button(l.tradeJoinButton, action: submitPastedInviteLink)
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .disabled(pastedInviteLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if pastedInviteError {
+                Text(l.tradeInvalidInviteLink).font(.caption2).foregroundStyle(.red)
+            }
+        }
+    }
+
+    private func submitPastedInviteLink() {
+        guard let link = TradeDeepLink(pastedText: pastedInviteLink) else {
+            pastedInviteError = true
+            return
+        }
+        pastedInviteError = false
+        pastedInviteLink = ""
+        trade.handleIncomingLink(link)
     }
 
     // MARK: Waiting / sharing

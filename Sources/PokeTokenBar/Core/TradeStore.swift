@@ -17,6 +17,38 @@ struct TradeDeepLink: Equatable {
         self.server = server
         self.sessionId = sessionId
     }
+
+    /// Accepts either the raw `poketokenbar://` deep link or the human-facing `https://server/t/<id>`
+    /// share link (what "Copy link"/"Share" actually hand out) — for pasting manually when the OS
+    /// can't route the deep link itself: no registered handler, received as plain text elsewhere, or
+    /// (the case this was added for) more than one local instance on the same Mac, where only one
+    /// can ever own the `poketokenbar://` scheme.
+    init?(pastedText: String) {
+        let trimmed = pastedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed) else { return nil }
+        if url.scheme == "poketokenbar" {
+            // Same parsing as init(url:) — can't delegate to it here (a struct init can't mix
+            // self.init(...) delegation with direct property assignment in another branch).
+            guard url.host == "trade",
+                  let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+                  let server = items.first(where: { $0.name == "server" })?.value, !server.isEmpty,
+                  let sessionId = items.first(where: { $0.name == "session" })?.value, !sessionId.isEmpty
+            else { return nil }
+            self.server = server
+            self.sessionId = sessionId
+            return
+        }
+        guard let scheme = url.scheme, scheme == "http" || scheme == "https", let host = url.host else { return nil }
+        let segments = url.pathComponents.filter { $0 != "/" }
+        guard segments.count == 2, segments[0] == "t", !segments[1].isEmpty else { return nil }
+        var serverComponents = URLComponents()
+        serverComponents.scheme = scheme
+        serverComponents.host = host
+        serverComponents.port = url.port
+        guard let server = serverComponents.url?.absoluteString else { return nil }
+        self.server = server
+        self.sessionId = segments[1]
+    }
 }
 
 /// Trade session orchestration — polling, applying completion, preventing a benched mon from being
