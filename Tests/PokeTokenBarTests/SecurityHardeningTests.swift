@@ -239,3 +239,65 @@ final class SaveInventoryBoundsTests: XCTestCase {
                        "sanitised inventory must survive the - 1 in consumeRareCandy()")
     }
 }
+
+/// Phase 0 calibration instrumentation. `makeSample` is pure, so these run without touching the
+/// filesystem; `record` is the only impure part and is gated on `AppEnv.isBundledApp`.
+final class CalibrationLogTests: XCTestCase {
+
+    private func sample() -> CalibrationLog.Sample {
+        var limits = try! JSONDecoder().decode(LimitStatus.self, from: Data("""
+        {"five_hour":{"utilization":12.5},"seven_day":{"utilization":16.0},
+         "limits":[{"kind":"weekly_scoped","group":"weekly","percent":8.0,
+                    "scope":{"model":{"display_name":"Opus 4.8"}}}]}
+        """.utf8))
+        limits.subscriptionType = "max"
+        limits.rateLimitTier = "default_claude_max_20x"
+        let today = DailyUsage(date: "2026-08-19", inputTokens: 10, outputTokens: 20,
+                               cacheCreationTokens: 30, cacheReadTokens: 40,
+                               totalTokens: 100, totalCost: 1.5)
+        return CalibrationLog.makeSample(
+            now: Date(timeIntervalSince1970: 1_700_000_000),
+            limits: limits,
+            snapshots: [(id: "claude_code", today: today)])
+    }
+
+    /// The four token kinds must survive separately. Lumping them into a total is exactly what
+    /// prevents the fit from weighting cache reads differently from fresh generation, which is one
+    /// of the three causes of the 4x spread this study exists to resolve.
+    func testTokenKindsAreRecordedSeparately() {
+        let p = sample().providers.first
+        XCTAssertEqual(p?.input, 10)
+        XCTAssertEqual(p?.output, 20)
+        XCTAssertEqual(p?.cacheWrite, 30)
+        XCTAssertEqual(p?.cacheRead, 40)
+        XCTAssertEqual(p?.total, 100)
+    }
+
+    /// Every window is captured, including the per-model scoped entries.
+    func testAllWindowsAreCaptured() {
+        let s = sample()
+        XCTAssertEqual(s.fh, 12.5)
+        XCTAssertEqual(s.sd, 16.0)
+        XCTAssertEqual(s.scoped.first?.model, "Opus 4.8")
+        XCTAssertEqual(s.scoped.first?.percent, 8.0)
+    }
+
+    /// No account, org, device or user identifier may reach the file. `plan`/`tier` are
+    /// subscription attributes, needed to interpret window size, and are not identifiers.
+    func testEncodedSampleCarriesNoIdentifiers() throws {
+        let json = String(data: try JSONEncoder().encode(sample()), encoding: .utf8)!.lowercased()
+        for banned in ["org", "account", "email", "uuid", "device", "token\":\"", "bearer", "@"] {
+            XCTAssertFalse(json.contains(banned),
+                           "calibration sample must not encode '\(banned)' — got \(json)")
+        }
+    }
+
+    /// Study logging is on by default; it is the only route to the Phase 1 decision gate.
+    func testLoggingDefaultsOn() {
+        let key = CalibrationLog.defaultsKey
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { if let previous { UserDefaults.standard.set(previous, forKey: key) } }
+        XCTAssertTrue(CalibrationLog.isEnabled)
+    }
+}

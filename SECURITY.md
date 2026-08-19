@@ -34,6 +34,18 @@ All of this is read locally. None of it is uploaded anywhere.
 containing `"usage"` and `"assistant"` and extracts only the numeric counters and identifiers.
 Conversation text is not parsed, stored, or transmitted.
 
+## What the app writes
+
+Besides its own state and sprite cache under `~/Library/Application Support/PokeTokenBar/` and
+logs under `~/Library/Logs/`, one file exists for a specific study:
+
+`~/Library/Logs/PokeTokenBar.calibration.jsonl` records, once per poll, the limit-window
+percentages alongside token counts split by kind. It exists to determine whether a percentage can
+be converted into a token figure accurately enough to attribute usage from Claude Web, Design and
+Cowork, which write no local transcripts. It contains **only values already shown in the app**, no
+account, org or device identifier, and never leaves the machine. Size-capped at 4 MB with one
+rotation. Turn it off in Settings → Advanced, and delete the file to remove the data.
+
 ## Network egress
 
 Seven hosts, and nothing else. There is no telemetry, no analytics, and no vendor server.

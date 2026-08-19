@@ -669,10 +669,21 @@ final class UsageStore {
 
         checkLimitAlerts()
         writeParitySnapshot()
+        recordCalibrationSample()
         let summary = snapshots.map { "\($0.providerID):\($0.today?.date ?? "nil")=\($0.todayTotalTokens)" }
             .joined(separator: ", ")
         AppLog.write("refresh done [\(summary)]")
         onRefresh?()   // 한도 로드 후 companion 갱신·사탕 지급(신선한 한도 시점)
+    }
+
+    /// Phase 0 instrumentation. Only records when limits are present: a sample without a window
+    /// reading contributes nothing to a tokens-per-percent fit and would dilute the file.
+    private func recordCalibrationSample() {
+        guard let limits else { return }
+        CalibrationLog.record(CalibrationLog.makeSample(
+            now: Date(),
+            limits: limits,
+            snapshots: snapshots.map { (id: $0.providerID, today: $0.today) }))
     }
 
     private func handleEmptyUsageRetry(schedule: Bool, hasErrors: Bool) {
