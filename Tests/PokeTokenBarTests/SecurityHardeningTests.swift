@@ -50,34 +50,58 @@ final class SecurityHardeningTests: XCTestCase {
         }
     }
 
-    /// The shipped default: a fresh install does not read the Claude credential until asked.
-    ///
-    /// `UsageStoreTests` opts back in for its own fixtures, so without this test nothing would
-    /// notice the default silently reverting to upstream's.
+    /// Credential access defaults on, matching upstream. The protection is the gate and the
+    /// silent-read interlock below, not the default.
     @MainActor
-    func testCredentialAccessIsDisabledByDefault() {
+    func testCredentialAccessIsEnabledByDefault() {
         let suite = "ptb-hardening-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
 
         // autoRefresh: false — nothing fetches, this only reads the initialised value.
         let store = UsageStore(providers: [], autoRefresh: false, defaults: defaults)
-        XCTAssertTrue(store.disableKeychainAccess,
-                      "credential access must be off on a fresh install in this fork")
+        XCTAssertFalse(store.disableKeychainAccess,
+                       "credential access defaults on; the gate, not the default, is the control")
     }
 
-    /// An explicit prior choice survives — the hardened default applies only when the key was
-    /// never written, so upgrading does not silently override what the user picked.
+    /// An explicit prior choice survives — the default applies only when the key was never
+    /// written, so an upgrade never overrides what the user picked.
     @MainActor
     func testExplicitCredentialChoiceIsPreserved() {
         let suite = "ptb-hardening-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(false, forKey: "disableKeychainAccess")
+        defaults.set(true, forKey: "disableKeychainAccess")   // user opted out
 
         let store = UsageStore(providers: [], autoRefresh: false, defaults: defaults)
-        XCTAssertFalse(store.disableKeychainAccess,
-                       "an explicit user choice must not be overwritten by the hardened default")
+        XCTAssertTrue(store.disableKeychainAccess,
+                      "an explicit opt-out must not be overwritten by the default")
+    }
+
+    /// The interlock: until a silent Keychain read has been observed to succeed on this machine,
+    /// the automatic path must not call into the Keychain at all.
+    ///
+    /// Asserted by timing rather than by inspecting the private cache. A `SecItemCopyMatching`
+    /// against a locked or unapproved keychain is exactly what blocks for many seconds and puts a
+    /// dialog on screen, so "returned promptly" is the property that matters and the one a
+    /// regression would break. Anything approaching the 13 seconds upstream measured means the
+    /// automatic path reached the Keychain when it should not have.
+    func testAutomaticPathReturnsPromptlyWhenSilentReadUnverified() async throws {
+        let key = "silentKeychainReadVerified"
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.set(false, forKey: key)
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        KeychainAccessGate.isDisabled = false
+
+        let started = Date()
+        _ = try? await OAuthLimitsProvider().fetch(allowKeychainPrompt: false)
+        let elapsed = Date().timeIntervalSince(started)
+
+        XCTAssertLessThan(elapsed, 3,
+                          "unverified automatic path must not reach a blocking Keychain call")
     }
 
     // MARK: Login shell validation

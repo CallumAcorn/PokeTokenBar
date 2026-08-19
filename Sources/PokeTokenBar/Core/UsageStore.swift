@@ -424,13 +424,20 @@ final class UsageStore {
         floatingPetEnabled = d.object(forKey: "floatingPetEnabled") as? Bool ?? false
         floatingPetSize = d.object(forKey: "floatingPetSize") as? Double ?? 96
         floatingPetBubbleAlerts = d.object(forKey: "floatingPetBubbleAlerts") as? Bool ?? true
-        // Hardened default: credential access is OFF until the user turns it on. Upstream
-        // defaults this to `false` (read the token straight away); this fork inverts it so a
-        // fresh install never touches the Claude credential without an explicit opt-in. The
-        // cost is that the official-limits row stays hidden until enabled in Settings →
-        // Advanced. `d.object(forKey:)` is nil only when the key was never written, so anyone
-        // who has already made a choice keeps it.
-        disableKeychainAccess = d.object(forKey: "disableKeychainAccess") as? Bool ?? true
+        // Credential access defaults ON, matching upstream.
+        //
+        // This fork briefly defaulted it off. That was the right call while the automatic path
+        // could not read the Keychain at all, because the feature only half worked: limits went
+        // stale about an hour after each manual refresh. Now that the automatic path can refresh
+        // silently once the user has granted access, the feature works continuously and hiding it
+        // by default mostly hid the app's headline number for anyone who did not go looking in
+        // Settings → Advanced.
+        //
+        // The protection that mattered is not the default, it is the gate: the toggle still blocks
+        // every credential source, and the automatic path still refuses to touch the Keychain
+        // until a silent read has been proven to work, so no background poll can ever raise a
+        // prompt on a machine that has not granted access.
+        disableKeychainAccess = d.object(forKey: "disableKeychainAccess") as? Bool ?? false
 
         reschedule()
 

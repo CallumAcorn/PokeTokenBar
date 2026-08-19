@@ -47,8 +47,8 @@ Seven hosts, and nothing else. There is no telemetry, no analytics, and no vendo
 | `status.claude.com`, `status.openai.com` | Incident banner | Nothing |
 
 The only outbound request carrying anything of yours is the Claude limits call, which goes to
-Anthropic, the party that issued the token. It is off by default in this fork. The single `POST`
-in the codebase is a GraphQL query to PokéAPI.
+Anthropic, the party that issued the token, and it can be switched off entirely in Settings. The
+single `POST` in the codebase is a GraphQL query to PokéAPI.
 
 ## Credentials
 
@@ -63,10 +63,23 @@ this:
 - The endpoint is **undocumented**. It can change or disappear without notice; the app treats
   failure as "hide the limits section" and carries on.
 
-**Credential access is off by default in this fork.** Turn it on in Settings → Advanced by
-switching "Disable credential access" off. While it is on, the app reads neither the Keychain nor
-`~/.claude/.credentials.json`. Automatic polling never triggers a Keychain prompt; only the
-explicit refresh button does.
+**Credential access is on by default**, and the "Disable credential access" switch in
+Settings → Advanced turns it off. While off, the app reads neither the Keychain nor
+`~/.claude/.credentials.json`.
+
+**A background poll can never raise a Keychain prompt.** The automatic path refuses to touch the
+Keychain until a no-UI read has been *observed to succeed* on this machine, which only happens
+after you have granted access through the explicit refresh button. Until then it behaves as if the
+Keychain were unavailable. Once proven, automatic refresh reads silently, so limits stay current
+instead of going stale about an hour after each manual refresh.
+
+Three further bounds on that automatic read:
+
+- It runs off the main thread and off the actor, with a **2 second wall-clock timeout**. A locked
+  keychain can block `SecItemCopyMatching` for many seconds; nothing in the app waits on it.
+- A refusal **clears the proven flag** and returns to requiring an explicit refresh, so a revoked
+  grant or a rebuild under a different signature cannot produce repeated prompts.
+- A timeout opens a **one hour circuit breaker** during which no Keychain call is attempted.
 
 ## Persistence
 
