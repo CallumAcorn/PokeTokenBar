@@ -366,6 +366,21 @@ enum PokemonOdds {
     static let dittoDisguiseDenominator: UInt64 = 128
     /// 메타몽 종 id — 위장 리빌 전용(일반 부화 풀에서 제외).
     static let dittoSpeciesID = 132
+    /// 質の悪いタマゴ(#568) — 収集対象として好まれないため除外。
+    /// Trubbish (#568). Excluded by preference, not by mechanic.
+    static let trubbishSpeciesID = 568
+
+    /// Species kept out of the ordinary hatch pool.
+    ///
+    /// This is the pool filter only — it does not make a species unreachable everywhere.
+    /// Ditto is still fetched deliberately by `CompanionStore.revealDitto()`, which is the
+    /// whole point of excluding it here: it should arrive as a disguise reveal, never as a
+    /// plain hatch.
+    ///
+    /// Both the GraphQL base index and the REST fallback read this one set, so a species
+    /// added here is excluded on both paths. Adding it to only one leaves a hole that
+    /// appears exclusively when GraphQL is down, which is the hardest case to notice.
+    static let excludedFromHatchPool: Set<Int> = [dittoSpeciesID, trubbishSpeciesID]
 }
 
 /// 현재 키우는 포켓몬.
