@@ -376,6 +376,11 @@ final class UsageStore {
     /// 한도 데이터가 최소 1개 프로바이더 로드됐는가 — 사탕 첫 실행 시드 게이트(미로딩 중 시드 방지).
     var limitsReady: Bool { limits != nil || codexLimits != nil }
 
+    /// Weekly (seven-day) account window, the instrument for external-usage credit.
+    /// The five-hour window rolls, so its delta nets new usage against usage ageing out and would
+    /// read as movement when nothing happened.
+    var weeklyLimitPercent: Double? { limits?.sevenDay?.utilization }
+
     /// burn rate 티어 — companion 표시 상태(idle/working/focus) 판정에 사용.
     /// 전 프로바이더 합산 — Codex/Gemini 전용 사용자도 코딩 리듬이 반영된다.
     var burnTier: BurnTier {

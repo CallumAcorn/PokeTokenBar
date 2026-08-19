@@ -301,3 +301,70 @@ final class CalibrationLogTests: XCTestCase {
         XCTAssertTrue(CalibrationLog.isEnabled)
     }
 }
+
+/// Eligibility rules for crediting growth to work that leaves no local transcript.
+///
+/// The rule that matters is the anti-double-count one: the weekly window moves for Claude Code
+/// too, so an interval with any local token movement must be skipped entirely. Attributing the
+/// residual instead would need a tokens-per-percent constant, and the measured 4x spread is not
+/// good enough to subtract with.
+final class ExternalUsageCreditTests: XCTestCase {
+
+    func testCreditsWindowMovementWhenLocalTokensFlat() {
+        let xp = ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 12,
+                                            previousLocalTokens: 500, currentLocalTokens: 500)
+        XCTAssertEqual(xp, 2 * ExternalUsageCredit.tokensPerPercent)
+    }
+
+    /// The anti-double-count rule.
+    func testSkipsIntervalWhereLocalTokensMoved() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 12,
+                                                previousLocalTokens: 500, currentLocalTokens: 900),
+                     "an interval with local activity must not be credited — the window moved for both")
+    }
+
+    /// A midnight reset makes local tokens *drop*. That is still local movement, so still skipped.
+    func testSkipsWhenLocalTokensReset() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 12,
+                                                previousLocalTokens: 900, currentLocalTokens: 0))
+    }
+
+    func testNoBaselineAwardsNothing() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: nil, currentPercent: 12,
+                                                previousLocalTokens: nil, currentLocalTokens: 500))
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: nil,
+                                                previousLocalTokens: 500, currentLocalTokens: 500))
+    }
+
+    /// A weekly window reset reads as a large negative delta, which must never award or trap.
+    func testWindowResetAwardsNothing() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 96, currentPercent: 0,
+                                                previousLocalTokens: 500, currentLocalTokens: 500))
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 10,
+                                                previousLocalTokens: 500, currentLocalTokens: 500))
+    }
+
+    /// One interval cannot graduate a companion, whatever the window reports.
+    func testAwardIsCapped() {
+        let xp = ExternalUsageCredit.credit(previousPercent: 0, currentPercent: 100,
+                                            previousLocalTokens: 1, currentLocalTokens: 1)
+        XCTAssertEqual(xp, ExternalUsageCredit.maxCreditPerInterval)
+    }
+
+    /// Non-finite percentages must not reach the Int conversion, which would trap.
+    func testNonFinitePercentIsRejected() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 0, currentPercent: .infinity,
+                                                previousLocalTokens: 1, currentLocalTokens: 1))
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 0, currentPercent: .nan,
+                                                previousLocalTokens: 1, currentLocalTokens: 1))
+    }
+
+    /// Opt-in: it awards growth for usage the app cannot show a token count for.
+    func testDisabledByDefault() {
+        let key = ExternalUsageCredit.defaultsKey
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { if let previous { UserDefaults.standard.set(previous, forKey: key) } }
+        XCTAssertFalse(ExternalUsageCredit.isEnabled)
+    }
+}
