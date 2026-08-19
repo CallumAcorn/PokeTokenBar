@@ -5,8 +5,9 @@ import Foundation
 /// - Claude: `~/.claude/projects/**/*.jsonl` 의 `type:"assistant"` 라인
 ///   (`message.usage` 4종 토큰, `message.model`, `message.id`+`requestId`, `timestamp`).
 ///   세션 재개/sidechain 으로 같은 메시지가 여러 파일에 중복 → `(message.id, requestId)` 로 dedup.
-/// - Codex: `~/.codex/sessions/**/rollout-*.jsonl` 의 `event_msg.payload.type:"token_count"`
-///   (`info.last_token_usage` 턴 델타) 합산.
+/// - Codex: `~/.codex/sessions/**/rollout-*.jsonl` 및 보관된
+///   `~/.codex/archived_sessions/rollout-*.jsonl` 의
+///   `event_msg.payload.type:"token_count"` (`info.last_token_usage` 턴 델타) 합산.
 ///
 /// 성능: mtime 윈도우로 스캔 파일을 한정(범위 시작 이전에 수정된 파일은 범위 내 엔트리가 없음).
 enum LocalUsageReader {
@@ -202,8 +203,41 @@ enum LocalUsageReader {
         // 원래 순서(우선순위)를 보존해 돌려준다.
         return unique.filter(kept.contains).map { URL(fileURLWithPath: $0) }
     }
+    /// Codex 기본 경로는 이 두 상대 경로로만 정의한다.
+    /// `codexScanRoots`를 직접 조립하는 코드가 늘어나면 활성 세션과 보관 세션 중
+    /// 한쪽만 캐시·스캐너·테스트에 반영되는 회귀가 생기기 쉬우므로, 기본 목록은
+    /// `computeCodexScanRoots(home:)` 한 곳에서 만든다.
+    static let codexSessionsRelativePath = ".codex/sessions"
+    static let codexArchivedSessionsRelativePath = ".codex/archived_sessions"
+
     static var codexSessionsDir: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions")
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(codexSessionsRelativePath)
+    }
+
+    /// Codex가 보관한 세션은 원본 rollout을 유지한 채 이 루트로 이동한다.
+    /// 활성 세션만 읽으면 보관 직후 당일 사용량이 감소하므로, 두 루트를 하나의 논리적
+    /// 세션 집합으로 읽고 아래 resolver의 안정적인 이벤트 ID로 중복을 제거해야 한다.
+    static var codexArchivedSessionsDir: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(codexArchivedSessionsRelativePath)
+    }
+
+    /// 테스트 가능한 Codex 기본 스캔 루트 계산기.
+    /// 앱과 캐시는 아래의 `codexScanRoots`를 사용하고, 테스트는 가짜 home을 주입해
+    /// 실제 사용자 디렉터리나 로그인 환경에 의존하지 않고 두 기본 경로의 구성을 고정한다.
+    static func computeCodexScanRoots(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> [URL] {
+        normalizedRoots([
+            home.appendingPathComponent(codexSessionsRelativePath),
+            home.appendingPathComponent(codexArchivedSessionsRelativePath),
+        ])
+    }
+
+    /// 스캐너·캐시가 공유하는 Codex 기본 루트 목록.
+    static var codexScanRoots: [URL] {
+        computeCodexScanRoots()
     }
     static var geminiTmpDir: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini/tmp")
@@ -496,6 +530,16 @@ enum LocalUsageReader {
         return out
     }
 
+    /// 활성·보관 루트처럼 여러 디렉터리를 하나의 Codex 파일 집합으로 합친다.
+    /// 먼저 공통 루트 정규화로 심볼릭 링크·중첩 루트를 접고, 이동 중 같은 rollout이
+    /// 두 루트에 잠시 동시에 보여도 실제 이벤트 중복 제거는
+    /// `resolveCodexRollouts`의 session/state ID가 담당한다.
+    static func codexRolloutFiles(in roots: [URL]) -> [CodexRolloutFile] {
+        normalizedRoots(roots)
+            .flatMap { codexRolloutFiles(in: $0) }
+            .sorted { $0.path < $1.path }
+    }
+
     /// 조회 윈도우 안 rollout 에서 시작해, replay 대조에 필요한 부모(그 부모의 부모까지)를 dependency 로
     /// 끌어온다. Codex 는 fork 파일 하나만 보고는 자기 usage 를 확정할 수 없기 때문이다.
     ///
@@ -568,7 +612,8 @@ enum LocalUsageReader {
 
     static func codexEntries(modifiedSince: Date, root: URL? = nil) -> [Entry] {
         let fmt = localDayFormatter()
-        let allFiles = codexRolloutFiles(in: root ?? codexSessionsDir)
+        let roots = root.map { [$0] } ?? codexScanRoots
+        let allFiles = codexRolloutFiles(in: roots)
         // 테스트/캐시 미사용 경로 — 아는 세션 id 가 없으니 파일명 힌트와 probe 만으로 부모를 찾는다.
         let (rollouts, includedPaths) = expandCodexParentClosure(
             windowFiles: allFiles.filter { $0.mtime >= modifiedSince },
