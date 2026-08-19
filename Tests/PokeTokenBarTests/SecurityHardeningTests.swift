@@ -368,3 +368,47 @@ final class ExternalUsageCreditTests: XCTestCase {
         XCTAssertFalse(ExternalUsageCredit.isEnabled)
     }
 }
+
+/// Regression cover for a bounded wait that was not bounded.
+///
+/// The first implementation used `withTaskGroup`: one child ran the blocking call, another slept
+/// for the timeout, and the winner was returned. That looks right and is wrong. A task group
+/// implicitly awaits every child before returning, and `cancelAll()` cannot interrupt
+/// `withCheckedContinuation` because it is not cancellation-aware. So the group waited for the
+/// blocking call regardless, and the timeout did nothing.
+///
+/// It passed review and passed every existing test, because no test ran work slower than the
+/// timeout. In production it hung the app indefinitely behind a Keychain dialog, with the poll
+/// loop stalled. These tests run work that is deliberately slower than its deadline.
+final class TimeoutRaceTests: XCTestCase {
+
+    func testReturnsAtDeadlineWhenWorkBlocksLonger() async {
+        let started = Date()
+        let result = await TimeoutRace.run(timeout: 0.2, timedOutValue: "timedOut") {
+            Thread.sleep(forTimeInterval: 3)      // uncancellable, like SecItemCopyMatching
+            return "work"
+        }
+        let elapsed = Date().timeIntervalSince(started)
+
+        XCTAssertEqual(result, "timedOut")
+        XCTAssertLessThan(elapsed, 1.5,
+                          "the wait must end at its deadline, not when the blocking work finishes")
+    }
+
+    func testReturnsWorkResultWhenItBeatsTheDeadline() async {
+        let result = await TimeoutRace.run(timeout: 5, timedOutValue: "timedOut") { "work" }
+        XCTAssertEqual(result, "work")
+    }
+
+    /// Both sources race to resume one continuation; resuming twice traps. Hammer the boundary
+    /// where the work finishes at roughly the same moment the timer fires.
+    func testConcurrentCompletionResumesExactlyOnce() async {
+        for _ in 0..<50 {
+            let result = await TimeoutRace.run(timeout: 0.01, timedOutValue: "timedOut") {
+                Thread.sleep(forTimeInterval: 0.01)
+                return "work"
+            }
+            XCTAssertTrue(result == "work" || result == "timedOut")
+        }
+    }
+}
