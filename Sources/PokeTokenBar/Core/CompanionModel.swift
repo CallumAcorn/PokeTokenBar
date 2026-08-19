@@ -151,6 +151,55 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
 }
 
 /// 이상한 사탕 밸런스 상수.
+/// Growth credit for work that leaves no local transcript — Claude Web, Design, Cowork and
+/// Desktop chat. Those surfaces write nothing locally, so the only evidence they ran is the
+/// account-wide limit window moving.
+///
+/// The naive version of this double-counts: Claude Code moves the same window, so its usage would
+/// grow the companion twice, once as real tokens and once again as window movement. Attributing
+/// only the *residual* would need a tokens-per-percent constant, and a first measurement put that
+/// at a 4x spread, which is not good enough to subtract with.
+///
+/// So credit is taken only from intervals where **local token counts did not move at all**. Any
+/// window movement across such an interval cannot have come from a local CLI, so no subtraction
+/// and no calibration is required. Intervals mixing both are skipped entirely, which under-counts
+/// — the safe direction, and it still captures the case this exists for: a Design or Web session
+/// with the CLIs idle.
+enum ExternalUsageCredit {
+    static let defaultsKey = "creditExternalUsage"
+
+    /// Opt-in. It awards growth the app cannot show a token count for, so it should be a choice.
+    static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
+    }
+
+    /// Provisional conversion, from the median of 9 same-source intervals measured over 21 hours
+    /// (684k to 2.75M tokens per 1%, median 1.28M). The 4x spread rules this out as a *displayed*
+    /// token figure, but it is adequate for driving growth, where being within an order of
+    /// magnitude is enough. Phase 1 of the calibration study replaces this with a fitted value.
+    static let tokensPerPercent = 1_280_000
+
+    /// A single percentage point is large, so cap one interval's award. Without this, a window
+    /// reset misread as a rise, or a plan change, could graduate a companion in one poll.
+    static let maxCreditPerInterval = 5 * tokensPerPercent
+
+    /// XP to award for one interval, or nil when the interval is not eligible.
+    ///
+    /// Pure so the eligibility rules are testable without a store, a clock or a network.
+    /// - `previousPercent`/`previousLocalTokens` nil means no baseline yet: establish one, award
+    ///   nothing. That is also what happens on the first poll after launch.
+    static func credit(previousPercent: Double?, currentPercent: Double?,
+                       previousLocalTokens: Int?, currentLocalTokens: Int) -> Int? {
+        guard let previousPercent, let currentPercent, let previousLocalTokens else { return nil }
+        // Local activity in this interval — cannot separate the two sources without calibration.
+        guard currentLocalTokens == previousLocalTokens else { return nil }
+        let delta = currentPercent - previousPercent
+        guard delta > 0, delta.isFinite else { return nil }        // reset, idle, or garbage
+        let xp = Int(delta * Double(tokensPerPercent))
+        return min(max(0, xp), maxCreditPerInterval)
+    }
+}
+
 enum RareCandy {
     /// 사용 시 현재 포켓몬에 주입하는 XP(토큰 환산). 최소 진화 임계(커먼 1형태 125M)보다 작아
     /// 사탕 1개는 최대 1단계만 올린다(연쇄·졸업 폭주 없음). applyUsage 로 주입 → 이월/진화/졸업 자동.
