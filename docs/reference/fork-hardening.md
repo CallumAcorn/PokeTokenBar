@@ -12,7 +12,7 @@ Three defaults are inverted relative to upstream. Everything else keeps upstream
 
 | Setting | Upstream | Here | Effect if you change nothing |
 |---|---|---|---|
-| Credential access | Enabled | **Disabled** | The official limits row is hidden until you opt in |
+| Credential access | Enabled | Enabled | Unchanged. See MED 4 for the automatic-refresh interlock |
 | Shell path resolution | Enabled | **Disabled** | Tools outside the static path list are not found |
 | Login agent `KeepAlive` | Always on with login | **Opt-in** | App does not restart itself after a crash |
 
@@ -69,7 +69,9 @@ no migration is needed. Auto-restart moves to its own switch, off by default.
 
 The feature cannot exist without reading the token, so this is about blast radius:
 
-- Off by default (see the defaults table).
+- Automatic refresh may read the Keychain, but only after a no-UI read has been observed to
+  succeed on this machine, bounded by a 2s timeout and a circuit breaker. Until proven, a
+  background poll behaves as if the Keychain were unavailable and cannot raise a prompt.
 - The request now uses a dedicated **ephemeral** `URLSession` with no URL cache, cookie storage or
   credential storage, created once and reused. A session built per request would leak its delegate
   queue on throwing paths.

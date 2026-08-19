@@ -87,11 +87,122 @@ struct OAuthLimitsProvider: ClaudeLimitsProviding, Sendable {
     }
 }
 
+
+/// Bounded wait for a synchronous call that cannot be cancelled.
+///
+/// Extracted to file scope so it is reachable from tests: the failure it guards against — a
+/// blocking call outliving its own timeout — is invisible in a test that only runs fast work.
+enum TimeoutRace {
+    /// Resume-once guard. A continuation may be resumed exactly once, and two independent sources
+    /// race to do it here.
+    private final class ResumeOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var claimed = false
+        func claim() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            if claimed { return false }
+            claimed = true
+            return true
+        }
+    }
+
+    /// Run `work` on a background queue and return its result, or `timedOutValue` if the deadline
+    /// passes first.
+    ///
+    /// Deliberately **not** a task group. `withTaskGroup` implicitly awaits its children before
+    /// returning, and `cancelAll()` cannot interrupt `withCheckedContinuation` because that is not
+    /// cancellation-aware. A group therefore waits for the blocked call no matter which task wins,
+    /// making the timeout decorative — measured in production as the app hanging indefinitely
+    /// behind a Keychain dialog with the poll loop stalled.
+    ///
+    /// The work's thread stays blocked until the OS releases it. Nothing awaits that thread, so
+    /// the caller is free at the deadline, which is the property that matters.
+    static func run<T: Sendable>(
+        timeout: TimeInterval,
+        timedOutValue: T,
+        work: @escaping @Sendable () -> T
+    ) async -> T {
+        let once = ResumeOnce()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<T, Never>) in
+            DispatchQueue.global(qos: .utility).async {
+                let value = work()
+                if once.claim() { continuation.resume(returning: value) }
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
+                if once.claim() { continuation.resume(returning: timedOutValue) }
+            }
+        }
+    }
+}
+
 private actor OAuthAccessTokenCache {
     static let shared = OAuthAccessTokenCache()
     private var cachedCredential: OAuthCredentialData.Credential?
 
-    func accessToken(allowKeychainPrompt: Bool, bypassCache: Bool = false) throws -> String {
+    /// Circuit breaker for the automatic-path silent Keychain read. While this is in the future,
+    /// no Keychain call is made at all.
+    private var silentReadBlockedUntil: Date?
+    private var silentReadBackoff: TimeInterval = OAuthAccessTokenCache.silentReadInitialBackoff
+
+    private static let silentReadInitialBackoff: TimeInterval = 900     // 15 min
+    private static let silentReadMaxBackoff: TimeInterval = 3600        // 1 hour
+    /// A granted no-UI read returns in milliseconds. Anything slower means the keychain is locked
+    /// or is about to put a dialog on screen, which is the case we must never wait on.
+    private static let silentReadTimeout: TimeInterval = 2
+
+    /// Whether a no-UI Keychain read has been *observed to succeed* on this machine.
+    ///
+    /// This is the safety interlock for reading the Keychain on the automatic path. The access
+    /// token Claude Code stores lives about an hour, and the automatic path used to have no way to
+    /// pick up a refreshed one, so limits went stale hourly until the user pressed refresh
+    /// (measured on a real install: 103 automatic successes against 178 failures in 21 hours).
+    ///
+    /// Reading the Keychain automatically is only safe once "Always Allow" is granted. Rather than
+    /// assume that, we record it: the flag is set when a silent read actually succeeds, and
+    /// cleared the moment one is refused. Until it is set, the automatic path behaves exactly as
+    /// before and waits for an explicit user action, so a machine that has never granted access
+    /// can never be prompted by a background poll.
+    private static let verifiedKey = "silentKeychainReadVerified"
+    private static let verifiedBinaryKey = "silentKeychainReadVerifiedBinary"
+
+    /// Fingerprint of the running executable.
+    ///
+    /// The Keychain ACL binds to the **code signature**, so any rebuild voids the grant. Ad-hoc
+    /// builds change the signature every time while keeping the same version string, so version is
+    /// useless here. Modification time plus size is a conservative proxy: it always changes on a
+    /// rebuild, and a false mismatch merely costs one button press.
+    ///
+    /// Without this the flag outlived the grant it described: after a rebuild the automatic path
+    /// believed it still had access, attempted a silent read, and blocked on the dialog that
+    /// followed.
+    private nonisolated static var binaryFingerprint: String {
+        guard let path = Bundle.main.executableURL?.path,
+              let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        else { return "unknown" }
+        let mtime = Int((attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
+        let size = (attrs[.size] as? Int) ?? 0
+        return "\(mtime):\(size)"
+    }
+
+    nonisolated static var silentReadVerified: Bool {
+        get {
+            guard UserDefaults.standard.bool(forKey: verifiedKey) else { return false }
+            // A grant recorded against a different binary does not apply to this one.
+            return UserDefaults.standard.string(forKey: verifiedBinaryKey) == binaryFingerprint
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: verifiedKey)
+            UserDefaults.standard.set(newValue ? binaryFingerprint : "", forKey: verifiedBinaryKey)
+        }
+    }
+
+    enum SilentReadOutcome: Sendable {
+        case success(OAuthCredentialData.Credential)
+        case refused
+        case timedOut
+    }
+
+    func accessToken(allowKeychainPrompt: Bool, bypassCache: Bool = false) async throws -> String {
         // The opt-out gate is checked FIRST — before the in-memory cache and before any
         // credential source is touched. It previously wrapped only the Keychain read, so
         // `~/.claude/.credentials.json` was still read on every automatic poll with the
@@ -122,6 +233,12 @@ private actor OAuthAccessTokenCache {
         // 자동 경로는 여기서 끝난다(키체인 미열람). 파일이 있는데 계정 OAuth 만 없으면 재로그인이
         // 답이므로 그때만 안내를 바꾼다 — 판정은 이 분기 안에서 해야 사용자 경로가 파일을 두 번 읽지 않는다.
         guard allowKeychainPrompt else {
+            // Automatic path. It may now read the Keychain, but only silently, only once a silent
+            // read has been proven to work here, and only when the breaker is closed.
+            if let credential = await attemptAutomaticSilentRead() {
+                cachedCredential = credential
+                return credential.accessToken
+            }
             throw Self.credentialsFileIsAccountOAuthMissing()
                 ? LimitsError.credentialMissingAccountOAuth
                 : LimitsError.keychainInteractionNotAllowed
@@ -131,11 +248,97 @@ private actor OAuthAccessTokenCache {
         // 동반해 읽어 최초 1회 '항상 허용'을 유도한다.
         if let credential = Self.readClaudeKeychainSilently() {
             cachedCredential = credential
+            // A silent read just worked, so the automatic path can use one too.
+            Self.silentReadVerified = true
+            resetSilentReadBreaker()
             return credential.accessToken
         }
         let credential = try Self.readClaudeKeychain(allowKeychainPrompt: true)
         cachedCredential = credential
+        // The user has just answered the prompt. Whether they chose "Always Allow" or "Allow once"
+        // decides whether automatic refresh can work from here, and the only way to know is to try
+        // a no-UI read now, while we are still on an explicit user action.
+        await verifySilentReadCapability()
         return credential.accessToken
+    }
+
+    /// Automatic-path Keychain read. Returns nil rather than throwing: every failure here is a
+    /// "carry on without limits" case, never a reason to surface an error to the user.
+    private func attemptAutomaticSilentRead() async -> OAuthCredentialData.Credential? {
+        // Never touch the Keychain from a timer until a silent read has been observed to work.
+        guard Self.silentReadVerified else { return nil }
+        if let until = silentReadBlockedUntil, Date() < until { return nil }
+
+        switch await Self.readKeychainSilently(timeout: Self.silentReadTimeout) {
+        case .success(let credential):
+            resetSilentReadBreaker()
+            return credential
+
+        case .refused:
+            // The ACL is gone (rebuild under a different signature, keychain reset, user revoked).
+            // Stop trying automatically and go back to requiring an explicit refresh, which is the
+            // only path allowed to raise a prompt.
+            Self.silentReadVerified = false
+            openSilentReadBreaker()
+            AppLog.write("silent keychain read refused — automatic reads disabled until the next manual refresh")
+            return nil
+
+        case .timedOut:
+            // A timeout means the read did not return promptly, which in practice means a dialog
+            // is up. Treat that as proof the silent path is NOT safe here and clear the flag, the
+            // same as a refusal. An earlier version kept the flag on the theory that a timeout was
+            // a locked keychain rather than a missing grant; that reasoning was wrong, and it left
+            // the automatic path retrying into a dialog on every poll.
+            Self.silentReadVerified = false
+            silentReadBlockedUntil = Date().addingTimeInterval(Self.silentReadMaxBackoff)
+            AppLog.write("silent keychain read timed out — automatic reads disabled until the next manual refresh")
+            return nil
+        }
+    }
+
+    private func resetSilentReadBreaker() {
+        silentReadBlockedUntil = nil
+        silentReadBackoff = Self.silentReadInitialBackoff
+    }
+
+    private func openSilentReadBreaker() {
+        silentReadBlockedUntil = Date().addingTimeInterval(silentReadBackoff)
+        silentReadBackoff = min(silentReadBackoff * 2, Self.silentReadMaxBackoff)
+    }
+
+    /// Record whether the grant the user just made is durable ("Always Allow") rather than
+    /// one-shot ("Allow"), by seeing whether a no-UI read now succeeds.
+    private func verifySilentReadCapability() async {
+        if case .success = await Self.readKeychainSilently(timeout: Self.silentReadTimeout) {
+            Self.silentReadVerified = true
+            resetSilentReadBreaker()
+            AppLog.write("silent keychain read verified — automatic limit refresh enabled")
+        } else {
+            Self.silentReadVerified = false
+        }
+    }
+
+    /// Silent Keychain read bounded by wall-clock time.
+    ///
+    /// `SecItemCopyMatching` is synchronous and cannot be cancelled, and upstream measured it
+    /// blocking for 13 seconds against a locked login keychain. So it runs on a global queue and
+    /// the caller races it against a timer. If the timer wins we abandon the result; the blocked
+    /// thread drains on its own. What matters is that neither this actor nor the UI ever waits on
+    /// it, which is what made the original "never read the Keychain automatically" rule necessary.
+    private nonisolated static func readKeychainSilently(timeout: TimeInterval) async -> SilentReadOutcome {
+        // NOT a task group. `withTaskGroup` implicitly awaits its children before returning, and
+        // `cancelAll()` cannot interrupt `withCheckedContinuation` because it is not
+        // cancellation-aware. A group therefore waits for the blocked Keychain call no matter which
+        // task finishes first, which makes the timeout decorative — measured in production as the
+        // app hanging indefinitely behind a Keychain dialog with the poll loop stalled.
+        //
+        // One continuation, resumed by whichever of the read or the timer wins. The read's thread
+        // stays blocked until the OS releases it, but nothing awaits that thread, so the caller is
+        // free at the deadline.
+        await TimeoutRace.run(timeout: timeout, timedOutValue: .timedOut) {
+            do { return .success(try readClaudeKeychain(allowKeychainPrompt: false)) }
+            catch { return .refused }
+        }
     }
 
     /// 무프롬프트 Keychain 읽기 — no-UI 쿼리라 권한이 없으면 프롬프트 대신 errSecInteractionNotAllowed.

@@ -588,6 +588,36 @@ final class CompanionStore {
     /// 라인 미로딩(재시작 직후·오프라인)이면 비활성 — 사탕이 진화 없이 적립만 되는 것 방지.
     var canUseRareCandy: Bool { hasActive && currentLine != nil && rareCandyCount > 0 }
 
+    /// Baselines for external-usage credit. Deliberately **not** persisted.
+    ///
+    /// Persisting them would make them a per-device ledger, which the save-transfer rules require
+    /// rebasing on import, for a feature whose whole value is "what did this app observe while it
+    /// was watching". Keeping them in memory means a relaunch simply re-establishes the baseline
+    /// and skips one interval, which costs nothing and avoids a whole class of transfer bug.
+    private var lastExternalPercent: Double?
+    private var lastExternalLocalTokens: Int?
+
+    /// Credit growth for usage that produced no local tokens. Called once per refresh, right
+    /// alongside `grantCandies`, so it sees the same freshly-loaded limit windows.
+    func creditExternalUsage(weeklyPercent: Double?, localTokenTotal: Int, limitsReady: Bool) {
+        guard ExternalUsageCredit.isEnabled, limitsReady else { return }
+
+        let xp = ExternalUsageCredit.credit(
+            previousPercent: lastExternalPercent,
+            currentPercent: weeklyPercent,
+            previousLocalTokens: lastExternalLocalTokens,
+            currentLocalTokens: localTokenTotal)
+
+        // Advance the baseline whatever happened, so a skipped interval does not accumulate into
+        // the next one and pay out twice over.
+        lastExternalPercent = weeklyPercent
+        lastExternalLocalTokens = localTokenTotal
+
+        guard let xp, xp > 0 else { return }
+        AppLog.write("external usage credit: +\(xp) xp from weekly limit movement with local tokens flat")
+        applyUsage(xp)
+    }
+
     /// 사탕 사용 결과 — UI 피드백 분기용.
     enum CandyUseResult: Equatable { case evolved, graduated, progressed, unavailable }
 

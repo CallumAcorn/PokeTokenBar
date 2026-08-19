@@ -50,34 +50,58 @@ final class SecurityHardeningTests: XCTestCase {
         }
     }
 
-    /// The shipped default: a fresh install does not read the Claude credential until asked.
-    ///
-    /// `UsageStoreTests` opts back in for its own fixtures, so without this test nothing would
-    /// notice the default silently reverting to upstream's.
+    /// Credential access defaults on, matching upstream. The protection is the gate and the
+    /// silent-read interlock below, not the default.
     @MainActor
-    func testCredentialAccessIsDisabledByDefault() {
+    func testCredentialAccessIsEnabledByDefault() {
         let suite = "ptb-hardening-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
 
         // autoRefresh: false — nothing fetches, this only reads the initialised value.
         let store = UsageStore(providers: [], autoRefresh: false, defaults: defaults)
-        XCTAssertTrue(store.disableKeychainAccess,
-                      "credential access must be off on a fresh install in this fork")
+        XCTAssertFalse(store.disableKeychainAccess,
+                       "credential access defaults on; the gate, not the default, is the control")
     }
 
-    /// An explicit prior choice survives — the hardened default applies only when the key was
-    /// never written, so upgrading does not silently override what the user picked.
+    /// An explicit prior choice survives — the default applies only when the key was never
+    /// written, so an upgrade never overrides what the user picked.
     @MainActor
     func testExplicitCredentialChoiceIsPreserved() {
         let suite = "ptb-hardening-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(false, forKey: "disableKeychainAccess")
+        defaults.set(true, forKey: "disableKeychainAccess")   // user opted out
 
         let store = UsageStore(providers: [], autoRefresh: false, defaults: defaults)
-        XCTAssertFalse(store.disableKeychainAccess,
-                       "an explicit user choice must not be overwritten by the hardened default")
+        XCTAssertTrue(store.disableKeychainAccess,
+                      "an explicit opt-out must not be overwritten by the default")
+    }
+
+    /// The interlock: until a silent Keychain read has been observed to succeed on this machine,
+    /// the automatic path must not call into the Keychain at all.
+    ///
+    /// Asserted by timing rather than by inspecting the private cache. A `SecItemCopyMatching`
+    /// against a locked or unapproved keychain is exactly what blocks for many seconds and puts a
+    /// dialog on screen, so "returned promptly" is the property that matters and the one a
+    /// regression would break. Anything approaching the 13 seconds upstream measured means the
+    /// automatic path reached the Keychain when it should not have.
+    func testAutomaticPathReturnsPromptlyWhenSilentReadUnverified() async throws {
+        let key = "silentKeychainReadVerified"
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.set(false, forKey: key)
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        KeychainAccessGate.isDisabled = false
+
+        let started = Date()
+        _ = try? await OAuthLimitsProvider().fetch(allowKeychainPrompt: false)
+        let elapsed = Date().timeIntervalSince(started)
+
+        XCTAssertLessThan(elapsed, 3,
+                          "unverified automatic path must not reach a blocking Keychain call")
     }
 
     // MARK: Login shell validation
@@ -213,5 +237,178 @@ final class SaveInventoryBoundsTests: XCTestCase {
                        "sanitised inventory must survive the += 1 in buy()")
         XCTAssertFalse(count.subtractingReportingOverflow(1).overflow,
                        "sanitised inventory must survive the - 1 in consumeRareCandy()")
+    }
+}
+
+/// Phase 0 calibration instrumentation. `makeSample` is pure, so these run without touching the
+/// filesystem; `record` is the only impure part and is gated on `AppEnv.isBundledApp`.
+final class CalibrationLogTests: XCTestCase {
+
+    private func sample() -> CalibrationLog.Sample {
+        var limits = try! JSONDecoder().decode(LimitStatus.self, from: Data("""
+        {"five_hour":{"utilization":12.5},"seven_day":{"utilization":16.0},
+         "limits":[{"kind":"weekly_scoped","group":"weekly","percent":8.0,
+                    "scope":{"model":{"display_name":"Opus 4.8"}}}]}
+        """.utf8))
+        limits.subscriptionType = "max"
+        limits.rateLimitTier = "default_claude_max_20x"
+        let today = DailyUsage(date: "2026-08-19", inputTokens: 10, outputTokens: 20,
+                               cacheCreationTokens: 30, cacheReadTokens: 40,
+                               totalTokens: 100, totalCost: 1.5)
+        return CalibrationLog.makeSample(
+            now: Date(timeIntervalSince1970: 1_700_000_000),
+            limits: limits,
+            snapshots: [(id: "claude_code", today: today)])
+    }
+
+    /// The four token kinds must survive separately. Lumping them into a total is exactly what
+    /// prevents the fit from weighting cache reads differently from fresh generation, which is one
+    /// of the three causes of the 4x spread this study exists to resolve.
+    func testTokenKindsAreRecordedSeparately() {
+        let p = sample().providers.first
+        XCTAssertEqual(p?.input, 10)
+        XCTAssertEqual(p?.output, 20)
+        XCTAssertEqual(p?.cacheWrite, 30)
+        XCTAssertEqual(p?.cacheRead, 40)
+        XCTAssertEqual(p?.total, 100)
+    }
+
+    /// Every window is captured, including the per-model scoped entries.
+    func testAllWindowsAreCaptured() {
+        let s = sample()
+        XCTAssertEqual(s.fh, 12.5)
+        XCTAssertEqual(s.sd, 16.0)
+        XCTAssertEqual(s.scoped.first?.model, "Opus 4.8")
+        XCTAssertEqual(s.scoped.first?.percent, 8.0)
+    }
+
+    /// No account, org, device or user identifier may reach the file. `plan`/`tier` are
+    /// subscription attributes, needed to interpret window size, and are not identifiers.
+    func testEncodedSampleCarriesNoIdentifiers() throws {
+        let json = String(data: try JSONEncoder().encode(sample()), encoding: .utf8)!.lowercased()
+        for banned in ["org", "account", "email", "uuid", "device", "token\":\"", "bearer", "@"] {
+            XCTAssertFalse(json.contains(banned),
+                           "calibration sample must not encode '\(banned)' — got \(json)")
+        }
+    }
+
+    /// Study logging is on by default; it is the only route to the Phase 1 decision gate.
+    func testLoggingDefaultsOn() {
+        let key = CalibrationLog.defaultsKey
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { if let previous { UserDefaults.standard.set(previous, forKey: key) } }
+        XCTAssertTrue(CalibrationLog.isEnabled)
+    }
+}
+
+/// Eligibility rules for crediting growth to work that leaves no local transcript.
+///
+/// The rule that matters is the anti-double-count one: the weekly window moves for Claude Code
+/// too, so an interval with any local token movement must be skipped entirely. Attributing the
+/// residual instead would need a tokens-per-percent constant, and the measured 4x spread is not
+/// good enough to subtract with.
+final class ExternalUsageCreditTests: XCTestCase {
+
+    func testCreditsWindowMovementWhenLocalTokensFlat() {
+        let xp = ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 12,
+                                            previousLocalTokens: 500, currentLocalTokens: 500)
+        XCTAssertEqual(xp, 2 * ExternalUsageCredit.tokensPerPercent)
+    }
+
+    /// The anti-double-count rule.
+    func testSkipsIntervalWhereLocalTokensMoved() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 12,
+                                                previousLocalTokens: 500, currentLocalTokens: 900),
+                     "an interval with local activity must not be credited — the window moved for both")
+    }
+
+    /// A midnight reset makes local tokens *drop*. That is still local movement, so still skipped.
+    func testSkipsWhenLocalTokensReset() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 12,
+                                                previousLocalTokens: 900, currentLocalTokens: 0))
+    }
+
+    func testNoBaselineAwardsNothing() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: nil, currentPercent: 12,
+                                                previousLocalTokens: nil, currentLocalTokens: 500))
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: nil,
+                                                previousLocalTokens: 500, currentLocalTokens: 500))
+    }
+
+    /// A weekly window reset reads as a large negative delta, which must never award or trap.
+    func testWindowResetAwardsNothing() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 96, currentPercent: 0,
+                                                previousLocalTokens: 500, currentLocalTokens: 500))
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 10,
+                                                previousLocalTokens: 500, currentLocalTokens: 500))
+    }
+
+    /// One interval cannot graduate a companion, whatever the window reports.
+    func testAwardIsCapped() {
+        let xp = ExternalUsageCredit.credit(previousPercent: 0, currentPercent: 100,
+                                            previousLocalTokens: 1, currentLocalTokens: 1)
+        XCTAssertEqual(xp, ExternalUsageCredit.maxCreditPerInterval)
+    }
+
+    /// Non-finite percentages must not reach the Int conversion, which would trap.
+    func testNonFinitePercentIsRejected() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 0, currentPercent: .infinity,
+                                                previousLocalTokens: 1, currentLocalTokens: 1))
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 0, currentPercent: .nan,
+                                                previousLocalTokens: 1, currentLocalTokens: 1))
+    }
+
+    /// Opt-in: it awards growth for usage the app cannot show a token count for.
+    func testDisabledByDefault() {
+        let key = ExternalUsageCredit.defaultsKey
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { if let previous { UserDefaults.standard.set(previous, forKey: key) } }
+        XCTAssertFalse(ExternalUsageCredit.isEnabled)
+    }
+}
+
+/// Regression cover for a bounded wait that was not bounded.
+///
+/// The first implementation used `withTaskGroup`: one child ran the blocking call, another slept
+/// for the timeout, and the winner was returned. That looks right and is wrong. A task group
+/// implicitly awaits every child before returning, and `cancelAll()` cannot interrupt
+/// `withCheckedContinuation` because it is not cancellation-aware. So the group waited for the
+/// blocking call regardless, and the timeout did nothing.
+///
+/// It passed review and passed every existing test, because no test ran work slower than the
+/// timeout. In production it hung the app indefinitely behind a Keychain dialog, with the poll
+/// loop stalled. These tests run work that is deliberately slower than its deadline.
+final class TimeoutRaceTests: XCTestCase {
+
+    func testReturnsAtDeadlineWhenWorkBlocksLonger() async {
+        let started = Date()
+        let result = await TimeoutRace.run(timeout: 0.2, timedOutValue: "timedOut") {
+            Thread.sleep(forTimeInterval: 3)      // uncancellable, like SecItemCopyMatching
+            return "work"
+        }
+        let elapsed = Date().timeIntervalSince(started)
+
+        XCTAssertEqual(result, "timedOut")
+        XCTAssertLessThan(elapsed, 1.5,
+                          "the wait must end at its deadline, not when the blocking work finishes")
+    }
+
+    func testReturnsWorkResultWhenItBeatsTheDeadline() async {
+        let result = await TimeoutRace.run(timeout: 5, timedOutValue: "timedOut") { "work" }
+        XCTAssertEqual(result, "work")
+    }
+
+    /// Both sources race to resume one continuation; resuming twice traps. Hammer the boundary
+    /// where the work finishes at roughly the same moment the timer fires.
+    func testConcurrentCompletionResumesExactlyOnce() async {
+        for _ in 0..<50 {
+            let result = await TimeoutRace.run(timeout: 0.01, timedOutValue: "timedOut") {
+                Thread.sleep(forTimeInterval: 0.01)
+                return "work"
+            }
+            XCTAssertTrue(result == "work" || result == "timedOut")
+        }
     }
 }

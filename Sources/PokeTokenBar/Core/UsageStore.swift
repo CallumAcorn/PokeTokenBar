@@ -376,6 +376,11 @@ final class UsageStore {
     /// 한도 데이터가 최소 1개 프로바이더 로드됐는가 — 사탕 첫 실행 시드 게이트(미로딩 중 시드 방지).
     var limitsReady: Bool { limits != nil || codexLimits != nil }
 
+    /// Weekly (seven-day) account window, the instrument for external-usage credit.
+    /// The five-hour window rolls, so its delta nets new usage against usage ageing out and would
+    /// read as movement when nothing happened.
+    var weeklyLimitPercent: Double? { limits?.sevenDay?.utilization }
+
     /// burn rate 티어 — companion 표시 상태(idle/working/focus) 판정에 사용.
     /// 전 프로바이더 합산 — Codex/Gemini 전용 사용자도 코딩 리듬이 반영된다.
     var burnTier: BurnTier {
@@ -424,13 +429,20 @@ final class UsageStore {
         floatingPetEnabled = d.object(forKey: "floatingPetEnabled") as? Bool ?? false
         floatingPetSize = d.object(forKey: "floatingPetSize") as? Double ?? 96
         floatingPetBubbleAlerts = d.object(forKey: "floatingPetBubbleAlerts") as? Bool ?? true
-        // Hardened default: credential access is OFF until the user turns it on. Upstream
-        // defaults this to `false` (read the token straight away); this fork inverts it so a
-        // fresh install never touches the Claude credential without an explicit opt-in. The
-        // cost is that the official-limits row stays hidden until enabled in Settings →
-        // Advanced. `d.object(forKey:)` is nil only when the key was never written, so anyone
-        // who has already made a choice keeps it.
-        disableKeychainAccess = d.object(forKey: "disableKeychainAccess") as? Bool ?? true
+        // Credential access defaults ON, matching upstream.
+        //
+        // This fork briefly defaulted it off. That was the right call while the automatic path
+        // could not read the Keychain at all, because the feature only half worked: limits went
+        // stale about an hour after each manual refresh. Now that the automatic path can refresh
+        // silently once the user has granted access, the feature works continuously and hiding it
+        // by default mostly hid the app's headline number for anyone who did not go looking in
+        // Settings → Advanced.
+        //
+        // The protection that mattered is not the default, it is the gate: the toggle still blocks
+        // every credential source, and the automatic path still refuses to touch the Keychain
+        // until a silent read has been proven to work, so no background poll can ever raise a
+        // prompt on a machine that has not granted access.
+        disableKeychainAccess = d.object(forKey: "disableKeychainAccess") as? Bool ?? false
 
         reschedule()
 
@@ -662,10 +674,21 @@ final class UsageStore {
 
         checkLimitAlerts()
         writeParitySnapshot()
+        recordCalibrationSample()
         let summary = snapshots.map { "\($0.providerID):\($0.today?.date ?? "nil")=\($0.todayTotalTokens)" }
             .joined(separator: ", ")
         AppLog.write("refresh done [\(summary)]")
         onRefresh?()   // 한도 로드 후 companion 갱신·사탕 지급(신선한 한도 시점)
+    }
+
+    /// Phase 0 instrumentation. Only records when limits are present: a sample without a window
+    /// reading contributes nothing to a tokens-per-percent fit and would dilute the file.
+    private func recordCalibrationSample() {
+        guard let limits else { return }
+        CalibrationLog.record(CalibrationLog.makeSample(
+            now: Date(),
+            limits: limits,
+            snapshots: snapshots.map { (id: $0.providerID, today: $0.today) }))
     }
 
     private func handleEmptyUsageRetry(schedule: Bool, hasErrors: Bool) {

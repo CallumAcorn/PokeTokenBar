@@ -13,6 +13,10 @@ struct SettingsView: View {
     @State private var launchAtLoginError: String?
     /// 셸 해석 옵트인 — 기본은 끔(BinaryLocator 가 같은 키를 같은 기본값으로 읽는다).
     @AppStorage(BinaryLocator.shellResolutionDefaultsKey) private var disableShellResolution = true
+    /// Phase 0 study logging — on by default, same key CalibrationLog reads.
+    @AppStorage(CalibrationLog.defaultsKey) private var calibrationLogging = true
+    /// Growth credit for non-CLI Claude use — opt-in, same key ExternalUsageCredit reads.
+    @AppStorage(ExternalUsageCredit.defaultsKey) private var creditExternalUsage = false
     @State private var reportError: String?
     @State private var advancedExpanded = false
     @State private var isCheckingUpdate = false
@@ -409,6 +413,26 @@ struct SettingsView: View {
                     }
                     Spacer()
                     Toggle("", isOn: $store.disableKeychainAccess)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                Divider()
+                groupRow {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(l.externalCredit)
+                        Text(l.externalCreditHint).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $creditExternalUsage)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                Divider()
+                groupRow {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(l.calibrationLogging)
+                        Text(l.calibrationLoggingHint).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $calibrationLogging)
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
                 Divider()
