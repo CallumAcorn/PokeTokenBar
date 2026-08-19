@@ -24,6 +24,35 @@ final class TradeDeepLinkTests: XCTestCase {
         XCTAssertNil(TradeDeepLink(url: URL(string: "poketokenbar://trade?session=y")!))
         XCTAssertNil(TradeDeepLink(url: URL(string: "poketokenbar://trade?server=&session=y")!))
     }
+
+    // MARK: pastedText — the manual-join fallback (offerPicker's paste field)
+
+    func testPastedTextAcceptsRawDeepLink() {
+        let link = TradeDeepLink(pastedText: "poketokenbar://trade?server=https%3A%2F%2Fx.example.com&session=abc123")
+        XCTAssertEqual(link?.server, "https://x.example.com")
+        XCTAssertEqual(link?.sessionId, "abc123")
+    }
+
+    func testPastedTextAcceptsShareLandingPageURL() {
+        let link = TradeDeepLink(pastedText: "  https://trade.example.com/t/abc123  ")
+        XCTAssertEqual(link?.server, "https://trade.example.com")
+        XCTAssertEqual(link?.sessionId, "abc123")
+    }
+
+    func testPastedTextPreservesNonDefaultPort() {
+        let link = TradeDeepLink(pastedText: "http://localhost:3000/t/abc123")
+        XCTAssertEqual(link?.server, "http://localhost:3000")
+        XCTAssertEqual(link?.sessionId, "abc123")
+    }
+
+    func testPastedTextRejectsGarbage() {
+        XCTAssertNil(TradeDeepLink(pastedText: ""))
+        XCTAssertNil(TradeDeepLink(pastedText: "not a url"))
+        XCTAssertNil(TradeDeepLink(pastedText: "https://trade.example.com/"))
+        XCTAssertNil(TradeDeepLink(pastedText: "https://trade.example.com/t/"))
+        XCTAssertNil(TradeDeepLink(pastedText: "https://trade.example.com/other/abc123"))
+        XCTAssertNil(TradeDeepLink(pastedText: "ftp://trade.example.com/t/abc123"))
+    }
 }
 
 // MARK: CompanionStore trade methods
