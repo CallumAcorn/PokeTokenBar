@@ -732,6 +732,27 @@ final class CompanionStore {
     /// 현재 알이 보증하는 등급 하한(UI 표시용). 훈련 중인 개체가 있으면 알이 없으므로 nil.
     var eggGuarantee: Rarity? { state.trainingSlotID == nil ? state.eggTier : nil }
 
+    /// 알 후보 풀을 제한하는 지역(상시 선호도, 상점 표시용). nil = 제한 없음.
+    var eggRegion: Region? { state.eggRegion }
+
+    /// 지역 제한을 바꾼다(nil = 제한 해제). eggTier 와 달리 구매가 아니라 즉시 적용되는 설정 —
+    /// 다음 롤(지금 품고 있는 알 포함)부터 이 지역으로 좁힌다.
+    func setEggRegion(_ region: Region?) {
+        guard state.eggRegion != region else { return }
+        state.eggRegion = region
+        // 알을 품고 있는 동안 지역을 바꾸면 이미 롤했거나(pendingHatchID) 지금 롤 중인(in-flight
+        // chooseBase) pre-roll 이 옛 지역 기준일 수 있다. activeGeneration 을 올려 그 결과를 버리고
+        // 새 지역으로 다시 굴린다(startFreshEgg 와 같은 무효화 패턴) — 안 그러면 "다음에 살 알"에만
+        // 필터가 적용되는 것처럼 보이고 지금 품고 있는 알은 옛 지역 그대로 조용히 부화한다.
+        if state.trainingSlotID == nil {
+            activeGeneration += 1
+            state.pendingHatchID = nil
+            prefetchedLineID = nil
+            Task { await self.ensureEggPrefetch() }
+        }
+        save()
+    }
+
     /// 알 구매 가능 — 훈련 슬롯을 내려놓을 개체가 있고 지갑이 그 티어 가격 이상일 때만.
     /// 알 상태에서도 살 수 있게 하는 안은 채택하지 않았다(기존 새 알과 게이트 통일) — 알끼리 교체하는
     /// 동작을 새로 만들지 않고, 상점의 알은 언제나 "지금 개체를 PC 로 돌려보내고 다시 뽑는다"는 한 가지 의미만 갖는다.
@@ -1183,13 +1204,17 @@ final class CompanionStore {
     /// 인덱스 취득 실패(오프라인 + 캐시 없음) 시 nil → 알 유지, 다음 갱신 틱 재시도.
     private func chooseBase() async -> Int? {
         let tier = state.eggTier
+        let region = state.eggRegion
         if let full = try? await provider.baseSpeciesIndex(), !full.isEmpty {
             // 등급 보증 알은 후보를 먼저 좁힌다 — capture_rate 상한이 곧 등급 하한이므로
             // (Rarity.captureRateCeiling) 전설도 자연히 포함된다("희귀 이상"에 전설이 들어가는 게 정상).
-            // 좁힌 결과가 비면 보증을 못 지키므로 전체 풀로 폴백하지 말고 알을 유지한다(다음 틱 재시도).
-            let index = tier.map { t in full.filter { t.includes(captureRate: $0.captureRate) } } ?? full
+            // 지역 필터도 같은 방식으로 좁힌다(Region.speciesRange). 좁힌 결과가 비면 보증/제한을
+            // 못 지키므로 전체 풀로 폴백하지 말고 알을 유지한다(다음 틱 재시도).
+            var index = full
+            if let tier { index = index.filter { tier.includes(captureRate: $0.captureRate) } }
+            if let region { index = index.filter { region.includes(speciesID: $0.id) } }
             guard !index.isEmpty else {
-                AppLog.write("hatch: no candidate for guaranteed \(tier?.rawValue ?? "none") — egg kept, retry next tick")
+                AppLog.write("hatch: no candidate for guaranteed \(tier?.rawValue ?? "none") region \(region?.rawValue ?? "none") — egg kept, retry next tick")
                 return nil
             }
             let weights = index.map { e in
@@ -1214,8 +1239,10 @@ final class CompanionStore {
     /// line() 이 실제 capture_rate 로 계산하므로 결과 개체의 등급은 정확하다. 인덱스 복구 시 가중 선택 재개.
     private func chooseBaseViaREST() async -> Int? {
         let tier = state.eggTier
+        // 지역 제한이 있으면 그 range 안에서만 굴린다 — Region 의 range 는 이미 animatedSpeciesIDs
+        // 부분집합이라(하나까지만 정의됨) 별도 교집합이 필요 없다.
+        let ids = state.eggRegion?.speciesRange ?? PokemonAssets.animatedSpeciesIDs
         for attempt in 1...16 {
-            let ids = PokemonAssets.animatedSpeciesIDs
             let id = Int(rng.next() % UInt64(ids.count)) + ids.lowerBound
             do {
                 if let bs = try await provider.baseSpecies(id: id) {

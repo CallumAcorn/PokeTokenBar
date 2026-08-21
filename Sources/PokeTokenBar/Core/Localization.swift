@@ -626,6 +626,26 @@ struct L {
     var shopPriceLabel: String { t("가격", "Price", "価格", "Precio") }
     var ownedAlready: String { t("보유 중", "Owned", "所持済み", "En posesión") }
     var shinyCharmEffectHint: String { t("이로치 확률 ↑ · 적용 중", "Shiny rate ↑ · active", "色違い率↑ · 適用中", "Prob. variocolor ↑ · activo") }
+    // 지역 필터 — 알 후보 풀을 한 세대로 제한(즉시 적용되는 상시 선호도, eggTier 처럼 구매 소비 아님).
+    var eggRegionLabel: String { t("지역", "Region", "地方", "Región") }
+    var eggRegionAll: String { t("전체", "All", "すべて", "Todas") }
+    /// 상한(하나/5세대)이 스프라이트 지원 범위 때문이라는 걸 고르는 순간 알려준다 — 빠진 선택지로
+    /// 나중에 발견하게 두지 않는다.
+    var eggRegionHint: String {
+        t("알 후보를 한 지역으로 좁혀요. 하나(5세대)까지만 지원돼요 — 애니메이션 스프라이트가 거기까지만 있어요.",
+          "Narrows which Pokémon can hatch to one region. Supports up to Unova (Gen 5) — that's as far as the animated sprites go.",
+          "孵化候補を1つの地方に絞ります。イッシュ(第5世代)まで対応 — アニメーションスプライトの範囲までです。",
+          "Limita qué Pokémon pueden nacer a una sola región. Compatible hasta Teselia (Gen 5) — hasta donde llegan los sprites animados.")
+    }
+    func regionLabel(_ r: Region) -> String {
+        switch r {
+        case .kanto:  return t("관동", "Kanto", "カントー", "Kanto")
+        case .johto:  return t("성도", "Johto", "ジョウト", "Johto")
+        case .hoenn:  return t("호연", "Hoenn", "ホウエン", "Hoenn")
+        case .sinnoh: return t("신오", "Sinnoh", "シンオウ", "Sinnoh")
+        case .unova:  return t("하나", "Unova", "イッシュ", "Teselia")
+        }
+    }
     // 알 (리롤) — tier = 보증 등급 하한(nil = 보증 없는 기본 알).
     // 이름은 `rarityLabel(r) + " 알"` 식 조합으로 만들지 않는다: 한국어·영어는 맞아떨어져도 일본어에서
     // 조사가 어긋난다(レアのタマゴ vs 자연스러운 レアなタマゴ). 세 언어를 명시 트리플로 적는다.

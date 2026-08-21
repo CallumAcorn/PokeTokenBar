@@ -13,6 +13,7 @@ struct ShopView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 walletHeader(l)
+                regionFilter(l)
                 // shopEntries = 판매 아이템 + 알 3종(보증 없음·고급 이상·희귀 이상)을 가격 오름차순으로
                 // 병합한 단일 목록. 알은 활성 포켓몬이 있을 때만 포함된다(즉시 액션이라 ItemKind 가 아님).
                 ForEach(store.shopEntries, id: \.self) { entry in
@@ -36,6 +37,31 @@ struct ShopView: View {
                 .font(.system(size: 24, weight: .bold)).monospacedDigit()
             Text(l.shopHint)
                 .font(.caption2).foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// 알 후보 풀을 한 지역으로 좁히는 상시 선호도. eggTier(구매 시 보증)와 달리 구매가 아니라
+    /// 즉시 적용 — 지금 품고 있는 알을 포함해 다음 롤부터 이 지역으로 좁힌다.
+    private func regionFilter(_ l: L) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(l.eggRegionLabel).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { store.eggRegion },
+                    set: { store.setEggRegion($0) })) {
+                    Text(l.eggRegionAll).tag(Region?.none)
+                    ForEach(Region.allCases, id: \.self) { Text(l.regionLabel($0)).tag(Region?.some($0)) }
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+            }
+            Text(l.eggRegionHint)
+                .font(.caption2).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)

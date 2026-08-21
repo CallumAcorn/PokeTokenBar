@@ -317,6 +317,26 @@ enum PokemonAssets {
     }
 }
 
+/// 알 후보 풀을 한 세대(지역)로 제한하는 필터. 종 ID 가 세대별로 연속 구간이라 새 데이터 없이
+/// 순수 ID 범위로 표현한다(chooseBase/chooseBaseViaREST 가 이 range 로 후보를 좁힌다).
+/// **상한은 설계다, 버그가 아니다**: 애니메이션 스프라이트가 전국도감 #649(하나)까지만 있어
+/// 6세대 이후는 새 스프라이트 에셋 없이 이 기능으로 다다를 수 없다.
+enum Region: String, Codable, Sendable, Hashable, CaseIterable {
+    case kanto, johto, hoenn, sinnoh, unova
+
+    var speciesRange: ClosedRange<Int> {
+        switch self {
+        case .kanto:  return 1...151
+        case .johto:  return 152...251
+        case .hoenn:  return 252...386
+        case .sinnoh: return 387...493
+        case .unova:  return 494...649
+        }
+    }
+
+    func includes(speciesID: Int) -> Bool { speciesRange.contains(speciesID) }
+}
+
 /// PokéAPI evolution-chain 을 파싱한 트리. 분기(evolves_to 다수)를 children 으로.
 struct EvoNode: Codable, Sendable {
     let speciesID: Int
@@ -630,6 +650,10 @@ struct CompanionState: Codable, Sendable {
     // ★영속이어야 한다 — 구매 시점엔 종을 못 정한다(롤에 네트워크가 필요). 보증을 상태에 적어 두고
     // 롤이 그것을 읽어야 오프라인·재시작을 건너서도 산 것을 받는다. 부화·졸업 때 nil 로 소비된다.
     var eggTier: Rarity?
+    // 알 후보 풀을 한 지역(세대)으로 제한하는 필터. nil = 제한 없음(기본, 기존 동작 그대로).
+    // eggTier 와 달리 구매로 소비되지 않는 상시 선호도 — 상점에서 바꾸기 전까지 이후 모든 롤(현재
+    // 품고 있는 알 포함)에 계속 적용된다.
+    var eggRegion: Region?
     // 알 상태에서 미리 롤해둔 부화 종(프리패칭) — 부화 순간 네트워크 딜레이 제거. 재시작에도 유지.
     var pendingHatchID: Int?
     /// 오늘 사용량 적립 기준값 — 프로바이더별로 독립 관리한다.
@@ -671,6 +695,8 @@ struct CompanionState: Codable, Sendable {
         eggUsage           = c.lenient(Int.self, forKey: .eggUsage, default: 0)
         // 모르는 rawValue 는 nil(보증 없음)로 강등 — 관대 디코딩의 안전한 방향(있지도 않은 보증을 만들지 않는다).
         eggTier            = c.lenientOptional(Rarity.self, forKey: .eggTier)
+        // 모르는 rawValue 는 nil(제한 없음)로 강등 — eggTier 와 같은 안전한 방향.
+        eggRegion          = c.lenientOptional(Region.self, forKey: .eggRegion)
         pendingHatchID     = c.lenientOptional(Int.self, forKey: .pendingHatchID)
         if c.contains(.claimedTodayTokensByProvider) {
             claimedTodayTokensByProvider = c.lenient([String: Int].self,
