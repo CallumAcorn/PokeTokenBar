@@ -493,6 +493,15 @@ struct L {
     var dexFilterHint: String { t("탭하면 이 희귀도만 보기 · 다시 탭하면 전체", "Tap to show only this rarity · tap again to clear", "タップでこの希少度のみ表示・再タップで全体", "Toca para ver solo esta rareza · toca de nuevo para ver todo") }
     /// 도감 칸의 ✨ 를 읽어주는 명사 — 이모지는 스크린리더가 일관되게 읽지 못한다.
     var dexShinyLabel: String { t("이로치", "Shiny", "色違い", "Variocolor") }
+    /// 포획 로그 한 줄의 출처 표시 — 부화(egg) vs 거래(trade, 상대 표시 이름 있으면 같이).
+    func acquisitionLabel(_ source: AcquisitionSource) -> String {
+        switch source {
+        case .egg: return t("부화", "Hatched", "孵化", "Eclosión")
+        case .trade(let from):
+            guard let from, !from.isEmpty else { return t("거래", "Traded", "交換", "Intercambio") }
+            return t("\(from)에게서 거래", "Traded from \(from)", "\(from)から交換", "Intercambiado de \(from)")
+        }
+    }
     var dexNormalLabel: String { t("일반", "Normal", "通常色", "Normal") }
     var dexShinyLocked: String { t("이 종의 이로치를 아직 못 잡았어요", "Haven't caught this species' shiny yet", "この種の色違いはまだ捕まえていません", "Aún no has capturado la variante variocolor de esta especie") }
     var dexStatRangeTitle: String { t("능력치 범위 (Lv.100 기준)", "Stat range (at Lv.100)", "ステータス範囲（Lv.100基準）", "Rango de estadísticas (a Nv.100)") }

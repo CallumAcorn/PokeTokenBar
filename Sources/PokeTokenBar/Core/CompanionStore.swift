@@ -939,13 +939,14 @@ final class CompanionStore {
         incoming.acquiredVia = .trade(from: displayName)
         incoming.acquiredAt = clock()
         state.party.append(incoming)
-        for id in incoming.pathIDs.prefix(incoming.stageIndex + 1) {
-            let effectiveShiny = incoming.isShiny && !(incoming.dittoDisguise != nil && !incoming.dittoRevealed)
-            unlockSpecies(id, baseID: incoming.baseID, rarity: incoming.rarity, isShiny: effectiveShiny, line: nil)
-        }
-        state.dex.append(DexEntry(baseID: incoming.baseID, finalID: incoming.currentID, chainOrder: incoming.pathIDs,
-                                  rarity: incoming.rarity, caughtAt: clock(),
-                                  isShiny: incoming.isShiny && !(incoming.dittoDisguise != nil && !incoming.dittoRevealed),
+        // 거래로 받은 개체는 지금 이 모습 하나만 실제로 "본" 것이다 — 이전 진화 단계는 보낸 쪽이 겪은
+        // 역사지 받는 쪽이 목격한 게 아니다. 그래서 egg 개체(직접 진화시키며 전 단계를 목격)와 달리
+        // pathIDs 전체가 아니라 currentID 하나만 도감에 언락한다.
+        let effectiveShiny = incoming.isShiny && !(incoming.dittoDisguise != nil && !incoming.dittoRevealed)
+        unlockSpecies(incoming.currentID, baseID: incoming.baseID, rarity: incoming.rarity,
+                     isShiny: effectiveShiny, line: nil)
+        state.dex.append(DexEntry(baseID: incoming.baseID, finalID: incoming.currentID, chainOrder: [incoming.currentID],
+                                  rarity: incoming.rarity, caughtAt: clock(), isShiny: effectiveShiny,
                                   nature: incoming.nature, names: nil, monID: incoming.id,
                                   source: .trade(from: displayName)))
         save()

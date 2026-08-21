@@ -121,6 +121,22 @@ final class TradeCompanionStoreTests: XCTestCase {
         XCTAssertEqual(s.party.count, 1)
     }
 
+    /// A traded mon that's already evolved only unlocks the form it arrived as — earlier stages are
+    /// the sender's history, not something the receiver ever witnessed, so they must not leak into
+    /// the receiver's dex (unlike egg mons, which unlock every stage as the owner evolves them).
+    func testAddTradedMonOnlyUnlocksTheReceivedFormNotEarlierStages() {
+        let s = store()
+        let blastoise = MonState(baseID: 7, pathIDs: [7, 8, 9], plannedPathIDs: [7, 8, 9],
+                                 stageIndex: 2, usedAtStage: 0, rarity: .common, totalForms: 3)
+
+        XCTAssertTrue(s.addTradedMon(blastoise, from: "Misty"))
+        XCTAssertNotNil(s.state.dexUnlocked[9], "Blastoise — the form actually received — is unlocked")
+        XCTAssertNil(s.state.dexUnlocked[7], "Squirtle was never seen by this trainer")
+        XCTAssertNil(s.state.dexUnlocked[8], "Wartortle was never seen by this trainer")
+        let logRow = try! XCTUnwrap(s.state.dex.first { $0.monID == blastoise.id })
+        XCTAssertEqual(logRow.chainOrder, [9])
+    }
+
     /// The other side's MonState.acquiredVia can be an arbitrary value — it must not be trusted,
     /// and gets overwritten with the displayName confirmed by the session (spoofing guard).
     func testAddTradedMonOverwritesAcquiredViaWithSessionDisplayName() {

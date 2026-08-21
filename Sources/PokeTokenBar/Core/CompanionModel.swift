@@ -916,7 +916,11 @@ struct CompanionState: Codable, Sendable {
             if let a = legacyActive {
                 // 위장 중인 메타몽은 리빌 전까지 이로치를 숨긴다(판정 단일 소스, graduate()/activeDexEntry 와 동일 규칙).
                 let effectiveShiny = a.isShiny && !(a.dittoDisguise != nil && !a.dittoRevealed)
-                dex.append(DexEntry(baseID: a.baseID, finalID: a.currentID, chainOrder: a.pathIDs,
+                // pathIDs 전체가 아니라 실제 도달분만 — migratedDexUnlocked(바로 위)가 이 mon 에 쓰는 것과
+                // 같은 슬라이스. 안 그러면 이 로그 행의 chainOrder 가 미도달 단계까지 "도달"로 주장하게 되고,
+                // (backfilledDexUnlocked 처럼) 이후 그 chainOrder 를 신뢰하는 소비자가 그걸 그대로 새게 된다.
+                let reachedPath = Array(a.pathIDs.prefix(a.stageIndex + 1))
+                dex.append(DexEntry(baseID: a.baseID, finalID: a.currentID, chainOrder: reachedPath,
                                      rarity: a.rarity, caughtAt: nil, isShiny: effectiveShiny,
                                      nature: a.nature, names: nil, monID: a.id, source: .egg))
             }
@@ -947,6 +951,42 @@ struct CompanionState: Codable, Sendable {
                 var u = out[id] ?? DexUnlock(baseID: a.baseID, rarity: a.rarity, names: nil, isShiny: false)
                 if effectiveShiny { u.isShiny = true }
                 out[id] = u
+            }
+        }
+        return out
+    }
+
+    /// `dexUnlocked` 를 `dex`(포획 로그)·`party` 에서 다시 접어 **빠진 항목만** 채운다(있는 항목은
+    /// 안 건드림 — union, never downgrade). 정상 흐름(hatch/evolve/graduate)에서는 매번
+    /// `unlockSpecies` 가 그때그때 갱신하므로 이 함수가 할 일이 없지만, 손편집·외부 시드 스크립트·
+    /// 과거 마이그레이션 공백처럼 `dexUnlocked` 가 `dex`/`party` 보다 뒤처진 세이브를 만나면 그 자리에서
+    /// 따라잡는다. `migratedDexUnlocked` 와 같은 접기 로직 — 그건 구버전 1회 마이그레이션 전용, 이건
+    /// `SaveTransfer.sanitized` 에서 **매 로드마다** 돌려 소스가 무엇이었든 자가 치유되게 한다.
+    static func backfilledDexUnlocked(existing: [Int: DexUnlock], dex: [DexEntry],
+                                      party: [MonState]) -> [Int: DexUnlock] {
+        var out = existing
+        func fold(_ id: Int, baseID: Int, rarity: Rarity, names: [String: String]?, isShiny: Bool) {
+            var u = out[id] ?? DexUnlock(baseID: baseID, rarity: rarity, names: nil, isShiny: false)
+            if let names { u.names = names }
+            if isShiny { u.isShiny = true }
+            out[id] = u
+        }
+        for entry in dex {
+            // 거래로 받은 로그는 받은 형태(finalID)만 실제로 "본" 것이다 — 이전 진화 단계는 보낸 쪽이
+            // 겪은 역사지 받는 쪽이 목격한 게 아니다(addTradedMon 과 같은 규칙). chainOrder 전체를
+            // 신뢰할 수 있는 건 egg 로그뿐 — 그 개체가 진화하는 걸 이 세이브의 주인이 직접 지켜봤다.
+            let witnessed: [Int]
+            if case .trade = entry.source { witnessed = [entry.finalID] } else { witnessed = entry.chainOrder }
+            for id in witnessed {
+                fold(id, baseID: entry.baseID, rarity: entry.rarity, names: entry.names?[id], isShiny: entry.isShiny)
+            }
+        }
+        for mon in party {
+            let effectiveShiny = mon.isShiny && !(mon.dittoDisguise != nil && !mon.dittoRevealed)
+            let witnessed: [Int]
+            if case .trade = mon.acquiredVia { witnessed = [mon.currentID] } else { witnessed = Array(mon.pathIDs.prefix(mon.stageIndex + 1)) }
+            for id in witnessed {
+                fold(id, baseID: mon.baseID, rarity: mon.rarity, names: nil, isShiny: effectiveShiny)
             }
         }
         return out

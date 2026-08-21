@@ -1659,10 +1659,8 @@ private struct DexEntryRow: View {
                         .accessibilityLabel(store.l.dexShinyLabel)
                 }
                 Spacer()
-                if let nature = entry.nature {
-                    Text(nature.name(store.language))
-                        .font(.system(size: 9)).foregroundStyle(.secondary)
-                }
+                Text(store.l.acquisitionLabel(entry.source))
+                    .font(.system(size: 9)).foregroundStyle(.secondary)
             }
             EvoLineView(nodes: entry.chainOrder.map { EvoLineItem(.species($0), .done) },
                         mysteryLabel: store.l.unknownNextEvolution, thumb: 56,

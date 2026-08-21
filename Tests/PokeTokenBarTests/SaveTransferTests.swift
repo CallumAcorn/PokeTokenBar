@@ -540,6 +540,59 @@ final class SaveTransferTests: XCTestCase {
         XCTAssertNil(cleaned.trainingSlotID, "아무도 안 가리키는 훈련 슬롯은 정리돼야 한다")
     }
 
+    /// [실사용 발견] 외부 시드 스크립트가 party/dex 는 다 진화한(egg 로) 개체로 채워놓고 dexUnlocked 는
+    /// base 종만 적어놓은 세이브 — 중간·최종 진화체가 도감에서 통째로 빠져 보였다. sanitized 가 매
+    /// 로드마다 dex/party 에서 다시 접어 따라잡아야 한다.
+    func testSanitizedBackfillsDexUnlockedFromDexAndPartyWhenSeedDataIsIncomplete() {
+        var s = CompanionState()
+        // 포획 로그는 전체 체인을 알고 있는데(egg 로 직접 진화시킨 Bulbasaur→Ivysaur→Venusaur)…
+        s.dex = [DexEntry(baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: .common, caughtAt: nil, source: .egg)]
+        // …도감 언락은 base 하나만 적혀 있다(시드 스크립트의 실수, 이 앱이 만든 상태가 아님).
+        s.dexUnlocked = [1: DexUnlock(baseID: 1, rarity: .common, names: nil, isShiny: false)]
+        // party 쪽도 같은 부류 공백 — egg 로 Charizard(6)까지 직접 진화시켰는데 dexUnlocked 엔 없다.
+        let charizard = MonState(baseID: 4, pathIDs: [4, 5, 6], plannedPathIDs: [4, 5, 6],
+                                 stageIndex: 2, usedAtStage: 0, rarity: .common, totalForms: 3, acquiredVia: .egg)
+        s.party = [charizard]
+
+        let cleaned = SaveTransfer.sanitized(s)
+
+        XCTAssertEqual(Set(cleaned.dexUnlocked.keys), [1, 2, 3, 4, 5, 6], "직접 진화시킨 개체는 체인 전체가 채워져야 한다")
+        XCTAssertEqual(cleaned.dexUnlocked[1]?.rarity, .common, "이미 있던 항목은 안 건드린다")
+    }
+
+    /// [실사용 발견] 거래로 이미 진화한 개체를 받으면 **받은 형태만** 도감에 언락돼야 한다 — 이전 진화
+    /// 단계는 보낸 쪽이 겪은 역사지 받는 쪽이 목격한 게 아니다. 실사용 세이브는 이 규칙이 없어서
+    /// Venusaur/Blastoise 를 거래로 받았는데 Ivysaur/Wartortle 같은 중간 단계까지 도감에 새 들어왔다.
+    func testSanitizedBackfillRestrictsTradedMonsToTheReceivedFormOnly() {
+        var s = CompanionState()
+        // 포획 로그가 전체 체인을 적어놨어도(구버전 데이터·외부 시드가 남긴 흔적) 거래 출처면 받은
+        // 형태(finalID)만 신뢰한다.
+        s.dex = [DexEntry(baseID: 7, finalID: 9, chainOrder: [7, 8, 9], rarity: .common, caughtAt: nil,
+                          source: .trade(from: "seed script"))]
+        let blastoise = MonState(baseID: 7, pathIDs: [7, 8, 9], plannedPathIDs: [7, 8, 9],
+                                 stageIndex: 2, usedAtStage: 0, rarity: .common, totalForms: 3,
+                                 acquiredVia: .trade(from: "seed script"))
+        s.party = [blastoise]
+
+        let cleaned = SaveTransfer.sanitized(s)
+
+        XCTAssertEqual(Set(cleaned.dexUnlocked.keys), [9], "받은 형태(Blastoise)만 — Squirtle/Wartortle 은 새지 않는다")
+    }
+
+    /// 이미 정상인 세이브(dexUnlocked 가 dex/party 와 이미 일치)는 백필이 손대지 않는다 — union 이라
+    /// 기존 값을 덮어쓰지 않는지 확인(예: 다른 rarity 로 잘못 덮어쓰면 회귀).
+    func testBackfillNeverOverwritesAnAlreadyPresentEntry() {
+        var s = CompanionState()
+        s.dex = [DexEntry(baseID: 1, finalID: 1, chainOrder: [1], rarity: .common, caughtAt: nil)]
+        // dexUnlocked 에 이미 다른(더 높은) rarity 로 기록돼 있다면 그대로 유지돼야 한다.
+        s.dexUnlocked = [1: DexUnlock(baseID: 1, rarity: .legendary, names: nil, isShiny: true)]
+
+        let cleaned = SaveTransfer.sanitized(s)
+
+        XCTAssertEqual(cleaned.dexUnlocked[1]?.rarity, .legendary, "기존 항목의 rarity 는 백필로 안 바뀐다")
+        XCTAssertEqual(cleaned.dexUnlocked[1]?.isShiny, true)
+    }
+
     /// [스탯 도입 후속] IV/EV 도 StatCalc.compute 의 `2*base + iv + ev/4` 산술에 그대로 들어간다 —
     /// usedAtStage 와 같은 부류의 트랩 위험이라 같은 신뢰경계에서 막혀야 한다(딥리뷰 H2 부류 스윕).
     /// 거래로 받은 개체도 같은 addTradedMon → sanitizedMon 경로를 타므로 이 테스트가 그쪽도 커버한다.

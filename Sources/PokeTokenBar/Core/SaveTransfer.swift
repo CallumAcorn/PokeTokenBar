@@ -196,6 +196,9 @@ enum SaveTransfer {
         // trainingSlotID 는 이제 party 를 가리키는 포인터다 — 손편집·마이그레이션 버그로 아무도 가리키지
         // 않게 되면 trainingMon 이 영영 nil 이 되어 조용히 멈춘 것처럼 보인다(진단 불가). 여기서 정리한다.
         if let tid = s.trainingSlotID, !s.party.contains(where: { $0.id == tid }) { s.trainingSlotID = nil }
+        // dexUnlocked 가 dex/party 보다 뒤처진 세이브(손편집·외부 시드 스크립트 등)를 매 로드마다
+        // 따라잡는다 — 있는 항목은 안 건드리는 union 이라 정상 세이브엔 아무 영향이 없다.
+        s.dexUnlocked = CompanionState.backfilledDexUnlocked(existing: s.dexUnlocked, dex: s.dex, party: s.party)
         return s
     }
 
