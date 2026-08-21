@@ -23,6 +23,9 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
     /// Edge-detects `store.floatingPetEnabled` going false→true, the only moment `sync()` seeds a
     /// default floating mon (the training one) if nothing is explicitly flagged yet — see sync().
     private var previousEnabled = false
+    /// Last-seen training mon id — lets `carryPositionOnTrainingSwapIfNeeded()` detect a training
+    /// switch and carry the floating window's saved position over to the new training mon.
+    private var previousTrainingMonID: String?
 
     /// Squared movement (pt²) below which a mouse-up counts as a click, not a drag.
     static let clickThresholdSquared: CGFloat = 16  // ~4pt
@@ -186,10 +189,30 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
         if !previousEnabled, companion.floatingMons.isEmpty, let training = companion.trainingMon {
             companion.setFloating(true, for: training.id)
         }
+        carryPositionOnTrainingSwapIfNeeded()
         let targets = companion.floatingMons
         let targetIDs = Set(targets.map(\.id))
         for id in panels.keys where !targetIDs.contains(id) { removePanel(for: id) }
         for (index, mon) in targets.enumerated() { show(mon: mon, index: index) }
+    }
+
+    /// `CompanionStore.carryFloatingToNewTraining` moves the *flag* (which mon floats) when the
+    /// training slot changes, but saved screen position (`originKey`) is stored per mon id — moving
+    /// only the flag would make the new mon reappear at the default bottom-right stack position
+    /// instead of where the old one was sitting. Copy the coordinates over here, once, before the
+    /// panel diff below tears down the old panel and builds a fresh one for the new mon.
+    private func carryPositionOnTrainingSwapIfNeeded() {
+        defer { previousTrainingMonID = companion.trainingMon?.id }
+        guard let oldID = previousTrainingMonID, oldID != companion.trainingMon?.id,
+              let newID = companion.trainingMon?.id,
+              companion.floatingMons.contains(where: { $0.id == newID }),
+              defaults.object(forKey: Self.originKey(newID, "X")) == nil
+        else { return }
+        for axis in ["X", "Y"] {
+            if let v = defaults.object(forKey: Self.originKey(oldID, axis)) as? Double {
+                defaults.set(v, forKey: Self.originKey(newID, axis))
+            }
+        }
     }
 
     private func show(mon: MonState, index: Int) {

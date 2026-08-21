@@ -1334,6 +1334,64 @@ final class CompanionStoreTests: XCTestCase {
         XCTAssertFalse(s.setTrainingSlot(to: first.id), "알 상태에선 전환할 훈련 슬롯 자체가 없다")
     }
 
+    // MARK: PC — 훈련 슬롯 전환 시 플로팅 핀 이동(Home 핀 버튼: "떠 있는 건 항상 지금 훈련 중인 개체")
+
+    /// setTrainingSlot·hatch·buyFreshEgg 세 경로 모두 "이전 훈련 개체가 떠 있었으면 핀을 새 훈련
+    /// 개체로 옮긴다"를 지켜야 한다. 한 시나리오로 세 경로를 순서대로 다 밟는다.
+    func testFloatingPinFollowsTrainingSlotAcrossAllThreeTransitionPaths() async {
+        let s = store(legendarySingle)
+        await s.hatch(baseID: 900)
+        let a = s.trainingMon!
+        s.setFloating(true, for: a.id)
+        XCTAssertTrue(s.trainingMon!.isFloating)
+
+        // 경로 1: hatch 가 훈련 슬롯을 새 개체로 넘긴다 — a 의 핀이 b 로 옮겨가야 한다.
+        await s.hatch(baseID: 900)
+        let b = s.trainingMon!
+        XCTAssertNotEqual(a.id, b.id)
+        XCTAssertTrue(s.party.first { $0.id == b.id }!.isFloating, "새 훈련 개체가 핀을 이어받는다")
+        XCTAssertFalse(s.party.first { $0.id == a.id }!.isFloating, "이전 훈련 개체는 핀이 풀린다")
+
+        // 경로 2: setTrainingSlot 으로 a 로 되돌아가면 핀도 같이 되돌아가야 한다.
+        XCTAssertTrue(s.setTrainingSlot(to: a.id))
+        XCTAssertTrue(s.party.first { $0.id == a.id }!.isFloating)
+        XCTAssertFalse(s.party.first { $0.id == b.id }!.isFloating)
+
+        // 경로 3: 새 알을 사면(훈련 슬롯이 nil 로) a 의 핀은 풀리고, 새로 띄울 개체가 없으니 아무도 안 뜬다.
+        fundForOneMoreEggPurchase(s)
+        XCTAssertTrue(s.buyFreshEgg())
+        XCTAssertNil(s.trainingMon)
+        XCTAssertFalse(s.party.first { $0.id == a.id }!.isFloating, "알 상태로 넘어가면 핀이 그냥 풀린다")
+        XCTAssertTrue(s.floatingMons.isEmpty)
+    }
+
+    /// PC 화면에서 훈련과 무관하게 따로 핀한 개체는 훈련 슬롯이 바뀌어도 안 건드린다 — 다중 플로팅은
+    /// 여전히 독립적이어야 한다(이 캐리 로직은 "훈련 중이면서 떠 있던" 그 한 마리만 대상).
+    func testIndependentlyPinnedMonIsUntouchedByTrainingSwitch() async {
+        let s = store(legendarySingle)
+        let (first, second) = await twoOwnedMons(s)
+        // second 가 훈련 중. first 는 훈련과 무관하게 독립적으로 핀한다(PC 화면에서 하듯).
+        s.setFloating(true, for: first.id)
+
+        XCTAssertTrue(s.setTrainingSlot(to: first.id), "first 로 전환(지금은 second 가 훈련 중이므로 유효)")
+        // first 는 계속 떠 있어야 하고(원래도 떠 있었으니 캐리 로직이 손댈 게 없다), second 는 훈련이
+        // 아니게 됐어도 원래 안 떠 있었으므로 여전히 안 뜬다.
+        XCTAssertTrue(s.party.first { $0.id == first.id }!.isFloating)
+        XCTAssertFalse(s.party.first { $0.id == second.id }!.isFloating)
+    }
+
+    /// 이전 훈련 개체가 애초에 안 떠 있었으면, 전환해도 새 훈련 개체가 저절로 뜨지 않는다(핀은 그대로
+    /// "없음" 상태를 유지 — 캐리는 "따라가는" 것이지 "새로 만드는" 것이 아니다).
+    func testTrainingSwitchDoesNotFloatAnythingWhenNothingWasFloatingBefore() async {
+        let s = store(legendarySingle)
+        let (_, second) = await twoOwnedMons(s)
+        XCTAssertFalse(second.isFloating)
+        XCTAssertTrue(s.floatingMons.isEmpty)
+
+        XCTAssertTrue(s.setTrainingSlot(to: s.party.first { $0.id != second.id }!.id))
+        XCTAssertTrue(s.floatingMons.isEmpty, "핀이 없었으면 전환 후에도 아무도 안 뜬다")
+    }
+
     /// [회귀] `loadCurrentLine` 이 이전 훈련 개체의 라인 fetch 대기 창에 있을 때 setTrainingSlot 이
     /// 들어오면, 뒤늦게 끝난 그 fetch 가 새로 전환한 개체를 덮어쓰면 안 된다 — activeGeneration 게이트가
     /// hatch/import 레이스를 막는 것과 같은 패턴을 setTrainingSlot 에도 적용했는지 고정한다.

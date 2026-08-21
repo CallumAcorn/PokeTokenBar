@@ -27,7 +27,7 @@ final class FreshEggTests: XCTestCase {
         return CompanionStore(provider: FreshEggNoProvider(), clock: { self.now }, fileURL: url, rng: SeededRNG(seed: 7))
     }
 
-    func testPriceIsOneBillion() { XCTAssertEqual(FreshEgg.price, 1_000_000_000) }
+    func testPriceIsHalfBillion() { XCTAssertEqual(FreshEgg.price, 500_000_000) }
 
     /// [핵심] 리롤 = 벤치(PC 로 이동), 폐기가 아니다: 훈련 슬롯만 풀리고 새 알(eggUsage 0) 시작.
     /// 개체 자체는 party 에 그대로 남고, 그 개체의 포획 로그 행도 지워지지 않는다.
@@ -51,7 +51,7 @@ final class FreshEggTests: XCTestCase {
         XCTAssertEqual(s.dexEntries.count, persistedDexBefore.count,
                        "벤치한 개체의 포획 로그 행도 그대로 남는다")
         XCTAssertEqual(s.state.collectedFinals, collectedBefore, "확률 가중(collectedFinals) 불변")
-        XCTAssertEqual(s.state.spentTokens, FreshEgg.price, "지갑에서 1B 차감")
+        XCTAssertEqual(s.state.spentTokens, FreshEgg.price, "지갑에서 알 가격만큼 차감")
         XCTAssertEqual(s.availableTokens, 5_000_000_000 - FreshEgg.price)
     }
 
@@ -74,7 +74,7 @@ final class FreshEggTests: XCTestCase {
 
     /// 잔액이 가격 미만이면 불가 — 활성 유지.
     func testCannotRerollWithoutFunds() {
-        let s = store(used: 500_000_000)   // 1B 미만
+        let s = store(used: 100_000_000)   // 500M 미만
         XCTAssertFalse(s.canBuyFreshEgg)
         XCTAssertFalse(s.buyFreshEgg())
         XCTAssertNotNil(s.trainingMon, "활성 유지")

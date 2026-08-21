@@ -280,12 +280,13 @@ enum ShinyCharm {
     static let shinyDenominator: UInt64 = 48
 }
 
-/// 새 알(리롤) 밸런스 상수 — 상점 구매 시 현재 포켓몬을 폐기하고 새 알로 되돌린다.
+/// 새 알(리롤) 밸런스 상수 — 상점 구매 시 훈련 중인 포켓몬을 PC 로 보내고(잃지 않음) 새 알을 받는다.
 enum FreshEgg {
-    /// 상점 구매가. 마음에 안 드는 부화를 리롤하는 프리미엄(쌓인 토큰의 활용처). 폐기 개체는 졸업이
-    /// 아니라 그냥 사라지므로 도감·확률(collectedFinals)에 무영향 — "뽑은 적 없던 것처럼". 새 알은
+    /// 상점 구매가. 마음에 안 드는 부화를 리롤하는 프리미엄(쌓인 토큰의 활용처). 훈련 슬롯만 풀릴 뿐
+    /// PC 에 남으므로 도감·확률(collectedFinals)엔 이미 반영돼 있다(잃는 게 아니라 벤치일 뿐). 새 알은
     /// 처음부터 재인큐베이션(5M) 필요 + 성장(usedAtStage) 소멸이라 스팸/파밍이 자연 억제된다.
-    static let price = 1_000_000_000
+    /// 전액이던 걸 절반으로 내렸다(사용자 요청, 2026-08-22) — 리롤 문턱을 낮춰 더 가볍게 시도해보게.
+    static let price = 500_000_000
 
     /// 상점에서 파는 알 — 보증 없음(기본) → 고급 이상 → 희귀 이상. `nil` = 등급 보증 없는 기존 알.
     /// **전설 전용 알은 팔지 않는다**(등급 하한을 capture_rate 로 표현할 수 없고, 최고 등급을 확정
@@ -293,31 +294,16 @@ enum FreshEgg {
     static let shopTiers: [Rarity?] = [nil, .uncommon, .rare]
 
     /// 등급 보증 알의 가격 — 배율은 새 상수를 짓지 않고 **기존 졸업 총량 표**를 그대로 쓴다
-    /// (common 750M : uncommon 1.875B : rare 3B = 1 : 2.5 : 4 → 1B / 2.5B / 4B).
+    /// (common 750M : uncommon 1.875B : rare 3B = 1 : 2.5 : 4 → 500M / 1.25B / 2B, price 절반 인하 반영).
     ///
     /// 확률 배율(고급 7.16% : 희귀 6.98% ≈ 1 : 2.03)로 매기면 안 된다 — 그러면 같은 값으로 고급 알
     /// 2개를 사는 쪽이 희귀+ 기대 1.039마리·전설 0.104마리로 희귀 알 1개(1.000·0.100)를 모든 축에서
-    /// 앞질러 상위 티어가 완전 열등재가 된다. 졸업량 배율이라야 상위 티어가 희귀+ 1마리당 4.00B 로
-    /// 하위 반복 구매(4.81B)보다 싸다.
+    /// 앞질러 상위 티어가 완전 열등재가 된다. 졸업량 배율이라야 상위 티어가 희귀+ 1마리당 2.00B 로
+    /// 하위 반복 구매(2.405B)보다 싸다.
     static func price(guaranteeing tier: Rarity?) -> Int {
         guard let tier else { return price }
         let multiplier = Double(PokemonBalance.graduationTotal(tier)) / Double(PokemonBalance.graduationTotal(.common))
         return Int((Double(price) * multiplier).rounded())
-    }
-}
-
-/// 상점 표시 한 줄 — 판매 아이템(ItemKind) 또는 알 리롤(즉시 액션이라 ItemKind 가 아님).
-/// `egg` 의 연관값은 **보증 등급 하한**(nil = 보증 없는 기존 알).
-/// CompanionStore.shopEntries 가 이 둘을 가격 오름차순으로 병합해 뷰가 단일 목록으로 그린다.
-enum ShopEntry: Hashable, Sendable {
-    case item(ItemKind)
-    case egg(Rarity?)
-
-    var price: Int {
-        switch self {
-        case .item(let kind): return kind.shopPrice ?? 0
-        case .egg(let tier): return FreshEgg.price(guaranteeing: tier)
-        }
     }
 }
 

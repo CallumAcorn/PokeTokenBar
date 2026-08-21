@@ -584,6 +584,7 @@ final class CompanionStore {
     /// 여기서 건드리지 않는다 — 자동 졸업 경로는 호출 직전에 그 문구를 세워 6초 배너로 보여줘야 하고,
     /// buyEgg 는 졸업이 아니므로 호출부에서 직접 비운다(두 경로의 의미가 다르다).
     private func startFreshEgg(tier: Rarity?) {
+        carryFloatingToNewTraining(from: state.trainingSlotID, to: nil)
         state.trainingSlotID = nil
         activeGeneration += 1
         currentLine = nil
@@ -735,31 +736,6 @@ final class CompanionStore {
             }
     }
 
-    /// 상점 표시 순서 — 판매 아이템 + (활성 포켓몬 있을 때) 알 3종을 하나의 가격 오름차순 목록으로 병합.
-    /// 정렬 규칙은 purchasableItems 와 동일: 구매 완료한 보유형은 맨 아래, 나머지는 가격 저렴한 순.
-    /// 알은 즉시 액션이라 '보유' 개념이 없어 가격 순서에만 참여한다.
-    ///
-    /// 등급 알끼리 붙여 '티어 사다리'로 묶어 보이게 하는 안도 검토했으나 채택하지 않았다 — 지금의 순수
-    /// 가격 오름차순은 "알이 무조건 맨 아래로 append 돼 더 비싼 부적보다 아래에 놓이던" 표시 회귀를
-    /// 고치며 들어온 규칙이라(ShopTests 참조), 그룹 배치는 그 회귀를 부분적으로 되살린다. 티어 관계는
-    /// 카드의 등급 배지로 읽히게 한다.
-    var shopEntries: [ShopEntry] {
-        var entries: [ShopEntry] = purchasableItems.map { ShopEntry.item($0) }
-        if hasActive { entries += FreshEgg.shopTiers.map { ShopEntry.egg($0) } }
-        return entries.sorted { a, b in
-            let aDone = isPurchasedPassive(a)
-            let bDone = isPurchasedPassive(b)
-            if aDone != bDone { return !aDone }
-            return a.price < b.price
-        }
-    }
-
-    /// 구매 완료한 보유형(이로치 부적 등)인지 — shopEntries 정렬에서 맨 아래로 보낼 판정.
-    private func isPurchasedPassive(_ entry: ShopEntry) -> Bool {
-        guard case .item(let kind) = entry else { return false }   // 알은 즉시 액션 — 보유 개념 없음
-        return kind.isPassive && itemCount(kind) > 0
-    }
-
     /// 구매 가능 — 잔액이 그 아이템 가격 이상(상점 미판매면 false). 활성/알 무관(재고는 미리 쌓아둘 수 있음).
     func canBuy(_ kind: ItemKind) -> Bool {
         guard let price = kind.shopPrice else { return false }
@@ -878,6 +854,21 @@ final class CompanionStore {
         return true
     }
 
+    /// 훈련 슬롯이 바뀔 때(전환·부화·새 알) 이전 훈련 개체가 떠 있었다면 그 핀을 새 훈련 개체로
+    /// 옮긴다 — "떠 있는 건 항상 지금 훈련 중인 개체"(Home 핀 버튼의 기대와 일치). 핀이 없었다면
+    /// 아무 일도 안 한다(새 개체를 억지로 띄우지 않는다). PC 화면에서 훈련과 무관하게 따로 핀한 다른
+    /// 개체들(floatingMons 의 나머지)은 안 건드린다 — 그건 여전히 독립적인 다중 플로팅이다.
+    /// FloatingPetController 가 이 전환을 감지해 창 위치도 같이 옮긴다(플래그만으론 위치가 안 옮겨짐).
+    private func carryFloatingToNewTraining(from oldID: MonState.ID?, to newID: MonState.ID?) {
+        guard let oldID, oldID != newID,
+              let oldIdx = state.party.firstIndex(where: { $0.id == oldID }),
+              state.party[oldIdx].isFloating else { return }
+        state.party[oldIdx].isFloating = false
+        if let newID, let newIdx = state.party.firstIndex(where: { $0.id == newID }) {
+            state.party[newIdx].isFloating = true
+        }
+    }
+
     // MARK: PC — 훈련 대상 전환
 
     /// 훈련 슬롯을 PC 안의 다른 개체로 전환 — 무료, 알과 무관(이미 소유한 개체 사이의 전환일 뿐).
@@ -886,6 +877,7 @@ final class CompanionStore {
     func setTrainingSlot(to monID: MonState.ID) -> Bool {
         guard state.trainingSlotID != nil, state.trainingSlotID != monID,
               state.party.contains(where: { $0.id == monID }) else { return false }
+        carryFloatingToNewTraining(from: state.trainingSlotID, to: monID)
         state.trainingSlotID = monID
         activeGeneration += 1
         currentLine = nil
@@ -1187,6 +1179,7 @@ final class CompanionStore {
                               isShiny: isShiny, nature: nature, ability: ability, ivs: ivs, dittoDisguise: dittoDisguise,
                               acquiredAt: clock(), acquiredVia: .egg)
         state.party.append(newMon)
+        carryFloatingToNewTraining(from: state.trainingSlotID, to: newMon.id)
         state.trainingSlotID = newMon.id
         unlockSpecies(line.baseID, baseID: line.baseID, rarity: line.rarity, isShiny: showShiny, line: line)
         state.dex.append(DexEntry(baseID: line.baseID, finalID: line.baseID, chainOrder: [line.baseID],

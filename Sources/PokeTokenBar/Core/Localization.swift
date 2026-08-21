@@ -132,7 +132,8 @@ struct L {
     }
     var floatingPetMenuOpen: String { t("토큰 바 열기", "Open Token Bar", "トークンバーを開く", "Abrir Token Bar") }
     var floatingPetMenuHide: String {
-        t("플로팅 펫 끄기", "Turn off floating pet", "フローティングペットをオフ", "Desactivar mascota flotante")
+        t("이 플로팅 펫 고정 해제", "Unpin this floating pet", "このフローティングペットのピン留めを解除",
+          "Dejar de fijar esta mascota flotante")
     }
     func floatingPetHoverTokensOnly(_ tokens: String) -> String {
         t("오늘 \(tokens) 토큰", "Today: \(tokens) tokens", "今日: \(tokens) トークン", "Hoy: \(tokens) tokens")
@@ -701,6 +702,13 @@ struct L {
     var shop: String { t("상점", "Shop", "ショップ", "Tienda") }
     var spendableTokens: String { t("쓸 수 있는 토큰", "Spendable tokens", "使えるトークン", "Tokens disponibles") }
     var shopHint: String { t("사용한 토큰으로 아이템을 살 수 있어요.", "Spend the tokens you've used on items.", "使ったトークンでアイテムを購入できます。", "Usa los tokens que has consumido para comprar objetos.") }
+    // 상점 카테고리 — 탭하면 그 그룹으로 들어간다.
+    var shopGroupItems: String { t("아이템", "Items", "アイテム", "Objetos") }
+    var shopGroupItemsHint: String { t("이상한 사탕 · 민트 · 이로치 부적", "Rare Candy · Mint · Shiny Charm", "ふしぎなアメ・ミント・ひかるおまもり", "Caramelo Raro · Menta · Amuleto Iris") }
+    var shopGroupVitamins: String { t("비타민", "Vitamins", "栄養ドリンク", "Vitaminas") }
+    var shopGroupVitaminsHint: String { t("노력치(EV)를 올리는 아이템 6종", "6 items that raise EVs", "努力値(EV)を上げるアイテム6種", "6 objetos que suben los EVs") }
+    var shopGroupEggs: String { t("알", "Eggs", "タマゴ", "Huevos") }
+    var shopGroupEggsHint: String { t("새 알로 부화를 다시 시작해요", "Start hatching a new egg", "新しいタマゴで孵化をやり直します", "Empieza a eclosionar un huevo nuevo") }
     var buy: String { t("구매", "Buy", "購入", "Comprar") }
     func buyConfirm(_ name: String) -> String { t("\(name) 구매할까요?", "Buy \(name)?", "\(name) を購入しますか？", "¿Comprar \(name)?") }
     var notEnoughTokens: String { t("토큰이 부족해요", "Not enough tokens", "トークンが足りません", "No tienes suficientes tokens") }
@@ -741,16 +749,16 @@ struct L {
     }
     func eggDescription(_ tier: Rarity?) -> String {
         guard let tier, tier != .common else {
-            return t("지금 포켓몬을 놓아주고 새 알로 다시 시작해요.",
-                     "Send off your current Pokémon and start fresh with a new egg.",
-                     "いまのポケモンを手放して新しいタマゴからやり直します。",
-                     "Suelta a tu Pokémon actual y empieza de nuevo con un huevo nuevo.")
+            return t("지금 포켓몬은 PC로 보내고 새 알의 부화를 시작해요.",
+                     "Move your current Pokémon to your PC and start trying to hatch a new one.",
+                     "いまのポケモンをPCに送って、新しいタマゴの孵化を始めます。",
+                     "Mueve tu Pokémon actual al PC y empieza a intentar eclosionar uno nuevo.")
         }
         let r = rarityLabel(tier)
-        return t("지금 포켓몬을 놓아주고 \(r) 이상이 확정으로 나오는 알을 받아요.",
-                 "Send off your current Pokémon for an egg guaranteed to hatch \(r) or better.",
-                 "いまのポケモンを手放して \(r) 以上が確定で孵るタマゴをもらいます。",
-                 "Suelta a tu Pokémon actual y consigue un huevo garantizado de \(r) o superior.")
+        return t("지금 포켓몬은 PC로 보내고 \(r) 이상이 확정인 알의 부화를 시작해요.",
+                 "Move your current Pokémon to your PC and start trying to hatch one guaranteed \(r) or better.",
+                 "いまのポケモンをPCに送って、\(r) 以上が確定のタマゴの孵化を始めます。",
+                 "Mueve tu Pokémon actual al PC y empieza a intentar eclosionar uno garantizado de \(r) o superior.")
     }
     /// 인큐베이션 중 표시하는 보증 배지 — 어떤 알을 품고 있는지 한 줄로.
     func eggGuaranteeHint(_ tier: Rarity) -> String {

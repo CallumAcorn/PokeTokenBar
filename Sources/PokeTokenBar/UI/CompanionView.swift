@@ -55,6 +55,7 @@ struct ItemIconView: View {
         Group {
             if let img {
                 Image(nsImage: img).resizable().interpolation(.none)
+                    .aspectRatio(contentMode: .fit)
                     .frame(width: size, height: size)
             } else {
                 Text(kind.fallbackEmoji).font(.system(size: size))
@@ -167,12 +168,16 @@ struct SpriteView: View {
     var body: some View {
         Group {
             if !frames.isEmpty {
-                // GIF 애니메이션 경로 — 현재 프레임만 렌더
+                // GIF 애니메이션 경로 — 현재 프레임만 렌더. aspectRatio(.fit) 필수 — GIF 프레임마다
+                // 원본 픽셀 치수가 살짝 다를 수 있어(크롭 편차), 없으면 프레임이 바뀔 때마다 정사각형
+                // 틀에 억지로 눌려 늘어나거나 눌린다.
                 Image(nsImage: frames[frameIndex % frames.count].image)
                     .resizable().interpolation(.none)
+                    .aspectRatio(contentMode: .fit)
                     .frame(width: size, height: size)
             } else if let img {
                 Image(nsImage: img).resizable().interpolation(.none)
+                    .aspectRatio(contentMode: .fit)
                     .frame(width: size, height: size)
             } else {
                 Text("🥚").font(.system(size: size * 0.62)).frame(width: size, height: size)
@@ -518,6 +523,20 @@ struct CompanionHeader: View {
                                 .padding(.horizontal, 5).padding(.vertical, 1)
                                 .background(rarityColor(r)).foregroundStyle(.white)
                                 .clipShape(Capsule())
+                        }
+                        Spacer(minLength: 4)
+                        // 알 인큐베이션 중엔 안 보인다 — 플로팅 펫은 개체(MonState) 단위라 아직 핀할
+                        // 대상이 없다(부화하면 활성 개체가 생기고 그때 나타난다).
+                        if let mon = store.trainingMon {
+                            Button {
+                                store.setFloating(!mon.isFloating, for: mon.id)
+                            } label: {
+                                Image(systemName: mon.isFloating ? "pin.slash" : "pin")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(mon.isFloating ? Color.accentColor : Color.secondary)
+                            .help(mon.isFloating ? store.l.pcUnsetFloating : store.l.pcSetFloating)
                         }
                     }
                     if store.hasActive {
