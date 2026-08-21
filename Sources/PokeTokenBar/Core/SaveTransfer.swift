@@ -139,8 +139,32 @@ enum SaveTransfer {
     ///
     /// 다운스트림 산술 지점마다 막으면 새 지점이 생길 때마다 재발하므로, 값이 **들어오는 경계 한 곳**에서
     /// 정규화한다. 대상은 실제로 산술에 쓰이는 필드뿐이다 — 도감·인벤토리 항목은 잘라내지 않는다(데이터 손실).
+    private static func clampToken(_ v: Int) -> Int { min(max(0, v), maxTokenValue) }
+
+    /// Trust-boundary clamp for a single individual — shared by both the party-array sweep
+    /// (sanitized) and a mon received via trade (CompanionStore.addTradedMon). A trade payload is
+    /// just as much an outside-the-app value (the other client, the server) as a save file, so it
+    /// needs the same normalization.
+    static func sanitizedMon(_ mon: MonState) -> MonState {
+        var m = mon
+        m.usedAtStage = clampToken(m.usedAtStage)
+        // totalForms feeds `kk * (kk + 1)` (PokemonBalance.phaseThreshold) — a large value is a trap by itself.
+        m.totalForms = min(max(1, m.totalForms), 12)
+        m.stageIndex = min(max(0, m.stageIndex), max(0, m.pathIDs.count - 1))
+        // IV/EV feed StatCalc.compute's `2*base + iv + ev/4` — same overflow-trap shape as usedAtStage,
+        // just with real games' own valid ranges as the clamp instead of maxTokenValue.
+        m.ivs = m.ivs.map { clampedSpread($0, to: 0...31) }
+        m.evs = clampedSpread(m.evs, to: 0...Vitamin.evCapPerStat)
+        return m
+    }
+
+    private static func clampedSpread(_ s: StatSpread, to range: ClosedRange<Int>) -> StatSpread {
+        func c(_ v: Int) -> Int { min(max(range.lowerBound, v), range.upperBound) }
+        return StatSpread(hp: c(s.hp), attack: c(s.attack), defense: c(s.defense),
+                          specialAttack: c(s.specialAttack), specialDefense: c(s.specialDefense), speed: c(s.speed))
+    }
+
     static func sanitized(_ state: CompanionState) -> CompanionState {
-        func clampToken(_ v: Int) -> Int { min(max(0, v), maxTokenValue) }
         var s = state
         s.usedSinceInstall = clampToken(s.usedSinceInstall)
         s.spentTokens = clampToken(s.spentTokens)
@@ -155,32 +179,35 @@ enum SaveTransfer {
         s.inventory = s.inventory.reduce(into: [:]) { result, entry in
             result[entry.key] = clampToken(entry.value)
         }
-        // 알 보증은 "지금 품고 있는 알"에만 붙는 값이라 활성 포켓몬과 공존할 수 없다. 손편집·구버전
+        // 알 보증은 "지금 품고 있는 알"에만 붙는 값이라 훈련 중인 개체와 공존할 수 없다. 손편집·구버전
         // 조합으로 둘 다 들어오면 그 보증이 다음 알로 새어 영구 프리미엄이 되므로 여기서 떨군다.
         // 그 보증으로 미리 뽑아둔 종(pendingHatchID)도 함께 버린다 — 보증만 지우면 졸업 후 받는 **무료**
         // 알이 그 pre-roll 로 부화해, 아무도 사지 않은 프리미엄 결과가 나온다.
-        if s.active != nil { s.eggTier = nil; s.pendingHatchID = nil }
+        if s.trainingSlotID != nil { s.eggTier = nil; s.pendingHatchID = nil }
         // 만족시킬 수 없는 보증은 알을 영구히 못 깨게 만든다 — 전설은 capture_rate 로 표현할 수 없어
         // (captureRateCeiling == nil) 두 롤 경로 모두 후보를 0개로 만들고, 부화가 없으니 보증도 소비되지
         // 않으며, 새 알 구매는 `hasActive` 게이트에 막혀 빠져나갈 수단이 없다. 디코드는 *성공*하므로
         // load() 의 .corrupt 복구도 안 걸려 파일을 손으로 지우기 전엔 앱을 못 쓴다.
         // 관대 디코딩은 모르는 rawValue 만 걸러낼 뿐 **아는데 만족 불가능한 값**은 그대로 통과시킨다.
         if s.eggTier?.captureRateCeiling == nil { s.eggTier = nil }
-        if var active = s.active {
-            active.usedAtStage = clampToken(active.usedAtStage)
-            // totalForms 는 `kk * (kk + 1)` 형태로 쓰여(PokemonBalance.phaseThreshold) 큰 값이 그 자체로 트랩이다.
-            active.totalForms = min(max(1, active.totalForms), 12)
-            active.stageIndex = min(max(0, active.stageIndex), max(0, active.pathIDs.count - 1))
-            s.active = active
-        }
+        // PC 전원을 훑는다 — 예전엔 개체가 하나(active)라 한 번만 클램프하면 됐지만, 지금은 party 배열
+        // 전체가 대상이다. 여기서 한 명이라도 빠뜨리면 그 개체의 다음 진화 판정이 오버플로 트랩으로 죽는다.
+        s.party = s.party.map(sanitizedMon)
+        // trainingSlotID 는 이제 party 를 가리키는 포인터다 — 손편집·마이그레이션 버그로 아무도 가리키지
+        // 않게 되면 trainingMon 이 영영 nil 이 되어 조용히 멈춘 것처럼 보인다(진단 불가). 여기서 정리한다.
+        if let tid = s.trainingSlotID, !s.party.contains(where: { $0.id == tid }) { s.trainingSlotID = nil }
+        // dexUnlocked 가 dex/party 보다 뒤처진 세이브(손편집·외부 시드 스크립트 등)를 매 로드마다
+        // 따라잡는다 — 있는 항목은 안 건드리는 union 이라 정상 세이브엔 아무 영향이 없다.
+        s.dexUnlocked = CompanionState.backfilledDexUnlocked(existing: s.dexUnlocked, dex: s.dex, party: s.party)
         return s
     }
 
     /// 다른 기기에서 온 상태를 **이 기기 기준으로 재정렬**한다.
     ///
     /// `CompanionState` 의 필드는 이전 관점에서 세 부류다.
-    ///  - **진행**: 어느 기기에서든 참(`usedSinceInstall`·`dex`·`inventory`·`active`·`eggUsage`·`eggTier`…)
-    ///    → 그대로. 알 보증(`eggTier`)은 산 물건이지 이 기기의 장부가 아니라 기기를 옮겨도 따라간다.
+    ///  - **진행**: 어느 기기에서든 참(`usedSinceInstall`·`dex`·`inventory`·`party`·`trainingSlotID`·
+    ///    `dexUnlocked`·`eggUsage`·`eggTier`…) → 그대로. 알 보증(`eggTier`)은 산 물건이지 이 기기의
+    ///    장부가 아니라 기기를 옮겨도 따라간다.
     ///  - **로컬 장부**: *그 기기가* 어디까지 적립했나(`claimedTodayTokensByProvider`·`lastDate`·`installBaselineSet`)
     ///    → 새 기기 기준으로 다시 잡는다. 그대로 들여오면 옛 기기의 오늘 총량이 문턱이 되어
     ///    `CompanionStore.update` 의 프로바이더별 증분 게이트가 이전 당일 내내 거짓이 되고,

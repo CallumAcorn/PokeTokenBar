@@ -132,7 +132,8 @@ struct L {
     }
     var floatingPetMenuOpen: String { t("토큰 바 열기", "Open Token Bar", "トークンバーを開く", "Abrir Token Bar") }
     var floatingPetMenuHide: String {
-        t("플로팅 펫 끄기", "Turn off floating pet", "フローティングペットをオフ", "Desactivar mascota flotante")
+        t("이 플로팅 펫 고정 해제", "Unpin this floating pet", "このフローティングペットのピン留めを解除",
+          "Dejar de fijar esta mascota flotante")
     }
     func floatingPetHoverTokensOnly(_ tokens: String) -> String {
         t("오늘 \(tokens) 토큰", "Today: \(tokens) tokens", "今日: \(tokens) トークン", "Hoy: \(tokens) tokens")
@@ -275,6 +276,17 @@ struct L {
           "Se detuvo la importación porque no se pudo hacer una copia de seguridad del estado actual — tu progreso no se ha tocado. Comprueba el espacio libre en disco.")
     }
 
+    // MARK: 온라인 (설정 → Online) — 트레이딩/배틀용 자체 호스팅 서버 연결(옵트인)
+    var onlineSectionTitle: String { t("온라인", "Online", "オンライン", "En línea") }
+    var onlineServerURLLabel: String { t("서버 URL", "Server URL", "サーバーURL", "URL del servidor") }
+    var onlineServerURLPlaceholder: String { t("example.com", "example.com", "example.com", "example.com") }
+    var onlineDisplayNameLabel: String { t("표시 이름", "Display name", "表示名", "Nombre visible") }
+    var onlineTestConnectionButton: String { t("연결 테스트", "Test Connection", "接続テスト", "Probar conexión") }
+    var onlineConnectionSuccess: String { t("연결됨", "Connected", "接続済み", "Conectado") }
+    func onlineConnectionFailure(_ message: String) -> String {
+        t("연결 실패: \(message)", "Couldn't connect: \(message)", "接続に失敗しました: \(message)", "No se pudo conectar: \(message)")
+    }
+
     // MARK: 문제점 알리기 (설정 → 메일 리포트)
     var reportProblem: String { t("문제점 알리기", "Report a problem", "問題を報告", "Reportar un problema") }
     var showLogFile: String { t("로그 파일 보기", "Show log file", "ログファイルを表示", "Mostrar archivo de registro") }
@@ -368,8 +380,107 @@ struct L {
     func dexTotal(_ n: Int) -> String { t("총 \(n)마리", "\(n) total", "全\(n)匹", "\(n) en total") }
     /// 포획 로그 = 개체 단위 기록(같은 라인 중복이 정상). 도감 = 종 단위 집계.
     var catchLogTitle: String { t("포획 로그", "Catch log", "捕獲ログ", "Registro de capturas") }
+    /// PC = 소유한 모든 포켓몬(파티). 실제 게임의 PC 박스에서 따온 이름.
+    var pcTitle: String { t("PC", "PC", "PC", "PC") }
+    func pcLevel(_ n: Int) -> String { t("Lv.\(n)", "Lv.\(n)", "Lv.\(n)", "Nv.\(n)") }
+    var pcSetTraining: String { t("훈련 대상으로 설정", "Set as training", "育成対象に設定", "Poner en entrenamiento") }
+
+    // MARK: 스탯
+    var pcStatsTitle: String { t("능력치", "Stats", "ステータス", "Estadísticas") }
+    var statHP: String { t("HP", "HP", "HP", "PS") }
+    var statAttack: String { t("공격", "Atk", "こうげき", "Ataq") }
+    var statDefense: String { t("방어", "Def", "ぼうぎょ", "Def") }
+    var statSpecialAttack: String { t("특공", "SpA", "とくこう", "AtEsp") }
+    var statSpecialDefense: String { t("특방", "SpD", "とくぼう", "DefEsp") }
+    var statSpeed: String { t("스피드", "Spe", "すばやさ", "Vel") }
+    /// 타입 표시명 — 본가 공식 번역(PokéAPI /type/{name} names 기준).
+    func typeName(_ type: PokemonType) -> String {
+        switch type {
+        case .normal:   return t("노말", "Normal", "ノーマル", "Normal")
+        case .fire:     return t("불꽃", "Fire", "ほのお", "Fuego")
+        case .water:    return t("물", "Water", "みず", "Agua")
+        case .electric: return t("전기", "Electric", "でんき", "Eléctrico")
+        case .grass:    return t("풀", "Grass", "くさ", "Planta")
+        case .ice:      return t("얼음", "Ice", "こおり", "Hielo")
+        case .fighting: return t("격투", "Fighting", "かくとう", "Lucha")
+        case .poison:   return t("독", "Poison", "どく", "Veneno")
+        case .ground:   return t("땅", "Ground", "じめん", "Tierra")
+        case .flying:   return t("비행", "Flying", "ひこう", "Volador")
+        case .psychic:  return t("에스퍼", "Psychic", "エスパー", "Psíquico")
+        case .bug:      return t("벌레", "Bug", "むし", "Bicho")
+        case .rock:     return t("바위", "Rock", "いわ", "Roca")
+        case .ghost:    return t("고스트", "Ghost", "ゴースト", "Fantasma")
+        case .dragon:   return t("드래곤", "Dragon", "ドラゴン", "Dragón")
+        case .dark:     return t("악", "Dark", "あく", "Siniestro")
+        case .steel:    return t("강철", "Steel", "はがね", "Acero")
+        case .fairy:    return t("페어리", "Fairy", "フェアリー", "Hada")
+        }
+    }
+    var pcVitaminsTitle: String { t("비타민 먹이기", "Feed a vitamin", "栄養ドリンクを与える", "Dar una vitamina") }
+    var pcIvEvTitle: String { t("개체값 · 노력치", "IVs & EVs", "個体値・努力値", "IVs y EVs") }
+    var ivLabel: String { t("개체값", "IV", "個体値", "IV") }
+    var evLabel: String { t("노력치", "EV", "努力値", "EV") }
+
+    // MARK: 거래
+    var tradeTitle: String { t("거래", "Trade", "交換", "Intercambio") }
+    var tradePickOffer: String { t("보낼 포켓몬을 골라주세요", "Pick a Pokémon to offer", "送るポケモンを選んでください", "Elige un Pokémon para ofrecer") }
+    var tradeNoBenchedMons: String { t("PC에 훈련 중이 아닌 포켓몬이 없어요.\n먼저 훈련 대상을 바꾸거나 새 알을 부화시켜 보세요.", "You don't have any benched Pokémon to offer.\nSwitch your training focus or hatch a new egg first.", "PCに育成中でないポケモンがいません。\nまず育成対象を切り替えるか、新しい卵を孵化させてください。", "No tienes ningún Pokémon en el banco para ofrecer.\nCambia tu Pokémon en entrenamiento o eclosiona un huevo primero.") }
+    var tradeCreateButton: String { t("이 포켓몬으로 거래 시작", "Start trade with this Pokémon", "このポケモンで交換を開始", "Iniciar intercambio con este Pokémon") }
+    var tradeWaitingForJoin: String { t("친구가 링크를 열기를 기다리는 중…", "Waiting for a friend to open the link…", "友達がリンクを開くのを待っています…", "Esperando a que un amigo abra el enlace…") }
+    var tradeShareLink: String { t("링크 공유", "Share link", "リンクを共有", "Compartir enlace") }
+    var tradeCopyLink: String { t("링크 복사", "Copy link", "リンクをコピー", "Copiar enlace") }
+    var tradeCopied: String { t("복사됨", "Copied", "コピーしました", "Copiado") }
+    var tradeWaitingForCounterpart: String { t("상대가 포켓몬을 고르는 중…", "Waiting for the other trainer to pick…", "相手がポケモンを選んでいます…", "Esperando a que el otro entrenador elija…") }
+    func tradeReviewOffer(_ name: String) -> String {
+        t("\(name)님이 이 포켓몬을 제안했어요", "\(name) is offering this Pokémon", "\(name) さんがこのポケモンを提案しました", "\(name) te ofrece este Pokémon")
+    }
+    var tradeConfirmButton: String { t("거래 확정", "Confirm trade", "交換を確定", "Confirmar intercambio") }
+    var tradeCancelButton: String { t("취소", "Cancel", "キャンセル", "Cancelar") }
+    func tradeCompleted(_ received: String, from: String) -> String {
+        t("\(from)님에게서 \(received)을(를) 받았어요!", "You received \(received) from \(from)!", "\(from) さんから \(received) を受け取りました！", "¡Recibiste a \(received) de \(from)!")
+    }
+    var tradeDoneButton: String { t("완료", "Done", "完了", "Listo") }
+    var tradeFailedTitle: String { t("거래에 실패했어요", "Trade failed", "交換に失敗しました", "El intercambio falló") }
+    var tradeAuthErrorMessage: String {
+        t("서버에 연결할 수 없어요. 설정에서 서버 주소가 정확한지, 테스트가 성공했는지 확인해 주세요.",
+          "Couldn't reach the server. Make sure the server URL is correct and tested in Settings.",
+          "サーバーに接続できませんでした。設定でサーバーURLが正しいか、テストが成功しているか確認してください。",
+          "No se pudo conectar con el servidor. Comprueba que la URL del servidor sea correcta y esté probada en Ajustes.") }
+    var tradeExpiredTitle: String { t("이 거래 링크는 만료됐어요", "This trade link has expired", "この交換リンクは期限切れです", "Este enlace de intercambio ha caducado") }
+    var tradeTryAgainButton: String { t("다시 시도", "Try again", "もう一度試す", "Intentar de nuevo") }
+    func tradeJoinPrompt(_ server: String) -> String {
+        t("\(server)에서 온 거래 초대예요. 참가할까요?", "You've been invited to a trade on \(server). Join?", "\(server) からの交換の招待です。参加しますか？", "Te han invitado a un intercambio en \(server). ¿Quieres unirte?")
+    }
+    var tradeJoinButton: String { t("참가", "Join", "参加", "Unirse") }
+    func tradeDifferentServerConfirm(_ server: String) -> String {
+        t("지금은 다른 서버에 연결돼 있어요. \(server)(으)로 바꾸고 거래에 참가할까요?",
+          "You're currently connected to a different server. Switch to \(server) and join this trade?",
+          "現在別のサーバーに接続されています。\(server) に切り替えて交換に参加しますか？",
+          "Actualmente estás conectado a otro servidor. ¿Cambiar a \(server) y unirte a este intercambio?")
+    }
+    var tradeEntryPointHelp: String { t("포켓몬 거래", "Trade a Pokémon", "ポケモン交換", "Intercambiar un Pokémon") }
+    /// 링크를 탭해서 못 여는 경우(다른 기기에서 텍스트로 받음, 링크 핸들러 미등록 등)의 대안 입력.
+    var tradePasteInviteLinkPlaceholder: String {
+        t("초대 링크 붙여넣기", "Paste invite link", "招待リンクを貼り付け", "Pegar enlace de invitación")
+    }
+    var tradeInvalidInviteLink: String {
+        t("유효한 거래 링크가 아니에요", "That's not a valid trade link", "有効な交換リンクではありません", "Ese no es un enlace de intercambio válido")
+    }
+
+    // MARK: Evolution lock
+    var evolutionLockedHelp: String { t("진화 잠김 — 탭하면 해제(경험치는 계속 쌓여요)", "Evolution locked — tap to unlock (still earns XP)", "進化ロック中 — タップで解除（経験値は引き続き貯まります）", "Evolución bloqueada — toca para desbloquear (sigue ganando XP)") }
+    var evolutionUnlockedHelp: String { t("탭하면 이 포켓몬의 진화를 막아요", "Tap to lock this Pokémon's evolution", "タップでこのポケモンの進化をロックします", "Toca para bloquear la evolución de este Pokémon") }
+    var evolutionLockedBadge: String { t("잠김", "Locked", "ロック中", "Bloqueado") }
+    var pcLockEvolution: String { t("진화 잠그기", "Lock evolution", "進化をロック", "Bloquear evolución") }
+    var pcUnlockEvolution: String { t("진화 잠금 해제", "Unlock evolution", "進化ロックを解除", "Desbloquear evolución") }
+    var pcSetFloating: String { t("플로팅 펫으로 추가", "Add as floating pet", "フローティングペットに追加", "Añadir como mascota flotante") }
+    var pcUnsetFloating: String { t("플로팅 펫에서 제거", "Remove floating pet", "フローティングペットから削除", "Quitar mascota flotante") }
     /// 도감 총계는 개체가 아니라 종 수 — 로그의 dexTotal("총 N마리")과 단위가 다르다.
-    func dexSpeciesTotal(_ n: Int) -> String { t("\(n)종", "\(n) species", "\(n)種", "\(n) especies") }
+    /// n = 언락한 종 수, total = 이 앱이 지원하는 전체 종 수(PokemonAssets.animatedSpeciesIDs, 649 — 애니메이션
+    /// 스프라이트 상한). 진짜 도감처럼 "잡은/전체" 진행도를 보여준다.
+    func dexSpeciesTotal(_ n: Int, _ total: Int) -> String {
+        t("\(n)/\(total)종", "\(n)/\(total) species", "\(n)/\(total)種", "\(n)/\(total) especies")
+    }
     func dexPageLabel(_ page: Int, _ total: Int) -> String {
         t("\(total)페이지 중 \(page)페이지", "Page \(page) of \(total)", "\(total)ページ中 \(page)ページ", "Página \(page) de \(total)")
     }
@@ -383,6 +494,19 @@ struct L {
     var dexFilterHint: String { t("탭하면 이 희귀도만 보기 · 다시 탭하면 전체", "Tap to show only this rarity · tap again to clear", "タップでこの希少度のみ表示・再タップで全体", "Toca para ver solo esta rareza · toca de nuevo para ver todo") }
     /// 도감 칸의 ✨ 를 읽어주는 명사 — 이모지는 스크린리더가 일관되게 읽지 못한다.
     var dexShinyLabel: String { t("이로치", "Shiny", "色違い", "Variocolor") }
+    /// 포획 로그 한 줄의 출처 표시 — 부화(egg) vs 거래(trade, 상대 표시 이름 있으면 같이).
+    func acquisitionLabel(_ source: AcquisitionSource) -> String {
+        switch source {
+        case .egg: return t("부화", "Hatched", "孵化", "Eclosión")
+        case .trade(let from):
+            guard let from, !from.isEmpty else { return t("거래", "Traded", "交換", "Intercambio") }
+            return t("\(from)에게서 거래", "Traded from \(from)", "\(from)から交換", "Intercambiado de \(from)")
+        }
+    }
+    var dexNormalLabel: String { t("일반", "Normal", "通常色", "Normal") }
+    var dexShinyLocked: String { t("이 종의 이로치를 아직 못 잡았어요", "Haven't caught this species' shiny yet", "この種の色違いはまだ捕まえていません", "Aún no has capturado la variante variocolor de esta especie") }
+    var dexStatRangeTitle: String { t("능력치 범위 (Lv.100 기준)", "Stat range (at Lv.100)", "ステータス範囲（Lv.100基準）", "Rango de estadísticas (a Nv.100)") }
+    var dexAbilitiesTitle: String { t("가능한 특성", "Possible abilities", "とくせいの可能性", "Habilidades posibles") }
     func rarityLabel(_ r: Rarity) -> String {
         switch r {
         case .common:    return rarityCommon
@@ -513,6 +637,8 @@ struct L {
     }
     var useAfterHatch: String { t("부화 후 사용할 수 있어요", "Usable after hatching", "孵化後に使えます", "Se puede usar después de eclosionar") }
     var useNeedsPokemon: String { t("사용할 포켓몬이 없어요", "No Pokémon to use it on", "使えるポケモンがいません", "No hay ningún Pokémon en quien usarlo") }
+    /// 비타민은 대상(먹일 포켓몬)을 골라야 해서 가방이 아니라 PC 상세 화면에서 쓴다 — 가방 카드엔 이 안내만.
+    var useFromPcDetail: String { t("PC에서 포켓몬을 골라 먹여요", "Feed it from a Pokémon's PC detail screen", "PCでポケモンを選んで与えます", "Dáselo desde la pantalla de detalle de un Pokémon en el PC") }
 
     /// 아이템 표시명 — species 처럼 공식 현지명.
     func itemName(_ kind: ItemKind) -> String {
@@ -520,6 +646,14 @@ struct L {
         case .rareCandy: return t("이상한 사탕", "Rare Candy", "ふしぎなアメ", "Caramelo Raro")
         case .mint:      return t("민트", "Mint", "ミント", "Menta")
         case .shinyCharm: return t("이로치 부적", "Shiny Charm", "ひかるおまもり", "Amuleto Iris")
+        // 본가 공식 번역 명칭(PokéAPI /item/{name} names 기준) — species/move 처럼 하드코딩 없이 런타임
+        // 조회하고 싶지만, 상점/가방 텍스트는 이 앱에서 상수 6종뿐이라 다른 아이템과 같은 방식을 따른다.
+        case .hpUp:    return t("맥스업", "HP Up", "マックスアップ", "Más PS")
+        case .protein: return t("타우린", "Protein", "タウリン", "Proteína")
+        case .iron:    return t("사포닌", "Iron", "ブロムヘキシン", "Hierro")
+        case .calcium: return t("리보플라빈", "Calcium", "リゾチウム", "Calcio")
+        case .zinc:    return t("키토산", "Zinc", "キトサン", "Zinc")
+        case .carbos:  return t("알칼로이드", "Carbos", "インドメタシン", "Carburante")
         }
     }
     func itemDescription(_ kind: ItemKind) -> String {
@@ -540,6 +674,25 @@ struct L {
                      "While owned, raises the chance of hatching a shiny.",
                      "持っていると色違いが生まれる確率が上がります。",
                      "Mientras lo tengas, aumenta la probabilidad de que nazca un Pokémon variocolor.")
+        case .hpUp, .protein, .iron, .calcium, .zinc, .carbos:
+            let ev = Vitamin.evGain
+            let stat = vitaminStatName(kind)
+            return t("PC 상세 화면에서 원하는 포켓몬에게 먹여 \(stat) 노력치(EV)를 \(ev) 올려요.",
+                     "Feed it to any Pokémon from its PC detail screen to raise its \(stat) EVs by \(ev).",
+                     "PC詳細画面で好きなポケモンに与えて\(stat)の努力値(EV)を\(ev)上げます。",
+                     "Dáselo a un Pokémon desde su pantalla de detalle en el PC para subir sus EVs de \(stat) en \(ev).")
+        }
+    }
+    /// itemDescription 에서 쓰는 스탯 이름 — pcStats* 라벨(HP/공격/…)을 그대로 재사용.
+    private func vitaminStatName(_ kind: ItemKind) -> String {
+        switch kind {
+        case .hpUp: return statHP
+        case .protein: return statAttack
+        case .iron: return statDefense
+        case .calcium: return statSpecialAttack
+        case .zinc: return statSpecialDefense
+        case .carbos: return statSpeed
+        default: return ""
         }
     }
     /// 가방 사용 컨트롤의 효과 힌트 — 민트("성격 랜덤 변경", 사탕의 "+XP" 자리).
@@ -549,6 +702,13 @@ struct L {
     var shop: String { t("상점", "Shop", "ショップ", "Tienda") }
     var spendableTokens: String { t("쓸 수 있는 토큰", "Spendable tokens", "使えるトークン", "Tokens disponibles") }
     var shopHint: String { t("사용한 토큰으로 아이템을 살 수 있어요.", "Spend the tokens you've used on items.", "使ったトークンでアイテムを購入できます。", "Usa los tokens que has consumido para comprar objetos.") }
+    // 상점 카테고리 — 탭하면 그 그룹으로 들어간다.
+    var shopGroupItems: String { t("아이템", "Items", "アイテム", "Objetos") }
+    var shopGroupItemsHint: String { t("이상한 사탕 · 민트 · 이로치 부적", "Rare Candy · Mint · Shiny Charm", "ふしぎなアメ・ミント・ひかるおまもり", "Caramelo Raro · Menta · Amuleto Iris") }
+    var shopGroupVitamins: String { t("비타민", "Vitamins", "栄養ドリンク", "Vitaminas") }
+    var shopGroupVitaminsHint: String { t("노력치(EV)를 올리는 아이템 6종", "6 items that raise EVs", "努力値(EV)を上げるアイテム6種", "6 objetos que suben los EVs") }
+    var shopGroupEggs: String { t("알", "Eggs", "タマゴ", "Huevos") }
+    var shopGroupEggsHint: String { t("새 알로 부화를 다시 시작해요", "Start hatching a new egg", "新しいタマゴで孵化をやり直します", "Empieza a eclosionar un huevo nuevo") }
     var buy: String { t("구매", "Buy", "購入", "Comprar") }
     func buyConfirm(_ name: String) -> String { t("\(name) 구매할까요?", "Buy \(name)?", "\(name) を購入しますか？", "¿Comprar \(name)?") }
     var notEnoughTokens: String { t("토큰이 부족해요", "Not enough tokens", "トークンが足りません", "No tienes suficientes tokens") }
@@ -556,6 +716,26 @@ struct L {
     var shopPriceLabel: String { t("가격", "Price", "価格", "Precio") }
     var ownedAlready: String { t("보유 중", "Owned", "所持済み", "En posesión") }
     var shinyCharmEffectHint: String { t("이로치 확률 ↑ · 적용 중", "Shiny rate ↑ · active", "色違い率↑ · 適用中", "Prob. variocolor ↑ · activo") }
+    // 지역 필터 — 알 후보 풀을 한 세대로 제한(즉시 적용되는 상시 선호도, eggTier 처럼 구매 소비 아님).
+    var eggRegionLabel: String { t("지역", "Region", "地方", "Región") }
+    var eggRegionAll: String { t("전체", "All", "すべて", "Todas") }
+    /// 상한(하나/5세대)이 스프라이트 지원 범위 때문이라는 걸 고르는 순간 알려준다 — 빠진 선택지로
+    /// 나중에 발견하게 두지 않는다.
+    var eggRegionHint: String {
+        t("알 후보를 한 지역으로 좁혀요. 하나(5세대)까지만 지원돼요 — 애니메이션 스프라이트가 거기까지만 있어요.",
+          "Narrows which Pokémon can hatch to one region. Supports up to Unova (Gen 5) — that's as far as the animated sprites go.",
+          "孵化候補を1つの地方に絞ります。イッシュ(第5世代)まで対応 — アニメーションスプライトの範囲までです。",
+          "Limita qué Pokémon pueden nacer a una sola región. Compatible hasta Teselia (Gen 5) — hasta donde llegan los sprites animados.")
+    }
+    func regionLabel(_ r: Region) -> String {
+        switch r {
+        case .kanto:  return t("관동", "Kanto", "カントー", "Kanto")
+        case .johto:  return t("성도", "Johto", "ジョウト", "Johto")
+        case .hoenn:  return t("호연", "Hoenn", "ホウエン", "Hoenn")
+        case .sinnoh: return t("신오", "Sinnoh", "シンオウ", "Sinnoh")
+        case .unova:  return t("하나", "Unova", "イッシュ", "Teselia")
+        }
+    }
     // 알 (리롤) — tier = 보증 등급 하한(nil = 보증 없는 기본 알).
     // 이름은 `rarityLabel(r) + " 알"` 식 조합으로 만들지 않는다: 한국어·영어는 맞아떨어져도 일본어에서
     // 조사가 어긋난다(レアのタマゴ vs 자연스러운 レアなタマゴ). 세 언어를 명시 트리플로 적는다.
@@ -569,16 +749,16 @@ struct L {
     }
     func eggDescription(_ tier: Rarity?) -> String {
         guard let tier, tier != .common else {
-            return t("지금 포켓몬을 놓아주고 새 알로 다시 시작해요.",
-                     "Send off your current Pokémon and start fresh with a new egg.",
-                     "いまのポケモンを手放して新しいタマゴからやり直します。",
-                     "Suelta a tu Pokémon actual y empieza de nuevo con un huevo nuevo.")
+            return t("지금 포켓몬은 PC로 보내고 새 알의 부화를 시작해요.",
+                     "Move your current Pokémon to your PC and start trying to hatch a new one.",
+                     "いまのポケモンをPCに送って、新しいタマゴの孵化を始めます。",
+                     "Mueve tu Pokémon actual al PC y empieza a intentar eclosionar uno nuevo.")
         }
         let r = rarityLabel(tier)
-        return t("지금 포켓몬을 놓아주고 \(r) 이상이 확정으로 나오는 알을 받아요.",
-                 "Send off your current Pokémon for an egg guaranteed to hatch \(r) or better.",
-                 "いまのポケモンを手放して \(r) 以上が確定で孵るタマゴをもらいます。",
-                 "Suelta a tu Pokémon actual y consigue un huevo garantizado de \(r) o superior.")
+        return t("지금 포켓몬은 PC로 보내고 \(r) 이상이 확정인 알의 부화를 시작해요.",
+                 "Move your current Pokémon to your PC and start trying to hatch one guaranteed \(r) or better.",
+                 "いまのポケモンをPCに送って、\(r) 以上が確定のタマゴの孵化を始めます。",
+                 "Mueve tu Pokémon actual al PC y empieza a intentar eclosionar uno garantizado de \(r) o superior.")
     }
     /// 인큐베이션 중 표시하는 보증 배지 — 어떤 알을 품고 있는지 한 줄로.
     func eggGuaranteeHint(_ tier: Rarity) -> String {
@@ -586,13 +766,11 @@ struct L {
         return t("\(r) 이상 확정", "\(r) or better", "\(r) 以上確定", "\(r) o superior garantizado")
     }
     func eggConfirm(_ monName: String, _ eggName: String) -> String {
-        t("\(monName)을(를) 놓아주고 \(eggName)(으)로 바꿀까요?",
-          "Send off \(monName) for the \(eggName)?",
-          "\(monName) を手放して \(eggName) にしますか？",
-          "¿Soltar a \(monName) y cambiarlo por \(eggName)?")
+        t("\(monName)을(를) PC로 보내고 \(eggName)(으)로 바꿀까요? (\(monName)은 잃지 않아요)",
+          "Move \(monName) to your PC and start the \(eggName)? (you keep \(monName))",
+          "\(monName) をPCに送って \(eggName) にしますか？（\(monName) は失いません）",
+          "¿Mover a \(monName) a tu PC y empezar \(eggName)? (conservas a \(monName))")
     }
-    var freshEggShinyWarning: String { t("⚠️ 이로치 포켓몬이에요! 정말 놓아줄까요?", "⚠️ This one is shiny! Really send it off?", "⚠️ 色違いです！本当に手放しますか？", "⚠️ ¡Este es variocolor! ¿Seguro que quieres soltarlo?") }
-    var freshEggDiscardShiny: String { t("이로치 놓아주기", "Send shiny off", "手放す", "Soltar variocolor") }
 
     // MARK: 사탕 획득 알림 ("왜 받는지" = 토큰 한도를 다 채운 수고에 대한 보상)
     func notifCandyTitle(item: String, count: Int) -> String {

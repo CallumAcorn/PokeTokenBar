@@ -9,6 +9,31 @@ func rarityColor(_ r: Rarity?) -> Color {
     }
 }
 
+/// 타입 뱃지 배경색 — 팬 커뮤니티에서 널리 쓰이는 관례색(공식 게임 UI 색과는 별개, 어디에도 고정
+/// 스펙이 없다). 흰 글자가 모두 위에서 읽히도록 중채도로 골랐다.
+func typeColor(_ t: PokemonType) -> Color {
+    switch t {
+    case .normal:   return Color(red: 0.66, green: 0.65, blue: 0.48)
+    case .fire:     return Color(red: 0.93, green: 0.51, blue: 0.19)
+    case .water:    return Color(red: 0.39, green: 0.56, blue: 0.94)
+    case .electric: return Color(red: 0.97, green: 0.82, blue: 0.17)
+    case .grass:    return Color(red: 0.48, green: 0.78, blue: 0.30)
+    case .ice:      return Color(red: 0.59, green: 0.85, blue: 0.84)
+    case .fighting: return Color(red: 0.76, green: 0.18, blue: 0.16)
+    case .poison:   return Color(red: 0.64, green: 0.24, blue: 0.63)
+    case .ground:   return Color(red: 0.89, green: 0.75, blue: 0.40)
+    case .flying:   return Color(red: 0.66, green: 0.56, blue: 0.95)
+    case .psychic:  return Color(red: 0.98, green: 0.33, blue: 0.53)
+    case .bug:      return Color(red: 0.65, green: 0.73, blue: 0.10)
+    case .rock:     return Color(red: 0.71, green: 0.63, blue: 0.21)
+    case .ghost:    return Color(red: 0.45, green: 0.34, blue: 0.59)
+    case .dragon:   return Color(red: 0.44, green: 0.21, blue: 0.98)
+    case .dark:     return Color(red: 0.44, green: 0.34, blue: 0.27)
+    case .steel:    return Color(red: 0.72, green: 0.72, blue: 0.81)
+    case .fairy:    return Color(red: 0.84, green: 0.52, blue: 0.68)
+    }
+}
+
 /// 희귀도 캡슐을 늘어놓는 순서(귀한 것부터) — 포획 로그 요약 헤더와 도감 헤더가 공유한다.
 /// 순수 표시 순서다. 목록 정렬에는 쓰지 않는다.
 let rarityDisplayOrder: [Rarity] = [.legendary, .rare, .uncommon, .common]
@@ -30,6 +55,7 @@ struct ItemIconView: View {
         Group {
             if let img {
                 Image(nsImage: img).resizable().interpolation(.none)
+                    .aspectRatio(contentMode: .fit)
                     .frame(width: size, height: size)
             } else {
                 Text(kind.fallbackEmoji).font(.system(size: size))
@@ -142,12 +168,16 @@ struct SpriteView: View {
     var body: some View {
         Group {
             if !frames.isEmpty {
-                // GIF 애니메이션 경로 — 현재 프레임만 렌더
+                // GIF 애니메이션 경로 — 현재 프레임만 렌더. aspectRatio(.fit) 필수 — GIF 프레임마다
+                // 원본 픽셀 치수가 살짝 다를 수 있어(크롭 편차), 없으면 프레임이 바뀔 때마다 정사각형
+                // 틀에 억지로 눌려 늘어나거나 눌린다.
                 Image(nsImage: frames[frameIndex % frames.count].image)
                     .resizable().interpolation(.none)
+                    .aspectRatio(contentMode: .fit)
                     .frame(width: size, height: size)
             } else if let img {
                 Image(nsImage: img).resizable().interpolation(.none)
+                    .aspectRatio(contentMode: .fit)
                     .frame(width: size, height: size)
             } else {
                 Text("🥚").font(.system(size: size * 0.62)).frame(width: size, height: size)
@@ -484,6 +514,9 @@ struct CompanionHeader: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(store.displayName).font(.callout.weight(.semibold))
+                        if let level = store.currentLevel {
+                            Text(store.l.pcLevel(level)).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                        }
                         if store.currentIsShiny { Text("✨").font(.system(size: 11)) }
                         if let r = store.rarity {
                             Text(store.l.rarityLabel(r).uppercased()).font(.system(size: 8, weight: .bold))
@@ -491,11 +524,41 @@ struct CompanionHeader: View {
                                 .background(rarityColor(r)).foregroundStyle(.white)
                                 .clipShape(Capsule())
                         }
+                        Spacer(minLength: 4)
+                        // 알 인큐베이션 중엔 안 보인다 — 플로팅 펫은 개체(MonState) 단위라 아직 핀할
+                        // 대상이 없다(부화하면 활성 개체가 생기고 그때 나타난다).
+                        if let mon = store.trainingMon {
+                            Button {
+                                store.setFloating(!mon.isFloating, for: mon.id)
+                            } label: {
+                                Image(systemName: mon.isFloating ? "pin.slash" : "pin")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(mon.isFloating ? Color.accentColor : Color.secondary)
+                            .help(mon.isFloating ? store.l.pcUnsetFloating : store.l.pcSetFloating)
+                        }
                     }
                     if store.hasActive {
                         // 단계 + 성격(부화 시 확정된 개체 아이덴티티)
                         let nature = store.currentNature.map { " · \($0.name(store.language))" } ?? ""
-                        Text(store.stageText + nature).font(.caption2).foregroundStyle(.secondary)
+                        HStack(spacing: 4) {
+                            Text(store.stageText + nature).font(.caption2).foregroundStyle(.secondary)
+                            Spacer(minLength: 4)
+                            // Locking a fully-evolved mon has nothing left to block, so the toggle
+                            // only shows up while there's still a next form to hold back.
+                            if !store.isFinalStage, let mon = store.trainingMon {
+                                Button {
+                                    store.setEvolutionLocked(!mon.evolutionLocked, for: mon.id)
+                                } label: {
+                                    Image(systemName: mon.evolutionLocked ? "lock.fill" : "lock.open")
+                                        .font(.system(size: 10))
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(mon.evolutionLocked ? Color.orange : Color.secondary)
+                                .help(mon.evolutionLocked ? store.l.evolutionLockedHelp : store.l.evolutionUnlockedHelp)
+                            }
+                        }
                         ProgressView(value: store.progress).controlSize(.small).tint(.orange)
                         if store.tokensToNext > 0 {
                             let amount = TokenFormatter.compact(store.tokensToNext)
@@ -527,7 +590,7 @@ struct CompanionHeader: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    Text(statusLine).font(.caption2).foregroundStyle(.secondary)
+                    Text(store.statusLine).font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
             }
@@ -616,18 +679,6 @@ struct CompanionHeader: View {
         }
     }
 
-    private var statusLine: String {
-        let l = store.l
-        switch store.displayState {
-        case .egg:     return l.statusEgg
-        case .idle:    return l.statusIdle
-        case .working: return l.statusWorking
-        case .focus:   return l.statusFocus
-        case .tired:   return l.statusTired
-        case .sleep:   return l.statusSleep
-        case .levelUp: return store.justEvolvedTo.map { l.statusEvolved($0) } ?? l.statusGrew
-        }
-    }
 }
 
 /// 희귀도 1종 캡슐 — 색 점 + 라벨 + 개수. 선택 시 원색 링 + 체크마크로 강조.
@@ -689,24 +740,34 @@ struct DexSummaryHeader: View {
     }
 }
 
-/// 컬렉션 탭 — 도감과 포획 로그를 하위 세그먼트로 전환한다.
+/// 컬렉션 탭 세그먼트 — 도감(종 단위 영구 언락) / PC(소유한 모든 개체) / 포획 로그(합류 기록).
+private enum CollectionSegment: Hashable { case dex, pc, log }
+
+/// 컬렉션 탭 — 도감·PC·포획 로그를 하위 세그먼트로 전환한다.
 ///
-/// 두 화면은 같은 데이터를 다른 축으로 본다:
-///  - **도감**: 종 1개 = 1칸. 같은 라인을 여러 번 키워도 한 칸으로 접힌다(종 정보만).
-///  - **로그**: 개체 1마리 = 1행. 같은 라인이 여러 행으로 나오는 게 정상 — 성격·획득 시각처럼
-///    개체에 딸린 정보는 여기에만 있다.
-/// 상위 탭(PopoverTab)은 그대로 4개 — 세그먼트 폭(332/2)이 넉넉해 탭바를 늘릴 필요가 없다.
+/// 세 화면은 같은 데이터를 다른 축으로 본다:
+///  - **도감**: 종 1개 = 1칸, 영구 언락(개체를 나중에 잃어도 안 지워진다). 같은 라인을 여러 번
+///    키워도 한 칸으로 접힌다(종 정보만).
+///  - **PC**: 지금 소유한 개체 1마리 = 1칸(도감과 같은 4×6 격자). 칸을 탭하면 개체 상세 화면이
+///    열리고, 거기서 진화 잠금·훈련 전환을 한다.
+///  - **로그**: 파티에 합류한 개체 1마리 = 1행(합류 시각순, 알/거래 표시). 같은 라인이 여러 행으로
+///    나오는 게 정상 — 성격·합류 시각처럼 개체에 딸린 정보는 여기에만 있다.
+/// 상위 탭(PopoverTab)은 그대로 4개 — 세그먼트 폭(332/3)이 넉넉해 탭바를 늘릴 필요가 없다.
 struct CollectionView: View {
     let store: CompanionStore
-    @State private var showingLog = false
+    @State private var segment: CollectionSegment = .pc
     /// 로그 전용 희귀도 필터. 도감은 개수 단위가 종이라 자기 필터를 따로 갖는다(DexGridView).
     @State private var selectedRarity: Rarity?
 
-    /// 도감·로그 공통 높이 — 상점·가방과 같은 520. 세그먼트를 전환할 때도, 탭을 넘나들 때도
+    /// 세 세그먼트 공통 높이 — 상점·가방과 같은 520. 세그먼트를 전환할 때도, 탭을 넘나들 때도
     /// 팝오버가 리사이즈되지 않는다.
     ///
     /// 예산: 520 − 세그먼트 24 − 헤더 39 − 하단 줄 18 − 간격 24 = 격자 415. 6행 spacing 4 면
     /// 행이 65.8 이고, 칸 여백 6 과 이름 12 를 빼면 스프라이트에 47.8 이 남는다(현재 44).
+    ///
+    /// PC 개체 상세 화면(MonDetailView)은 이 예산보다 콘텐츠가 길어질 수 있지만(스탯·IV/EV 레이더·
+    /// 비타민까지 다 쌓으면), 그렇다고 이 상수를 키우진 않는다 — 도감/로그처럼 그 화면도 자체
+    /// ScrollView 로 넘치는 만큼만 스크롤하게 해서, 격자·로그는 원래 예산 그대로 유지한다.
     private static let contentHeight: CGFloat = 520
 
     /// 선택된 희귀도만 노출(없으면 전체). 상단 캡슐 토글로 설정.
@@ -717,16 +778,21 @@ struct CollectionView: View {
 
     var body: some View {
         if store.dexEntries.isEmpty {
-            emptyState   // 둘 다 비어 있으니 세그먼트를 그리지 않는다
+            emptyState   // 셋 다 비어 있으니 세그먼트를 그리지 않는다
         } else {
             VStack(alignment: .leading, spacing: 8) {
-                Picker("", selection: $showingLog) {
-                    Text(store.l.dexTitle).tag(false)
-                    Text(store.l.catchLogTitle).tag(true)
+                Picker("", selection: $segment) {
+                    Text(store.l.pcTitle).tag(CollectionSegment.pc)
+                    Text(store.l.dexTitle).tag(CollectionSegment.dex)
+                    Text(store.l.catchLogTitle).tag(CollectionSegment.log)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                if showingLog { catchLog } else { DexGridView(store: store) }
+                switch segment {
+                case .dex: DexGridView(store: store)
+                case .pc: PartyGridView(store: store)
+                case .log: catchLog
+                }
             }
             .frame(height: Self.contentHeight)
         }
@@ -775,6 +841,432 @@ struct CollectionView: View {
     }
 }
 
+/// PC — 소유한 모든 개체. 도감과 같은 4×6 페이지 격자(칸 크기 통일). 칸을 탭하면 개체 상세 화면
+/// (MonDetailView)을 연다 — 예전엔 탭이 곧 훈련 전환이었지만, 그 동작은 상세 화면의 버튼으로 옮겨졌다
+/// (잠금 토글도 같은 화면에 있어야 하므로 자연스러운 위치).
+private struct PartyGridView: View {
+    let store: CompanionStore
+    @State private var page = 0
+    @State private var selectedMonID: MonState.ID?
+
+    private static let columns = 4
+    private static let rows = 6
+    private static let pageSize = columns * rows
+    private static let spacing: CGFloat = 4
+
+    var body: some View {
+        if let id = selectedMonID, let mon = store.party.first(where: { $0.id == id }) {
+            MonDetailView(store: store, mon: mon) { selectedMonID = nil }
+        } else {
+            let party = store.party
+            let pageCount = max(1, (party.count + Self.pageSize - 1) / Self.pageSize)
+            let current = min(page, pageCount - 1)
+            let slice = Array(party.dropFirst(current * Self.pageSize).prefix(Self.pageSize))
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text(store.l.pcTitle).font(.callout.weight(.semibold))
+                    Text(store.l.dexTotal(party.count)).font(.caption2).foregroundStyle(.secondary)
+                }
+                grid(slice)
+                footer(current: current, pageCount: pageCount)
+            }
+        }
+    }
+
+    /// 도감 격자와 같은 고정 4×6 — 빈 칸은 투명(테두리 없이 정렬만 유지).
+    private func grid(_ slice: [MonState]) -> some View {
+        VStack(spacing: Self.spacing) {
+            ForEach(0..<Self.rows, id: \.self) { row in
+                HStack(spacing: Self.spacing) {
+                    ForEach(0..<Self.columns, id: \.self) { col in
+                        let i = row * Self.columns + col
+                        if i < slice.count {
+                            let mon = slice[i]
+                            PartyMemberCell(store: store, mon: mon, isTraining: mon.id == store.trainingMon?.id) {
+                                selectedMonID = mon.id
+                            }
+                            .frame(maxWidth: .infinity)
+                        } else {
+                            Color.clear.frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private func footer(current: Int, pageCount: Int) -> some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 4)
+            if pageCount > 1 {
+                Button { page = max(0, current - 1) } label: { Image(systemName: "chevron.left") }
+                    .buttonStyle(.plain).disabled(current == 0)
+                    .accessibilityLabel(store.l.dexPagePrev)
+                Text("\(current + 1) / \(pageCount)")
+                    .font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(store.l.dexPageLabel(current + 1, pageCount))
+                Button { page = min(pageCount - 1, current + 1) } label: { Image(systemName: "chevron.right") }
+                    .buttonStyle(.plain).disabled(current == pageCount - 1)
+                    .accessibilityLabel(store.l.dexPageNext)
+            }
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .frame(height: 18)
+    }
+}
+
+/// PC 격자 한 칸 — DexSpeciesCell 과 같은 크기/구조. 이름 대신 레벨(동기 값, 종 이름과 달리 조회가
+/// 필요 없다)을 보여준다. 훈련 중인 개체는 accent 링으로 표시(Dex 칸의 선택 링과 같은 시각 언어).
+private struct PartyMemberCell: View {
+    let store: CompanionStore
+    let mon: MonState
+    let isTraining: Bool
+    let onTap: () -> Void
+
+    private static let thumb: CGFloat = 44
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 1) {
+                SpriteView(speciesID: mon.currentID, size: Self.thumb, shiny: mon.isShiny)
+                    .frame(width: Self.thumb, height: Self.thumb)
+                Text(store.l.pcLevel(mon.level))
+                    .font(.system(size: 9))
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .topLeading) {
+                if mon.evolutionLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.orange)
+                        .padding(2)
+                        .background(.regularMaterial, in: Circle())
+                        .accessibilityLabel(store.l.evolutionLockedBadge)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if mon.isShiny {
+                    Text("✨")
+                        .font(.system(size: 8))
+                        .padding(.horizontal, 2)
+                        .background(.regularMaterial, in: Capsule())
+                        .accessibilityLabel(store.l.dexShinyLabel)
+                }
+            }
+            .padding(3)
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                if isTraining {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.accentColor, lineWidth: 1.5)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .help(tooltip)
+        .accessibilityLabel(tooltip)
+    }
+
+    private var tooltip: String {
+        var parts = [store.l.pcLevel(mon.level), store.l.rarityLabel(mon.rarity)]
+        if mon.isShiny { parts.append(store.l.dexShinyLabel) }
+        if isTraining { parts.append(store.l.dexRaising) }
+        if mon.evolutionLocked { parts.append(store.l.evolutionLockedBadge) }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// PC 개체 상세 — 이름/레벨/희귀도/성격 + 진화 경로 + 잠금 토글 + 훈련 전환. 통계는 이번 범위 밖
+/// (사용자: "나중에 스탯을 추가할 것" — 보여줄 데이터가 없는 지금은 빈 섹션을 만들지 않는다).
+///
+/// `line` 은 훈련 중이 아닌 개체여도 조회한다(store.line(baseID:) — currentLine 과 분리돼 훈련 대상을
+/// 안 건드린다). 로드 전엔 실현된 경로만(realizedLineItems), isFinalStage 는 오판을 피하려 nil(=버튼 숨김).
+private struct MonDetailView: View {
+    let store: CompanionStore
+    let mon: MonState
+    var onClose: () -> Void
+
+    @State private var line: EvoLine?
+    @State private var baseStats: BaseStats?
+    @State private var abilityDisplayName: String?
+
+    private var isTraining: Bool { mon.id == store.trainingMon?.id }
+    /// 실제로 보여줄 특성 슬러그 — 진짜 롤이 있으면 그것, 없으면(특성 도입 전 개체) baseStats 가
+    /// 로딩된 뒤 종의 실제 후보에서 id 로 결정적 대체(MonState.effectiveAbility). baseStats 미로딩
+    /// 이면 후보가 없어 nil — 로딩 완료 시 재계산돼 채워진다.
+    private var effectiveAbility: String? { mon.effectiveAbility(candidates: baseStats?.abilities ?? []) }
+    /// 히든 특성이면 "(H)" 표기(경쟁 표기·본가 요약화면과 같은 관례). 진화로 특성 후보가 달라진 드문
+    /// 경우엔 못 찾을 수 있어(nil) 그때는 표기 없이 이름만 보여준다.
+    private var abilityIsHidden: Bool {
+        guard let ability = effectiveAbility else { return false }
+        return baseStats?.abilities.first(where: { $0.name == ability })?.isHidden ?? false
+    }
+
+    /// CompanionView.swift 의 store.isFinalStage 와 동일한 판정(임의 개체용). 라인 미로딩이면 nil.
+    private var isFinalStage: Bool? {
+        guard let line else { return nil }
+        return line.tree.node(withID: mon.currentID)?.children.isEmpty ?? true
+    }
+
+    private var lineNodes: [EvoLineItem] {
+        if let line {
+            return CompanionStore.lineItems(pathIDs: mon.pathIDs, stageIndex: mon.stageIndex,
+                                            currentID: mon.currentID, line: line)
+        }
+        return CompanionStore.realizedLineItems(pathIDs: mon.pathIDs, stageIndex: mon.stageIndex)
+    }
+
+    private var displayName: String {
+        guard let line else { return "#\(mon.currentID)" }
+        return line.localizedName(mon.currentID, store.language)
+    }
+
+    var body: some View {
+        // 스탯·IV/EV 레이더·비타민까지 다 쌓이면 도감/PC 격자용 고정 높이(CollectionView.contentHeight)
+        // 를 넘길 수 있다 — 그렇다고 그 공유 높이를 키우면 안 쓰는 격자·로그까지 밑에 빈 공간이 남으므로,
+        // 이 화면만 ScrollView 로 넘치는 만큼 스크롤하게 한다(상점/가방/로그와 같은 기존 패턴).
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                header
+                hero
+                EvoLineView(nodes: lineNodes, mysteryLabel: store.l.unknownNextEvolution,
+                            shiny: mon.isShiny, maxWidth: PopoverMetrics.contentWidth)
+                statsSection
+                ivEvRadarSection
+                vitaminsSection
+                actions
+            }
+        }
+        .task(id: mon.baseID) { line = await store.line(baseID: mon.baseID) }
+        // currentID(폼/진화 단계)로 키 — baseID 와 달리 진화하면 바뀌어 기준 스탯도 다시 받아야 한다.
+        // 특성 표시명은 baseStats(특성 후보 목록)가 있어야 effectiveAbility 를 정할 수 있으므로 그
+        // 뒤에 이어서 조회한다(별개 .task 로 나누면 baseStats 가 아직 없을 때 경쟁 상태가 생긴다).
+        // 언어도 같이 키에 넣는다 — 특성 표시명은 언어별로 다시 조회해야 한다(species/move 이름과 동일).
+        .task(id: "\(mon.currentID)-\(store.language.rawValue)") {
+            baseStats = await store.baseStats(speciesID: mon.currentID)
+            abilityDisplayName = await store.abilityName(effectiveAbility)
+        }
+    }
+
+    /// 스탯 막대 정규화 상한 — 레벨 100 실전 스탯 대부분이 이 안에 들어와 막대 길이가 유의미하게 갈린다.
+    /// ponytail: 고정 상수, 종별 실제 최댓값 대비 보정 없음 — 극단치(전설 스피드 등)는 막대가 꽉 차 보임.
+    private static let statBarMax = 200.0
+
+    @ViewBuilder
+    private var statsSection: some View {
+        if let baseStats {
+            let computed = StatCalc.compute(base: baseStats, ivs: mon.effectiveIVs, evs: mon.evs,
+                                            level: mon.level, nature: mon.nature)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.l.pcStatsTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                statRow(store.l.statHP, computed.hp)
+                statRow(store.l.statAttack, computed.attack)
+                statRow(store.l.statDefense, computed.defense)
+                statRow(store.l.statSpecialAttack, computed.specialAttack)
+                statRow(store.l.statSpecialDefense, computed.specialDefense)
+                statRow(store.l.statSpeed, computed.speed)
+            }
+        }
+    }
+
+    private func statRow(_ label: String, _ value: Int) -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(.caption2).foregroundStyle(.secondary).frame(width: 34, alignment: .leading)
+            ProgressView(value: min(1, Double(value) / Self.statBarMax)).controlSize(.small)
+            Text("\(value)").font(.caption2.monospacedDigit()).frame(width: 26, alignment: .trailing)
+        }
+    }
+
+    /// IV/EV 겹쳐 그린 레이더 — 스케일이 다른 둘(IV 0~31, EV 0~252)을 각자 자기 최댓값 기준으로
+    /// 정규화해 같은 6축에 겹치므로, 절대값이 아니라 "이 개체가 어느 스탯에 강한가"의 모양을 바로 비교할 수 있다.
+    /// 축 순서는 본가 스탯 요약 화면과 동일(HP→공격→방어→스피드→특방→특공, 시계방향).
+    private var ivEvRadarSection: some View {
+        let ivs = mon.effectiveIVs
+        let evs = mon.evs
+        let labels = [store.l.statHP, store.l.statAttack, store.l.statDefense,
+                     store.l.statSpeed, store.l.statSpecialDefense, store.l.statSpecialAttack]
+        let ivValues: [Int] = [ivs.hp, ivs.attack, ivs.defense, ivs.speed, ivs.specialDefense, ivs.specialAttack]
+        let evValues: [Int] = [evs.hp, evs.attack, evs.defense, evs.speed, evs.specialDefense, evs.specialAttack]
+        let ivSeries = RadarChartView.Series(values: ivValues.map { Double($0) / 31 }, color: .blue)
+        let evSeries = RadarChartView.Series(values: evValues.map { Double($0) / Double(Vitamin.evCapPerStat) }, color: .orange)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(store.l.pcIvEvTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Spacer()
+                legendDot(.blue, "\(store.l.ivLabel) \(ivValues.reduce(0, +))/186")
+                legendDot(.orange, "\(store.l.evLabel) \(evValues.reduce(0, +))/\(Vitamin.evCapTotal)")
+            }
+            RadarChartView(axisLabels: labels, series: [ivSeries, evSeries])
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+
+    private func legendDot(_ color: Color, _ text: String) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(text).font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    /// 보유한 비타민만 보여준다(가방과 같은 규칙 — count>0). 탭 한 번으로 즉시 적용(사탕/민트와 달리
+    /// 인라인 확인 없음 — 효과가 작고 되돌릴 위험도 없어 2단계 확인이 과함).
+    @ViewBuilder
+    private var vitaminsSection: some View {
+        let owned = ItemKind.allCases.filter { $0.vitaminStat != nil && store.itemCount($0) > 0 }
+        if !owned.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.l.pcVitaminsTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(owned, id: \.self) { kind in vitaminButton(kind) }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    private func vitaminButton(_ kind: ItemKind) -> some View {
+        Button {
+            store.useVitamin(kind, for: mon.id)
+        } label: {
+            HStack(spacing: 3) {
+                ItemIconView(kind: kind, size: 16)
+                Text("×\(store.itemCount(kind))").font(.caption2.weight(.bold)).monospacedDigit()
+            }
+        }
+        .buttonStyle(.bordered).controlSize(.small)
+        .disabled(!store.canUseVitamin(kind, on: mon.id))
+        .help(store.l.itemName(kind))
+    }
+
+    private var header: some View {
+        HStack {
+            Button(action: onClose) { Image(systemName: "chevron.left") }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(store.l.back)
+            Text(store.l.pcTitle).font(.callout.weight(.semibold))
+            Spacer()
+        }
+    }
+
+    /// 홈 화면(CompanionHeader)과 같은 계산 — threshold/progress/tokensToNext 는 개체 자체 필드
+    /// (rarity/totalForms/stageIndex/usedAtStage)만으로 정해지므로 훈련 중이 아니어도 그대로 쓴다.
+    private var threshold: Int {
+        PokemonBalance.phaseThreshold(rarity: mon.rarity, totalForms: mon.totalForms, stageIndex: mon.stageIndex)
+    }
+    private var progress: Double {
+        guard threshold > 0 else { return 0 }
+        return min(1, max(0, Double(mon.usedAtStage) / Double(threshold)))
+    }
+    private var tokensToNext: Int { max(0, threshold - mon.usedAtStage) }
+
+    /// isFinalStage 미확정(라인 로딩 중)일 땐 "최종 진화체"라고 성급히 단정하지 않는다 — 단계 숫자로 표기.
+    private var stageText: String {
+        guard isFinalStage == true else { return store.l.stage(mon.stageIndex + 1, mon.totalForms) }
+        return store.l.finalForm
+    }
+
+    /// 타입 뱃지 — 1~2개, baseStats 와 같은 fetch(mon.currentID 로 진화마다 갱신)에서 온다.
+    @ViewBuilder
+    private var typeBadges: some View {
+        if let types = baseStats?.types, !types.isEmpty {
+            HStack(spacing: 4) {
+                ForEach(types, id: \.self) { t in
+                    Text(store.l.typeName(t).uppercased()).font(.system(size: 8, weight: .bold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(typeColor(t)).foregroundStyle(.white)
+                        .clipShape(Capsule())
+                }
+            }
+        }
+    }
+
+    private var hero: some View {
+        HStack(alignment: .center, spacing: 12) {
+            SpriteView(speciesID: mon.currentID, size: 64, animated: true, shiny: mon.isShiny)
+                .frame(width: 64, height: 64)
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(displayName).font(.callout.weight(.semibold))
+                    Text(store.l.pcLevel(mon.level)).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    if mon.isShiny { Text("✨").font(.system(size: 11)) }
+                    Text(store.l.rarityLabel(mon.rarity).uppercased()).font(.system(size: 8, weight: .bold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(rarityColor(mon.rarity)).foregroundStyle(.white)
+                        .clipShape(Capsule())
+                    if isTraining {
+                        Text(store.l.dexRaising.uppercased())
+                            .font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.accentColor.opacity(0.14))
+                            .foregroundStyle(Color.accentColor)
+                            .clipShape(Capsule())
+                    }
+                }
+                typeBadges
+                // 홈 화면과 같은 구성: 단계·성격·특성 → 진행바 → 다음까지 남은 토큰 → (훈련 중이면) 상태 문구.
+                let nature = mon.nature.map { " · \($0.name(store.language))" } ?? ""
+                let ability = abilityDisplayName.map { " · \($0)" + (abilityIsHidden ? " (H)" : "") } ?? ""
+                Text(stageText + nature + ability).font(.caption2).foregroundStyle(.secondary)
+                ProgressView(value: progress).controlSize(.small).tint(.orange)
+                if let isFinalStage, tokensToNext > 0 {
+                    let amount = TokenFormatter.compact(tokensToNext)
+                    Text(isFinalStage ? store.l.toGraduation(amount) : store.l.toNextEvolution(amount))
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+                if isTraining {
+                    Text(store.statusLine).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+    }
+
+    /// 최종 진화체엔 잠글 게 없고(isFinalStage), 이미 훈련 중인 개체엔 전환할 곳이 없다(isTraining)
+    /// — 둘 다 해당하면(예: 다 큰 훈련 중인 개체) 버튼을 아예 안 그린다. 홈 화면도 그 경우 버튼이 없다.
+    @ViewBuilder
+    private var actions: some View {
+        HStack(spacing: 8) {
+            if isFinalStage == false {
+                Button {
+                    store.setEvolutionLocked(!mon.evolutionLocked, for: mon.id)
+                } label: {
+                    Label(mon.evolutionLocked ? store.l.pcUnlockEvolution : store.l.pcLockEvolution,
+                          systemImage: mon.evolutionLocked ? "lock.open" : "lock.fill")
+                }
+                .buttonStyle(.bordered)
+            }
+            // Final stage + nothing left to next threshold = nothing left to train toward — offering
+            // "make this your training focus" here is just noise (user report: confusing on a maxed mon).
+            if !isTraining, !(isFinalStage == true && tokensToNext == 0) {
+                Button(store.l.pcSetTraining) {
+                    store.setTrainingSlot(to: mon.id)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            Spacer(minLength: 0)
+            // Icon-only (vs. the labeled buttons above) — this one applies to every mon regardless of
+            // training/evolution state, so it needs to stay compact even when both other buttons show.
+            Button {
+                store.setFloating(!mon.isFloating, for: mon.id)
+            } label: {
+                Label(mon.isFloating ? store.l.pcUnsetFloating : store.l.pcSetFloating,
+                      systemImage: mon.isFloating ? "pin.slash" : "pin")
+            }
+            .buttonStyle(.bordered)
+            .labelStyle(.iconOnly)
+            .foregroundStyle(mon.isFloating ? Color.accentColor : Color.primary)
+            .help(mon.isFloating ? store.l.pcUnsetFloating : store.l.pcSetFloating)
+        }
+    }
+}
+
 /// 도감 — 보유 종만 도감 번호순으로, 한 페이지 24칸(4열×6행) 고정 격자.
 ///
 /// 페이지식이라 ScrollView 를 쓰지 않는다 — 팝오버 재오픈 시 fitting size 가 줄어드는 기존 결함을
@@ -786,8 +1278,8 @@ private struct DexGridView: View {
     @State private var selectedRarity: Rarity?
     @State private var page = 0
 
-    /// 선택한 칸 — 하단 줄에 희귀도를 띄우고, 이로치를 잡은 종이면 스프라이트를 그 색으로 바꾼다.
-    @State private var selectedID: Int?
+    /// 탭한 칸 — 그리드 대신 그 종의 개요 화면(DexSpeciesDetailView)을 연다(PartyGridView 와 같은 push 패턴).
+    @State private var selectedSpeciesID: Int?
 
     private static let columns = 4
     private static let rows = 6
@@ -795,20 +1287,24 @@ private struct DexGridView: View {
     private static let spacing: CGFloat = 4
 
     var body: some View {
-        // 종별 집계는 한 번만 훑고 하위로 넘긴다 — 칸마다 재집계하면 도감이 O(칸×도감) 이 된다.
-        let all = store.dexSpecies
-        let visible = selectedRarity.map { r in all.filter { $0.rarity == r } } ?? all
-        let pageCount = max(1, (visible.count + Self.pageSize - 1) / Self.pageSize)
-        let current = min(page, pageCount - 1)   // 보유 종이 줄어든 경우(필터 등) 범위 방어
-        let slice = Array(visible.dropFirst(current * Self.pageSize).prefix(Self.pageSize))
-        VStack(alignment: .leading, spacing: 8) {
-            header(all)
-            grid(slice)
-            footer(slice, current: current, pageCount: pageCount)
+        if let id = selectedSpeciesID, let species = store.dexSpecies.first(where: { $0.id == id }) {
+            DexSpeciesDetailView(store: store, species: species) { selectedSpeciesID = nil }
+        } else {
+            // 종별 집계는 한 번만 훑고 하위로 넘긴다 — 칸마다 재집계하면 도감이 O(칸×도감) 이 된다.
+            let all = store.dexSpecies
+            let visible = selectedRarity.map { r in all.filter { $0.rarity == r } } ?? all
+            let pageCount = max(1, (visible.count + Self.pageSize - 1) / Self.pageSize)
+            let current = min(page, pageCount - 1)   // 보유 종이 줄어든 경우(필터 등) 범위 방어
+            let slice = Array(visible.dropFirst(current * Self.pageSize).prefix(Self.pageSize))
+            VStack(alignment: .leading, spacing: 8) {
+                header(all)
+                grid(slice)
+                footer(current: current, pageCount: pageCount)
+            }
+            // 이름이 저장돼 있지 않은 구버전 졸업분을 채운다 — 격자는 저장분만 읽으므로 이게 없으면
+            // 칸이 `#41` 로 남는다. 저장된 항목은 조회하지 않으므로 채워진 뒤로는 아무 일도 하지 않는다.
+            .task { await store.backfillMissingDexNames() }
         }
-        // 이름이 저장돼 있지 않은 구버전 졸업분을 채운다 — 격자는 저장분만 읽으므로 이게 없으면
-        // 칸이 `#41` 로 남는다. 저장된 항목은 조회하지 않으므로 채워진 뒤로는 아무 일도 하지 않는다.
-        .task { await store.backfillMissingDexNames() }
     }
 
     /// 희귀도 필터 — 로그와 같은 RarityTally 를 쓰되 개수는 **종 단위**다.
@@ -820,7 +1316,8 @@ private struct DexGridView: View {
                 Text(store.l.dexTitle).font(.callout.weight(.semibold))
                 // 총계는 필터와 무관한 전체 종 수 — 로그 헤더(dexTotal)와 같은 규칙.
                 // 필터 중인 희귀도의 개수는 아래 캡슐이 이미 보여준다.
-                Text(store.l.dexSpeciesTotal(all.count)).font(.caption2).foregroundStyle(.secondary)
+                Text(store.l.dexSpeciesTotal(all.count, PokemonAssets.animatedSpeciesIDs.count))
+                    .font(.caption2).foregroundStyle(.secondary)
             }
             HStack(spacing: 4) {
                 ForEach(rarityDisplayOrder, id: \.self) { r in
@@ -829,7 +1326,6 @@ private struct DexGridView: View {
                         withAnimation(.easeInOut(duration: 0.15)) {
                             selectedRarity = (selectedRarity == r) ? nil : r
                             page = 0        // 필터가 바뀌면 페이지 범위도 바뀐다 — 항상 첫 페이지부터
-                            selectedID = nil // 선택한 칸이 필터 밖으로 나가면 하단 줄이 유령 정보를 남긴다
                         }
                     } label: {
                         RarityTally(label: store.l.rarityLabel(r), count: count,
@@ -854,8 +1350,8 @@ private struct DexGridView: View {
                         let i = row * Self.columns + col
                         if i < slice.count {
                             let sp = slice[i]
-                            DexSpeciesCell(store: store, species: sp, isSelected: selectedID == sp.id) {
-                                selectedID = (selectedID == sp.id) ? nil : sp.id
+                            DexSpeciesCell(store: store, species: sp) {
+                                selectedSpeciesID = sp.id
                             }
                             .frame(maxWidth: .infinity)
                         } else {
@@ -869,20 +1365,13 @@ private struct DexGridView: View {
         .frame(maxHeight: .infinity)
     }
 
-    /// 하단 한 줄 — 왼쪽은 선택한 칸의 희귀도, 오른쪽은 페이저.
-    /// 페이저가 1페이지라 안 보일 때도 이 줄을 **항상** 예약한다 — 페이지 수나 선택 여부에 따라
-    /// 격자 높이가 흔들리지 않게.
-    private func footer(_ slice: [CompanionStore.DexSpecies],
-                        current: Int, pageCount: Int) -> some View {
+    /// 하단 한 줄 — 페이저만(칸 탭은 이제 상세 화면으로 넘어가므로 그리드 위에 표시할 선택 상태가 없다).
+    /// 페이저가 1페이지라 안 보일 때도 이 줄을 **항상** 예약한다 — 페이지 수에 따라 격자 높이가 흔들리지 않게.
+    private func footer(current: Int, pageCount: Int) -> some View {
         HStack(spacing: 8) {
-            if let sel = slice.first(where: { $0.id == selectedID }) {
-                // 칸은 번호·스프라이트·이름만 보여주므로 희귀도가 선택으로 얻는 정보다.
-                Text("#\(sel.id) \(sel.name) · \(store.l.rarityLabel(sel.rarity))")
-                    .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
-            }
             Spacer(minLength: 4)
             if pageCount > 1 {
-                Button { page = max(0, current - 1); selectedID = nil } label: {
+                Button { page = max(0, current - 1) } label: {
                     Image(systemName: "chevron.left")
                 }
                 .buttonStyle(.plain).disabled(current == 0)
@@ -891,7 +1380,7 @@ private struct DexGridView: View {
                     .font(.system(size: 10, weight: .semibold)).monospacedDigit()
                     .foregroundStyle(.secondary)
                     .accessibilityLabel(store.l.dexPageLabel(current + 1, pageCount))
-                Button { page = min(pageCount - 1, current + 1); selectedID = nil } label: {
+                Button { page = min(pageCount - 1, current + 1) } label: {
                     Image(systemName: "chevron.right")
                 }
                 .buttonStyle(.plain).disabled(current == pageCount - 1)
@@ -903,12 +1392,200 @@ private struct DexGridView: View {
     }
 }
 
+/// 도감 종 개요 — 특정 개체(MonDetailView)가 아니라 **종 자체**가 낼 수 있는 범위를 보여준다.
+/// 일반형·이로치 스프라이트를 나란히(이로치는 잡은 적 있을 때만), 타입, 레벨 100 기준 능력치 최소~최대.
+private struct DexSpeciesDetailView: View {
+    let store: CompanionStore
+    let species: CompanionStore.DexSpecies
+    var onClose: () -> Void
+
+    @State private var baseStats: BaseStats?
+    /// 특성 슬러그 → 표시명. baseStats.abilities 를 다 채운 뒤 한 번에 조회한다(종당 1~3개뿐이라
+    /// 병렬화할 정도는 아니다).
+    @State private var abilityNames: [String: String] = [:]
+    @State private var line: EvoLine?
+    @State private var flavorText: String?
+    @State private var genus: String?
+
+    /// species.id 까지의 조상 경로를 트리에서 찾아 CompanionStore.lineItems 에 그대로 넘긴다 — 개체용
+    /// pathIDs 가 없어도 같은 계산을 재사용할 수 있다(EvoNode.pathToNode 주석 참고: 종에 도달했다는
+    /// 사실 자체가 그 경로 전체를 지나왔다는 증거라 조상 구간은 항상 .done 으로 취급해도 안전하다).
+    private var lineNodes: [EvoLineItem] {
+        guard let line, let pathIDs = line.tree.pathToNode(species.id) else { return [] }
+        return CompanionStore.lineItems(pathIDs: pathIDs, stageIndex: pathIDs.count - 1,
+                                        currentID: species.id, line: line)
+    }
+
+    var body: some View {
+        // 진화 라인·도감 설명까지 붙으니 길이가 종/언어마다 들쭉날쭉하다(설명 길이 편차가 특히 크다) —
+        // MonDetailView 와 같은 이유로 고정 높이 예산 대신 이 화면만 스크롤하게 한다.
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                header
+                hero
+                flavorTextView
+                if !lineNodes.isEmpty {
+                    EvoLineView(nodes: lineNodes, mysteryLabel: store.l.unknownNextEvolution,
+                                shiny: species.isShiny, maxWidth: PopoverMetrics.contentWidth)
+                }
+                abilitiesSection
+                statsRangeSection
+            }
+        }
+        .task(id: species.baseID) { line = await store.line(baseID: species.baseID) }
+        .task(id: "\(species.id)-\(store.language.rawValue)") {
+            let stats = await store.baseStats(speciesID: species.id)
+            baseStats = stats
+            var names: [String: String] = [:]
+            for a in stats?.abilities ?? [] { names[a.name] = await store.abilityName(a.name) ?? a.name }
+            abilityNames = names
+            flavorText = await store.flavorText(speciesID: species.id)
+            genus = await store.genus(speciesID: species.id)
+        }
+    }
+
+    @ViewBuilder
+    private var flavorTextView: some View {
+        if let flavorText {
+            Text(flavorText).font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            Button(action: onClose) { Image(systemName: "chevron.left") }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(store.l.back)
+            Text(store.l.dexTitle).font(.callout.weight(.semibold))
+            Spacer()
+        }
+    }
+
+    private var hero: some View {
+        HStack(alignment: .top, spacing: 10) {
+            spriteSlot(shiny: false, label: store.l.dexNormalLabel, locked: false)
+            // 이로치는 실제로 잡은 적 있을 때만 색이 보인다 — 안 잡았으면 잠금 표시(EvoLineView 의
+            // "mystery" 미리보기 미표시 규칙과 같은 결: 아직 못 본 것을 그대로 보여주지 않는다).
+            spriteSlot(shiny: true, label: store.l.dexShinyLabel, locked: !species.isShiny)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(species.name).font(.callout.weight(.semibold))
+                    Text("#\(species.id)").font(.caption2).foregroundStyle(.secondary)
+                    Text(store.l.rarityLabel(species.rarity).uppercased()).font(.system(size: 8, weight: .bold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(rarityColor(species.rarity)).foregroundStyle(.white)
+                        .clipShape(Capsule())
+                }
+                if let genus {
+                    Text(genus).font(.caption2).foregroundStyle(.secondary)
+                }
+                if let types = baseStats?.types, !types.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(types, id: \.self) { t in
+                            Text(store.l.typeName(t).uppercased()).font(.system(size: 8, weight: .bold))
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(typeColor(t)).foregroundStyle(.white)
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+                if let baseStats {
+                    Text(String(format: "%.1fm · %.1fkg", baseStats.heightM, baseStats.weightKg))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+    }
+
+    private func spriteSlot(shiny: Bool, label: String, locked: Bool) -> some View {
+        VStack(spacing: 2) {
+            SpriteView(speciesID: species.id, size: 48, animated: true, shiny: shiny)
+                .frame(width: 48, height: 48)
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .opacity(locked ? 0.2 : 1)
+                .overlay { if locked { Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary) } }
+            Text(label).font(.system(size: 8)).foregroundStyle(.secondary)
+        }
+        .help(locked ? store.l.dexShinyLocked : label)
+    }
+
+    /// 이 종이 가질 수 있는 특성 후보 전부(일반 + 히든) — 부화하면 이 중 하나로 확정된다(개체 하나가
+    /// 아니라 종 전체의 가능성을 보여주는 개요라 statsRangeSection 과 같은 결).
+    @ViewBuilder
+    private var abilitiesSection: some View {
+        if let abilities = baseStats?.abilities, !abilities.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.l.dexAbilitiesTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(abilities, id: \.name) { a in
+                    HStack(spacing: 4) {
+                        Text(abilityNames[a.name] ?? a.name).font(.caption2)
+                        if a.isHidden {
+                            Text("(H)").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statsRangeSection: some View {
+        if let baseStats {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.l.dexStatRangeTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                rangeRow(store.l.statHP, StatCalc.statRange(base: baseStats.hp, isHP: true))
+                rangeRow(store.l.statAttack, StatCalc.statRange(base: baseStats.attack, isHP: false))
+                rangeRow(store.l.statDefense, StatCalc.statRange(base: baseStats.defense, isHP: false))
+                rangeRow(store.l.statSpecialAttack, StatCalc.statRange(base: baseStats.specialAttack, isHP: false))
+                rangeRow(store.l.statSpecialDefense, StatCalc.statRange(base: baseStats.specialDefense, isHP: false))
+                rangeRow(store.l.statSpeed, StatCalc.statRange(base: baseStats.speed, isHP: false))
+            }
+        }
+    }
+
+    /// 능력치 범위 막대 정규화 상한 — 레벨 100 최대치(IV31·EV252·상승성격) 대부분이 이 안에 들어온다.
+    private static let rangeBarMax = 420.0
+
+    private func rangeRow(_ label: String, _ range: (min: Int, max: Int)) -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(.caption2).foregroundStyle(.secondary).frame(width: 34, alignment: .leading)
+            RangeBarView(lo: range.min, hi: range.max, scaleMax: Self.rangeBarMax)
+            Text("\(range.min)–\(range.max)").font(.caption2.monospacedDigit())
+                .frame(width: 56, alignment: .trailing)
+        }
+    }
+}
+
+/// 값 하나가 아니라 [lo, hi] 구간을 0...scaleMax 축 위 막대로 그린다 — 종 스탯 범위(개요) 전용.
+private struct RangeBarView: View {
+    let lo: Int
+    let hi: Int
+    let scaleMax: Double
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let loX = w * CGFloat(min(1, max(0, Double(lo) / scaleMax)))
+            let hiX = w * CGFloat(min(1, max(0, Double(hi) / scaleMax)))
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.secondary.opacity(0.15))
+                Capsule().fill(Color.accentColor.opacity(0.6))
+                    .frame(width: max(2, hiX - loX))
+                    .offset(x: loX)
+            }
+        }
+        .frame(height: 6)
+    }
+}
+
 /// 도감 한 칸 — 도감 번호 + 스프라이트 + 종 이름. 종 정보만 담는다(성격·획득 횟수는 로그의 몫).
 /// 정적 스프라이트만 쓴다(animated 생략) — 한 페이지 24칸을 GIF 로 동시 재생하면 CPU 가 안 된다.
 private struct DexSpeciesCell: View {
     let store: CompanionStore
     let species: CompanionStore.DexSpecies
-    let isSelected: Bool
     let onTap: () -> Void
 
     /// 로그(56)보다 작다 — 24칸 격자에 이름까지 담아야 한다. 원본 96×96 픽셀아트를
@@ -918,19 +1595,8 @@ private struct DexSpeciesCell: View {
     var body: some View {
         Button(action: onTap) {
             VStack(spacing: 1) {
-                // 기본은 일반색. 이로치를 잡은 종은 선택하면 이로치색으로 바뀐다 —
-                // 일반·이로치를 둘 다 가진 종도 두 모습을 다 볼 수 있다(본가 HOME 의 이로치 토글과 같은 결).
-                SpriteView(speciesID: species.id, size: Self.thumb,
-                           shiny: species.isShiny && isSelected)
+                SpriteView(speciesID: species.id, size: Self.thumb)
                     .frame(width: Self.thumb, height: Self.thumb)
-                    // 표식은 스프라이트 아래가 아니라 위에 겹친다 — 별도 줄로 빼면 칸 높이가 넘친다.
-                    // 이 줄은 번호·이로치와 폭을 다투지 않아 세 언어 모두 8pt 그대로 들어간다
-                    // (가장 긴 en "RAISING" 이 캡슐 포함 45pt, 칸 안쪽 폭 74pt).
-                    // `fixedSize` 필수 — 오버레이는 붙은 뷰(스프라이트 44)의 폭을 제안받아서, 없으면
-                    // 칸이 아니라 스프라이트 폭에 갇혀 "RAISIN/G" 로 줄바꿈된다.
-                    .overlay(alignment: .bottom) {
-                        if species.isRaising { raisingBadge.fixedSize() }
-                    }
                 Text(species.name)
                     .font(.system(size: 9))
                     .lineLimit(1).minimumScaleFactor(0.8)
@@ -941,7 +1607,7 @@ private struct DexSpeciesCell: View {
             // 칸 기준으로 두면 양 끝으로 붙고, 픽셀아트 몸통과 겹치는 폭도 줄어든다.
             .overlay(alignment: .topLeading) { numberTag }
             .overlay(alignment: .topTrailing) {
-                // ✨ = 이 종의 이로치를 잡은 적이 있다는 표식(탭하면 그 색으로 바뀐다).
+                // ✨ = 이 종의 이로치를 잡은 적이 있다는 표식. 탭하면(상세 화면에서) 실제로 볼 수 있다.
                 if species.isShiny {
                     Text("✨")
                         .font(.system(size: 8))
@@ -951,14 +1617,8 @@ private struct DexSpeciesCell: View {
                 }
             }
             .padding(3)
-            .background(Color.secondary.opacity(isSelected ? 0.16 : 0.06))
+            .background(Color.secondary.opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.accentColor, lineWidth: 1.5)
-                }
-            }
         }
         .buttonStyle(.plain)
         .help(tooltip)
@@ -975,24 +1635,11 @@ private struct DexSpeciesCell: View {
             .background(.regularMaterial, in: Capsule())
     }
 
-    /// "키우는 중" — 아직 졸업 기록이 없어 사라질 수 있는 칸임을 알린다. 포획 로그의 같은 뱃지와
-    /// 글자·색을 맞춰 두 화면이 같은 말을 쓰게 한다. accent 틴트는 반투명이라 스프라이트가 비치므로
-    /// material 을 한 겹 깔아 대비를 확보한다(로그는 카드 배경 위라 필요 없었다).
-    private var raisingBadge: some View {
-        Text(store.l.dexRaising.uppercased())
-            .font(.system(size: 8, weight: .bold))
-            .padding(.horizontal, 5).padding(.vertical, 1)
-            .foregroundStyle(Color.accentColor)
-            .background(Color.accentColor.opacity(0.14), in: Capsule())
-            .background(.regularMaterial, in: Capsule())
-    }
-
     /// 툴팁과 접근성 라벨이 같은 문장을 쓴다 — 칸이 글자로 못 보여주는 희귀도를 담는다.
     /// ✨ 는 이모지라 스크린리더가 일관되게 읽지 못하므로 명사로 함께 넣는다.
     private var tooltip: String {
         var parts = ["#\(species.id) \(species.name)", store.l.rarityLabel(species.rarity)]
         if species.isShiny { parts.append(store.l.dexShinyLabel) }
-        if species.isRaising { parts.append(store.l.dexRaising) }
         return parts.joined(separator: " · ")
     }
 }
@@ -1017,7 +1664,7 @@ private struct DexEntryRow: View {
                     .padding(.horizontal, 5).padding(.vertical, 1)
                     .background(rarityColor(entry.rarity)).foregroundStyle(.white)
                     .clipShape(Capsule())
-                if store.isActiveDexEntry(entry) {
+                if store.isTrainingLogEntry(entry) {
                     Text(store.l.dexRaising.uppercased())
                         .font(.system(size: 8, weight: .bold))
                         .padding(.horizontal, 5).padding(.vertical, 1)
@@ -1031,10 +1678,8 @@ private struct DexEntryRow: View {
                         .accessibilityLabel(store.l.dexShinyLabel)
                 }
                 Spacer()
-                if let nature = entry.nature {
-                    Text(nature.name(store.language))
-                        .font(.system(size: 9)).foregroundStyle(.secondary)
-                }
+                Text(store.l.acquisitionLabel(entry.source))
+                    .font(.system(size: 9)).foregroundStyle(.secondary)
             }
             EvoLineView(nodes: entry.chainOrder.map { EvoLineItem(.species($0), .done) },
                         mysteryLabel: store.l.unknownNextEvolution, thumb: 56,
