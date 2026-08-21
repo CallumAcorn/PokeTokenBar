@@ -123,10 +123,11 @@ final class ShopTests: XCTestCase {
 
     // MARK: 정렬 (가격 저렴한 순 + 구매 완료 보유형 맨 아래)
 
-    /// 상점 목록은 가격 오름차순(민트 100M < 사탕 500M < 이로치 부적 3B).
+    /// 상점 목록은 가격 오름차순(민트/비타민 6종 100M < 사탕 500M < 이로치 부적 3B).
+    /// 동가(민트·비타민 6종)는 안정 정렬이라 ItemKind 선언 순서(mint 가 비타민보다 먼저)를 유지한다.
     func testItemsSortedByPriceAscending() {
         let items = store(used: 0).purchasableItems
-        XCTAssertEqual(items, [.mint, .rareCandy, .shinyCharm])
+        XCTAssertEqual(items, [.mint, .hpUp, .protein, .iron, .calcium, .zinc, .carbos, .rareCandy, .shinyCharm])
         let prices = items.compactMap(\.shopPrice)
         XCTAssertEqual(prices, prices.sorted(), "shopPrice 오름차순 — 가격 상수가 바뀌어도 정렬 불변식 유지")
     }
@@ -160,6 +161,12 @@ final class ShopTests: XCTestCase {
         XCTAssertTrue(s.hasActive)
         XCTAssertEqual(s.shopEntries,
                        [.item(.mint),        // 100M
+                        .item(.hpUp),        // 100M (동가, 선언 순서로 mint 뒤)
+                        .item(.protein),     // 100M
+                        .item(.iron),        // 100M
+                        .item(.calcium),     // 100M
+                        .item(.zinc),        // 100M
+                        .item(.carbos),      // 100M
                         .item(.rareCandy),   // 500M
                         .egg(nil),           // 1B
                         .egg(.uncommon),     // 2.5B
@@ -174,7 +181,9 @@ final class ShopTests: XCTestCase {
     func testShopEntriesOmitsFreshEggWhenNoActive() {
         let s = store(used: 5_000_000_000)   // active 없음
         XCTAssertFalse(s.hasActive)
-        XCTAssertEqual(s.shopEntries, [.item(.mint), .item(.rareCandy), .item(.shinyCharm)])
+        XCTAssertEqual(s.shopEntries, [.item(.mint), .item(.hpUp), .item(.protein), .item(.iron),
+                                       .item(.calcium), .item(.zinc), .item(.carbos),
+                                       .item(.rareCandy), .item(.shinyCharm)])
         for tier in FreshEgg.shopTiers {
             XCTAssertFalse(s.shopEntries.contains(.egg(tier)), "알 상태에선 \(tier?.rawValue ?? "기본") 알도 미노출")
         }

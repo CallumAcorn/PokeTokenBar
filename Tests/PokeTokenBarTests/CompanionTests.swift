@@ -36,6 +36,110 @@ final class PokemonBalanceTests: XCTestCase {
     }
 }
 
+// MARK: 스탯(IV/EV/기준치/성격 보정)
+
+final class StatCalcTests: XCTestCase {
+    func testComputeMatchesMainlineFormula() {
+        let base = BaseStats(hp: 100, attack: 100, defense: 100, specialAttack: 100, specialDefense: 100, speed: 100)
+        let maxSpread = StatSpread(hp: 31, attack: 31, defense: 31, specialAttack: 31, specialDefense: 31, speed: 31)
+        let evs = StatSpread(hp: 252, attack: 252, defense: 252, specialAttack: 252, specialDefense: 252, speed: 252)
+        let neutral = StatCalc.compute(base: base, ivs: maxSpread, evs: evs, level: 100, nature: nil)
+        // hp    = floor((2*100+31+63)*100/100) + 100 + 10 = 294 + 110 = 404
+        // other = floor((2*100+31+63)*100/100) + 5        = 294 + 5   = 299 (neutral nature)
+        XCTAssertEqual(neutral.hp, 404)
+        XCTAssertEqual(neutral.attack, 299)
+        XCTAssertEqual(neutral.speed, 299)
+
+        let boosted = StatCalc.compute(base: base, ivs: maxSpread, evs: evs, level: 100, nature: .adamant)
+        XCTAssertEqual(boosted.attack, 328, "adamant boosts attack +10%: floor(299*1.1)")
+        XCTAssertEqual(boosted.specialAttack, 269, "adamant lowers special attack -10%: floor(299*0.9)")
+        XCTAssertEqual(boosted.defense, 299, "unaffected stat stays neutral")
+    }
+
+    func testNeutralNaturesHaveNoBoostOrLower() {
+        for n: PokemonNature in [.hardy, .docile, .serious, .bashful, .quirky] {
+            XCTAssertNil(n.boostedStat, "\(n) should be neutral")
+            XCTAssertNil(n.loweredStat, "\(n) should be neutral")
+        }
+    }
+
+    func testEveryNonNeutralNatureBoostsAndLowersDifferentStats() {
+        for n in PokemonNature.allCases where n.boostedStat != nil {
+            XCTAssertNotEqual(n.boostedStat, n.loweredStat, "\(n) must not boost and lower the same stat")
+            XCTAssertNotNil(n.loweredStat, "\(n) has a boost, so it must also have a lower")
+        }
+    }
+
+    /// 레거시(IV 도입 전) 개체 대체값 — 같은 id 는 재계산해도 항상 같은 값, 0~31 범위를 벗어나지 않는다.
+    func testLegacyIVsAreDeterministicAndInRange() {
+        let a = StatCalc.legacyIVs(monID: "some-mon-uuid")
+        let b = StatCalc.legacyIVs(monID: "some-mon-uuid")
+        XCTAssertEqual(a, b, "same id must reproduce the same spread on every call/relaunch")
+        for v in [a.hp, a.attack, a.defense, a.specialAttack, a.specialDefense, a.speed] {
+            XCTAssertTrue((0...31).contains(v), "IV out of range: \(v)")
+        }
+        XCTAssertNotEqual(a, StatCalc.legacyIVs(monID: "a-different-mon-uuid"), "different mons shouldn't collide (in this sample)")
+    }
+
+    /// 특성 도입 전 개체(ability == nil)도 종의 실제 후보에서 결정적으로 하나를 대체해 보여준다 —
+    /// IV 의 effectiveIVs 와 같은 패턴. 후보가 비면(baseStats 미로딩) nil.
+    func testLegacyAbilityIsDeterministicAndAmongCandidates() throws {
+        let candidates = [PokemonAbility(name: "static", isHidden: false), PokemonAbility(name: "lightning-rod", isHidden: true)]
+        let mon = MonState(id: "legacy-mon-1", baseID: 1, pathIDs: [1], plannedPathIDs: [1],
+                           stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        XCTAssertNil(mon.ability, "no roll on this mon — must fall back")
+        let a = mon.effectiveAbility(candidates: candidates)
+        let b = mon.effectiveAbility(candidates: candidates)
+        XCTAssertEqual(a, b, "same mon must reproduce the same fallback every call")
+        XCTAssertTrue(candidates.map(\.name).contains(try XCTUnwrap(a)))
+        XCTAssertNil(mon.effectiveAbility(candidates: []), "no candidates (baseStats not loaded yet) — nil, not a crash")
+    }
+
+    /// 진짜 롤이 있으면 대체 로직은 아예 안 쓰인다 — candidates 를 아예 안 줘도(빈 배열) 그대로 나온다.
+    func testEffectiveAbilityPrefersRealRollOverFallback() {
+        var mon = MonState(id: "rolled-mon", baseID: 1, pathIDs: [1], plannedPathIDs: [1],
+                           stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        mon.ability = "static"
+        XCTAssertEqual(mon.effectiveAbility(candidates: []), "static")
+    }
+}
+
+final class EvoNodePathToNodeTests: XCTestCase {
+    func testLinearChainReturnsFullAncestorPath() {
+        let tree = node(1, [node(2, [node(3)])])
+        XCTAssertEqual(tree.pathToNode(3), [1, 2, 3])
+        XCTAssertEqual(tree.pathToNode(1), [1], "root alone")
+    }
+    func testBranchReturnsOnlyTheMatchingSide() {
+        let tree = node(10, [node(11), node(12), node(13)])
+        XCTAssertEqual(tree.pathToNode(12), [10, 12], "다른 분기(11/13)는 경로에 안 섞인다")
+    }
+    func testUnknownIDReturnsNil() {
+        let tree = node(1, [node(2)])
+        XCTAssertNil(tree.pathToNode(999))
+    }
+}
+
+final class RollAbilityTests: XCTestCase {
+    func testEmptyOptionsReturnsNil() {
+        XCTAssertNil(CompanionStore.rollAbility([], roll: 0))
+    }
+    func testSingleOptionAlwaysPicked() {
+        let only = [PokemonAbility(name: "static", isHidden: false)]
+        for roll: UInt64 in [0, 1, 999] {
+            XCTAssertEqual(CompanionStore.rollAbility(only, roll: roll), "static")
+        }
+    }
+    /// 가중치(일반 10 : 히든 1) 순서 그대로 — roll 이 일반 몫(0..<10)이면 일반, 그 뒤(10)면 히든.
+    func testHiddenIsWeightedRarerThanRegular() {
+        let options = [PokemonAbility(name: "static", isHidden: false), PokemonAbility(name: "lightning-rod", isHidden: true)]
+        for roll: UInt64 in 0..<10 {
+            XCTAssertEqual(CompanionStore.rollAbility(options, roll: roll), "static", "roll \(roll)")
+        }
+        XCTAssertEqual(CompanionStore.rollAbility(options, roll: 10), "lightning-rod")
+    }
+}
+
 // (부화 풀 하드코딩 제거 — 선정 로직 테스트는 CompanionIdentityTests 의 샘플러 테스트로 대체)
 
 // MARK: 헬퍼
@@ -79,6 +183,17 @@ struct StubProvider: PokeProviding {
     func line(baseSpeciesID: Int) async throws -> EvoLine { value }
     // 인덱스 = 자기 라인 base 단일 항목 → 선택 롤 1회 소비 후 항상 그 base (테스트 rng 재생 단순화)
     func baseSpeciesIndex() async throws -> [BaseSpecies] { [BaseSpecies(id: value.baseID, captureRate: 255)] }
+}
+
+/// StubProvider + baseStats(특성 후보만 채운) override — 부화 특성 롤 테스트 전용.
+private struct AbilityStubProvider: PokeProviding {
+    let value: EvoLine
+    let abilities: [PokemonAbility]
+    func line(baseSpeciesID: Int) async throws -> EvoLine { value }
+    func baseSpeciesIndex() async throws -> [BaseSpecies] { [BaseSpecies(id: value.baseID, captureRate: 255)] }
+    func baseStats(speciesID: Int) async throws -> BaseStats {
+        BaseStats(hp: 1, attack: 1, defense: 1, specialAttack: 1, specialDefense: 1, speed: 1, abilities: abilities)
+    }
 }
 
 private actor SuspendedLineProvider: PokeProviding {
@@ -1402,6 +1517,57 @@ final class CompanionIdentityTests: XCTestCase {
         }
     }
 
+    /// 부화는 IV(스탯당 0~31)를 확정하고, EV 는 항상 0에서 시작한다.
+    func testHatchAssignsIVsInValidRangeAndZeroEVs() async throws {
+        let s = store(linear3, seed: 7)
+        await s.hatch(baseID: 1)
+        let mon = try XCTUnwrap(s.trainingMon)
+        let ivs = try XCTUnwrap(mon.ivs, "hatch must assign ivs")
+        for v in [ivs.hp, ivs.attack, ivs.defense, ivs.specialAttack, ivs.specialDefense, ivs.speed] {
+            XCTAssertTrue((0...31).contains(v), "IV out of range: \(v)")
+        }
+        XCTAssertEqual(mon.evs, StatSpread(), "freshly hatched mon has no EVs yet")
+    }
+
+    /// 특성 후보가 없으면(fetch 실패·구버전 종 데이터 등) nil — 부화 자체는 막지 않는다.
+    func testHatchWithNoAbilityOptionsLeavesAbilityNil() async {
+        let s = store(linear3, seed: 7)   // StubProvider 는 baseStats 를 override 하지 않음(기본 throw)
+        await s.hatch(baseID: 1)
+        XCTAssertNil(s.trainingMon?.ability)
+    }
+
+    /// 특성 후보가 있으면 그중 하나를 확정 롤한다.
+    func testHatchAssignsAbilityFromSpeciesOptions() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("poke-\(UUID().uuidString).json")
+        let options = [PokemonAbility(name: "static", isHidden: false), PokemonAbility(name: "lightning-rod", isHidden: true)]
+        let provider = AbilityStubProvider(value: linear3, abilities: options)
+        let s = CompanionStore(provider: provider, clock: { fixedNow }, fileURL: url, rng: SeededRNG(seed: 7))
+        await s.hatch(baseID: 1)
+        let ability = try XCTUnwrap(s.trainingMon?.ability)
+        XCTAssertTrue(options.map(\.name).contains(ability))
+    }
+
+    /// [회귀] IV/EV 도입 전 저장된(party 포맷이지만 ivs/evs 키가 없는) 개체를 불러와도 크래시·데이터
+    /// 유실 없이 로드되고, 그 개체의 스탯 표시는 effectiveIVs(레거시 대체)로 항상 계산 가능해야 한다.
+    func testLegacyPartySaveWithoutIVsOrEVsLoadsAndGetsDeterministicEffectiveIVs() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("poke-legacy-iv-\(UUID().uuidString).json")
+        let json = #"{"party":[{"id":"legacy-mon-1","baseID":1,"pathIDs":[1],"stageIndex":0,"usedAtStage":0,"rarity":"common","totalForms":1}],"trainingSlotID":"legacy-mon-1"}"#
+        try Data(json.utf8).write(to: url)
+
+        let s = CompanionStore(provider: StubProvider(value: linear3), clock: { fixedNow },
+                               fileURL: url, rng: SeededRNG(seed: 7))
+        let mon = try XCTUnwrap(s.trainingMon)
+        XCTAssertNil(mon.ivs, "legacy save predates IVs — stays nil, not silently backfilled/rewritten")
+        XCTAssertEqual(mon.evs, StatSpread(), "legacy save predates EVs — defaults to all-zero")
+
+        let ivs = mon.effectiveIVs
+        for v in [ivs.hp, ivs.attack, ivs.defense, ivs.specialAttack, ivs.specialDefense, ivs.speed] {
+            XCTAssertTrue((0...31).contains(v), "IV out of range: \(v)")
+        }
+        // Same id, independent computation — reload of the same save must show the same stats every time.
+        XCTAssertEqual(StatCalc.legacyIVs(monID: "legacy-mon-1"), ivs)
+    }
+
     /// shiny 가 실제로 나오는 시드를 탐색해 true 경로를 검증(1/64 확률이 코드에 존재함을 보장).
     func testShinyPathReachable() async {
         var shinySeed: UInt64?
@@ -1749,5 +1915,10 @@ final class PokeAPIGuardTests: XCTestCase {
         XCTAssertNil(PokeAPIClient.validatedChainURL("https://pokeapi.co.evil.com/x"), "유사 호스트 거부")
         XCTAssertNil(PokeAPIClient.validatedChainURL("http://pokeapi.co/x"), "http 거부(https 고정)")
         XCTAssertNil(PokeAPIClient.validatedChainURL(""), "빈 문자열 거부")
+    }
+    func testCleanedFlavorTextStripsGameTextArtifacts() {
+        let raw = "This intelligent\nPOKéMON roasts\nhard BERRIES with\u{0C}electricity to\nmake them ten\u{AD}der."
+        XCTAssertEqual(PokeAPIClient.cleanedFlavorText(raw),
+                       "This intelligent POKéMON roasts hard BERRIES with electricity to make them tender.")
     }
 }

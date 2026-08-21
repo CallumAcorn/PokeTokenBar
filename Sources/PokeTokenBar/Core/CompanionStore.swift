@@ -210,6 +210,7 @@ final class CompanionStore {
         let name: String
         let rarity: Rarity
         let isShiny: Bool               // 이 종을 이로치로 보유한 적이 있는가
+        let baseID: Int                 // 이 종이 속한 진화라인의 시작점 — 도감 개요의 진화 라인 조회용
     }
 
     /// 도감 목록 — 영구 언락된 종만, 도감 번호 오름차순. `state.dexUnlocked` 는 개체가 그 종에 도달한
@@ -217,7 +218,7 @@ final class CompanionStore {
     var dexSpecies: [DexSpecies] {
         state.dexUnlocked.sorted { $0.key < $1.key }.map { id, u in
             DexSpecies(id: id, name: u.names.flatMap { state.language.resolveName($0) } ?? "#\(id)",
-                       rarity: u.rarity, isShiny: u.isShiny)
+                       rarity: u.rarity, isShiny: u.isShiny, baseID: u.baseID)
         }
     }
 
@@ -270,6 +271,31 @@ final class CompanionStore {
     /// 캐시하므로 같은 라인을 여러 번 열어도 네트워크는 1회(currentLine 과 별개 — 훈련 대상을 바꾸지 않는다).
     func line(baseID: Int) async -> EvoLine? {
         try? await provider.line(baseSpeciesID: baseID)
+    }
+
+    /// 임의 개체의 기준 능력치 — PC 상세 화면 스탯 표시용. provider 가 종 id 단위로 캐시하므로
+    /// 같은 종을 여러 번 열어도 네트워크는 1회. 실패(오프라인 등)는 nil — 스탯 섹션만 안 뜬다.
+    func baseStats(speciesID: Int) async -> BaseStats? {
+        try? await provider.baseStats(speciesID: speciesID)
+    }
+
+    /// 특성 슬러그의 현재 언어 표시명 — PC 상세 화면용. 실패/미상(nil 슬러그)이면 nil(화면은 그냥 안 그림).
+    func abilityName(_ slug: String?) async -> String? {
+        guard let slug else { return nil }
+        guard let names = try? await provider.abilityNames(slug: slug) else { return nil }
+        return state.language.resolveName(names)
+    }
+
+    /// 도감 설명 — 도감 종 개요 화면용. 실패면 nil(화면은 그냥 그 줄을 안 그림).
+    func flavorText(speciesID: Int) async -> String? {
+        guard let texts = try? await provider.flavorText(speciesID: speciesID) else { return nil }
+        return state.language.resolveName(texts)
+    }
+
+    /// 분류(예: "쥐 포켓몬") — 도감 종 개요 화면용. 실패면 nil(화면은 그냥 그 줄을 안 그림).
+    func genus(speciesID: Int) async -> String? {
+        guard let genera = try? await provider.genus(speciesID: speciesID) else { return nil }
+        return state.language.resolveName(genera)
     }
 
     // MARK: 갱신 (AppDelegate 가 UsageStore 값으로 호출)
@@ -657,6 +683,37 @@ final class CompanionStore {
         mintFeedbackSeq += 1
         save()
         return new
+    }
+
+    // MARK: 비타민 (EV 증가)
+
+    /// 비타민 사용 가능 — 그 kind 가 실제 비타민이고, 재고>0 이고, 대상 개체가 스탯당·합계 EV 상한에
+    /// 여유가 있을 때. 사탕/민트와 달리 대상은 PC 의 임의 개체(꼭 훈련 중일 필요 없음) — PC 상세
+    /// 화면에서 지금 보고 있는 mon 에 바로 적용한다.
+    func canUseVitamin(_ kind: ItemKind, on monID: MonState.ID) -> Bool {
+        guard let keyPath = kind.vitaminStat, itemCount(kind) > 0,
+              let mon = state.party.first(where: { $0.id == monID }) else { return false }
+        return evRoom(for: mon.evs, stat: keyPath) > 0
+    }
+
+    /// 비타민 1개 사용 — 지정 개체의 해당 스탯 EV 를 +10(상한 이내로 클램프), 인벤토리 -1.
+    /// 본가처럼 상한에 걸려 더 올릴 여지가 없으면 소모하지 않고 false(먹여도 효과 없는 상태는 안 만든다).
+    @discardableResult
+    func useVitamin(_ kind: ItemKind, for monID: MonState.ID) -> Bool {
+        guard let keyPath = kind.vitaminStat, itemCount(kind) > 0,
+              let idx = state.party.firstIndex(where: { $0.id == monID }) else { return false }
+        let room = evRoom(for: state.party[idx].evs, stat: keyPath)
+        guard room > 0 else { return false }
+        state.party[idx].evs[keyPath: keyPath] += min(Vitamin.evGain, room)
+        state.inventory[kind.rawValue] = itemCount(kind) - 1
+        save()
+        return true
+    }
+
+    /// 이 스탯에 더 올릴 수 있는 EV — 스탯당 상한(252)과 6스탯 합계 상한(510) 중 더 빡빡한 쪽.
+    private func evRoom(for evs: StatSpread, stat keyPath: WritableKeyPath<StatSpread, Int>) -> Int {
+        let total = evs.hp + evs.attack + evs.defense + evs.specialAttack + evs.specialDefense + evs.speed
+        return min(Vitamin.evCapPerStat - evs[keyPath: keyPath], Vitamin.evCapTotal - total)
     }
 
     // MARK: 상점 (재화 = 사용한 토큰)
@@ -1052,6 +1109,23 @@ final class CompanionStore {
         roll % (charmOwned ? ShinyCharm.shinyDenominator : PokemonOdds.shinyDenominator) == 0
     }
 
+    /// IV 한 스탯 판정(순수) — 미리 뽑은 roll 값 % 32. (부수효과 없이 xctest)
+    nonisolated static func rollIV(_ roll: UInt64) -> Int { Int(roll % 32) }
+
+    /// 특성 후보 하나 확정 판정(순수) — 히든 특성은 일반 특성보다 덜 나오게 가중(일반 10 : 히든 1).
+    /// 실전 부화율에 대응하는 공식 수치는 없다(이 앱의 알은 애초에 창작 메커닉) — 다른 희귀템(이로치
+    /// 1/64 등)과 비슷한 결로 "흔하진 않다" 정도만 표현한다. (부수효과 없이 xctest)
+    nonisolated static func rollAbility(_ options: [PokemonAbility], roll: UInt64) -> String? {
+        guard !options.isEmpty else { return nil }
+        let weights = options.map { $0.isHidden ? 1 : 10 }
+        var idx = Int(roll % UInt64(weights.reduce(0, +)))
+        for (i, w) in weights.enumerated() {
+            if idx < w { return options[i].name }
+            idx -= w
+        }
+        return options.last?.name   // 도달하지 않음(가중 합만큼 롤) — 방어적 폴백
+    }
+
     /// 실제 부화 로직 — isHatching 락은 호출자(hatch / hatchIfNeeded)가 소유·해제한다.
     private func hatchCore(baseID: Int) async {
         let generation = activeGeneration
@@ -1093,12 +1167,23 @@ final class CompanionStore {
             dittoDisguise = line.baseID
         }
         let evolutionPlan = makeEvolutionPlan(from: line.tree, baseID: line.baseID)
+        // IV — 스탯당 0~31, 부화 시 1회 확정 후 평생 고정(EV 는 아이템으로만 오르므로 부화 시 항상 0).
+        // 기존 롤(shiny/nature/ditto/진화 분기 선택) 전부 뒤에 이어 붙인다 — 그 사이에 끼워 넣으면 seed 로
+        // 결과(성격·분기 경로 등)를 고정 검증하는 기존 테스트가 전부 어긋난다.
+        let ivs = StatSpread(hp: Self.rollIV(rng.next()), attack: Self.rollIV(rng.next()),
+                             defense: Self.rollIV(rng.next()), specialAttack: Self.rollIV(rng.next()),
+                             specialDefense: Self.rollIV(rng.next()), speed: Self.rollIV(rng.next()))
+        // 특성 — 종의 실제 특성 후보(pokemon-species 가 아니라 /pokemon/{id} 에만 있음)를 별도 fetch 해야
+        // 롤할 수 있다. line fetch 와 달리 이 fetch 가 실패해도 부화 자체는 막지 않는다 — 전투 전엔
+        // 장식 정보라(특성 미상 = nil) 부화 신뢰성을 이 fetch 에 묶을 이유가 없다.
+        let abilityOptions = (try? await provider.baseStats(speciesID: line.baseID))?.abilities ?? []
+        let ability = Self.rollAbility(abilityOptions, roll: rng.next())
         // 위장 중엔 이로치를 숨긴다 — 부화 알림·연출도 일반체로(정체는 리빌 때 공개).
         let showShiny = isShiny && dittoDisguise == nil
         activeGeneration += 1
         let newMon = MonState(baseID: line.baseID, pathIDs: [line.baseID], plannedPathIDs: evolutionPlan,
                               stageIndex: 0, usedAtStage: 0, rarity: line.rarity, totalForms: evolutionPlan.count,
-                              isShiny: isShiny, nature: nature, dittoDisguise: dittoDisguise,
+                              isShiny: isShiny, nature: nature, ability: ability, ivs: ivs, dittoDisguise: dittoDisguise,
                               acquiredAt: clock(), acquiredVia: .egg)
         state.party.append(newMon)
         state.trainingSlotID = newMon.id

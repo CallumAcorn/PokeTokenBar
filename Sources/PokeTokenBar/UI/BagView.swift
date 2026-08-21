@@ -70,11 +70,14 @@ private struct ItemCard: View {
     }
 
     /// 이 아이템을 지금 쓸 수 있나 (kind 별 — 사탕은 라인 로딩 필요, 민트는 활성 포켓몬만).
+    /// 비타민은 여기서 항상 false — 대상(먹일 포켓몬)을 골라야 해서 가방이 아니라 PC 상세 화면
+    /// (MonDetailView.vitaminsSection)에서 쓴다. 가방엔 그냥 보유 카드로만 보인다.
     private var canUse: Bool {
         switch kind {
         case .rareCandy: return store.canUseRareCandy
         case .mint:      return store.canUseMint
         case .shinyCharm: return false   // 보유형 — 사용 개념 없음(상시 효과)
+        case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return false
         }
     }
     /// 사용 컨트롤 효과 힌트 ("+XP" / "성격 랜덤 변경").
@@ -83,6 +86,7 @@ private struct ItemCard: View {
         case .rareCandy: return "+\(TokenFormatter.compact(RareCandy.xp)) XP"
         case .mint:      return l.mintEffectHint
         case .shinyCharm: return l.shinyCharmEffectHint
+        case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return ""
         }
     }
     private func performUse() {
@@ -90,6 +94,7 @@ private struct ItemCard: View {
         case .rareCandy: _ = store.useRareCandy()
         case .mint:      _ = store.useMint()
         case .shinyCharm: break   // 보유형 — 사용 동작 없음
+        case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: break   // PC 상세 화면에서만 사용
         }
     }
 
@@ -122,6 +127,8 @@ private struct ItemCard: View {
                         .buttonStyle(.bordered).controlSize(.small)
                 }
             }
+        } else if kind.vitaminStat != nil {
+            Text(l.useFromPcDetail).font(.caption2).foregroundStyle(.tertiary)
         } else {
             // 알(부화 전)/활성 없음/(사탕만)라인 미로딩 — 비활성 + 사유
             Text(store.isEgg ? l.useAfterHatch : l.useNeedsPokemon)

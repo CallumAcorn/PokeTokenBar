@@ -540,6 +540,42 @@ final class SaveTransferTests: XCTestCase {
         XCTAssertNil(cleaned.trainingSlotID, "아무도 안 가리키는 훈련 슬롯은 정리돼야 한다")
     }
 
+    /// [스탯 도입 후속] IV/EV 도 StatCalc.compute 의 `2*base + iv + ev/4` 산술에 그대로 들어간다 —
+    /// usedAtStage 와 같은 부류의 트랩 위험이라 같은 신뢰경계에서 막혀야 한다(딥리뷰 H2 부류 스윕).
+    /// 거래로 받은 개체도 같은 addTradedMon → sanitizedMon 경로를 타므로 이 테스트가 그쪽도 커버한다.
+    func testExtremeIVsAndEVsAreClampedAtTheTrustBoundary() throws {
+        let poisonedSpread = StatSpread(hp: Int.max, attack: Int.min, defense: Int.max,
+                                        specialAttack: Int.min, specialDefense: Int.max, speed: Int.min)
+        let evilMon = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1],
+                               stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1,
+                               ivs: poisonedSpread, evs: poisonedSpread)
+
+        let cleaned = SaveTransfer.sanitizedMon(evilMon)
+
+        let ivs = try XCTUnwrap(cleaned.ivs)
+        for v in [ivs.hp, ivs.attack, ivs.defense, ivs.specialAttack, ivs.specialDefense, ivs.speed] {
+            XCTAssertTrue((0...31).contains(v), "IV out of range: \(v)")
+        }
+        let evs = cleaned.evs
+        for v in [evs.hp, evs.attack, evs.defense, evs.specialAttack, evs.specialDefense, evs.speed] {
+            XCTAssertTrue((0...Vitamin.evCapPerStat).contains(v), "EV out of range: \(v)")
+        }
+
+        // 정규화된 값으로 실제 산술 경로(StatCalc.compute)를 태워 오버플로 트랩이 안 나는지 확인.
+        let base = BaseStats(hp: 100, attack: 100, defense: 100, specialAttack: 100, specialDefense: 100, speed: 100)
+        _ = StatCalc.compute(base: base, ivs: cleaned.effectiveIVs, evs: cleaned.evs, level: 100, nature: nil)
+
+        // 같은 극단값이 세이브 파일 전체 왕복(encode→decode)에서도 클램프되는지 확인.
+        var evil = CompanionState()
+        evil.party = [evilMon]
+        evil.trainingSlotID = evilMon.id
+        let data = try SaveTransfer.encode(state: evil, appVersion: "2.5.0", deviceName: "Corrupt", now: transferNow)
+        let roundTripped = try SaveTransfer.decode(data).state.party.first
+        let rtIVs = try XCTUnwrap(roundTripped?.ivs)
+        XCTAssertTrue((0...31).contains(rtIVs.attack))
+        XCTAssertTrue((0...Vitamin.evCapPerStat).contains(roundTripped?.evs.attack ?? -1))
+    }
+
     // MARK: 필드 부류 (딥리뷰 M-c·M-e·M-g)
 
     /// [딥리뷰 M-g] 이전 시 필드 분류가 산문 규약뿐이라, 새 필드가 추가되면 아무 판단 없이 "진행"으로

@@ -151,7 +151,17 @@ enum SaveTransfer {
         // totalForms feeds `kk * (kk + 1)` (PokemonBalance.phaseThreshold) — a large value is a trap by itself.
         m.totalForms = min(max(1, m.totalForms), 12)
         m.stageIndex = min(max(0, m.stageIndex), max(0, m.pathIDs.count - 1))
+        // IV/EV feed StatCalc.compute's `2*base + iv + ev/4` — same overflow-trap shape as usedAtStage,
+        // just with real games' own valid ranges as the clamp instead of maxTokenValue.
+        m.ivs = m.ivs.map { clampedSpread($0, to: 0...31) }
+        m.evs = clampedSpread(m.evs, to: 0...Vitamin.evCapPerStat)
         return m
+    }
+
+    private static func clampedSpread(_ s: StatSpread, to range: ClosedRange<Int>) -> StatSpread {
+        func c(_ v: Int) -> Int { min(max(range.lowerBound, v), range.upperBound) }
+        return StatSpread(hp: c(s.hp), attack: c(s.attack), defense: c(s.defense),
+                          specialAttack: c(s.specialAttack), specialDefense: c(s.specialDefense), speed: c(s.speed))
     }
 
     static func sanitized(_ state: CompanionState) -> CompanionState {

@@ -384,6 +384,42 @@ struct L {
     func pcLevel(_ n: Int) -> String { t("Lv.\(n)", "Lv.\(n)", "Lv.\(n)", "Nv.\(n)") }
     var pcSetTraining: String { t("훈련 대상으로 설정", "Set as training", "育成対象に設定", "Poner en entrenamiento") }
 
+    // MARK: 스탯
+    var pcStatsTitle: String { t("능력치", "Stats", "ステータス", "Estadísticas") }
+    var statHP: String { t("HP", "HP", "HP", "PS") }
+    var statAttack: String { t("공격", "Atk", "こうげき", "Ataq") }
+    var statDefense: String { t("방어", "Def", "ぼうぎょ", "Def") }
+    var statSpecialAttack: String { t("특공", "SpA", "とくこう", "AtEsp") }
+    var statSpecialDefense: String { t("특방", "SpD", "とくぼう", "DefEsp") }
+    var statSpeed: String { t("스피드", "Spe", "すばやさ", "Vel") }
+    /// 타입 표시명 — 본가 공식 번역(PokéAPI /type/{name} names 기준).
+    func typeName(_ type: PokemonType) -> String {
+        switch type {
+        case .normal:   return t("노말", "Normal", "ノーマル", "Normal")
+        case .fire:     return t("불꽃", "Fire", "ほのお", "Fuego")
+        case .water:    return t("물", "Water", "みず", "Agua")
+        case .electric: return t("전기", "Electric", "でんき", "Eléctrico")
+        case .grass:    return t("풀", "Grass", "くさ", "Planta")
+        case .ice:      return t("얼음", "Ice", "こおり", "Hielo")
+        case .fighting: return t("격투", "Fighting", "かくとう", "Lucha")
+        case .poison:   return t("독", "Poison", "どく", "Veneno")
+        case .ground:   return t("땅", "Ground", "じめん", "Tierra")
+        case .flying:   return t("비행", "Flying", "ひこう", "Volador")
+        case .psychic:  return t("에스퍼", "Psychic", "エスパー", "Psíquico")
+        case .bug:      return t("벌레", "Bug", "むし", "Bicho")
+        case .rock:     return t("바위", "Rock", "いわ", "Roca")
+        case .ghost:    return t("고스트", "Ghost", "ゴースト", "Fantasma")
+        case .dragon:   return t("드래곤", "Dragon", "ドラゴン", "Dragón")
+        case .dark:     return t("악", "Dark", "あく", "Siniestro")
+        case .steel:    return t("강철", "Steel", "はがね", "Acero")
+        case .fairy:    return t("페어리", "Fairy", "フェアリー", "Hada")
+        }
+    }
+    var pcVitaminsTitle: String { t("비타민 먹이기", "Feed a vitamin", "栄養ドリンクを与える", "Dar una vitamina") }
+    var pcIvEvTitle: String { t("개체값 · 노력치", "IVs & EVs", "個体値・努力値", "IVs y EVs") }
+    var ivLabel: String { t("개체값", "IV", "個体値", "IV") }
+    var evLabel: String { t("노력치", "EV", "努力値", "EV") }
+
     // MARK: 거래
     var tradeTitle: String { t("거래", "Trade", "交換", "Intercambio") }
     var tradePickOffer: String { t("보낼 포켓몬을 골라주세요", "Pick a Pokémon to offer", "送るポケモンを選んでください", "Elige un Pokémon para ofrecer") }
@@ -439,7 +475,11 @@ struct L {
     var pcSetFloating: String { t("플로팅 펫으로 추가", "Add as floating pet", "フローティングペットに追加", "Añadir como mascota flotante") }
     var pcUnsetFloating: String { t("플로팅 펫에서 제거", "Remove floating pet", "フローティングペットから削除", "Quitar mascota flotante") }
     /// 도감 총계는 개체가 아니라 종 수 — 로그의 dexTotal("총 N마리")과 단위가 다르다.
-    func dexSpeciesTotal(_ n: Int) -> String { t("\(n)종", "\(n) species", "\(n)種", "\(n) especies") }
+    /// n = 언락한 종 수, total = 이 앱이 지원하는 전체 종 수(PokemonAssets.animatedSpeciesIDs, 649 — 애니메이션
+    /// 스프라이트 상한). 진짜 도감처럼 "잡은/전체" 진행도를 보여준다.
+    func dexSpeciesTotal(_ n: Int, _ total: Int) -> String {
+        t("\(n)/\(total)종", "\(n)/\(total) species", "\(n)/\(total)種", "\(n)/\(total) especies")
+    }
     func dexPageLabel(_ page: Int, _ total: Int) -> String {
         t("\(total)페이지 중 \(page)페이지", "Page \(page) of \(total)", "\(total)ページ中 \(page)ページ", "Página \(page) de \(total)")
     }
@@ -453,6 +493,10 @@ struct L {
     var dexFilterHint: String { t("탭하면 이 희귀도만 보기 · 다시 탭하면 전체", "Tap to show only this rarity · tap again to clear", "タップでこの希少度のみ表示・再タップで全体", "Toca para ver solo esta rareza · toca de nuevo para ver todo") }
     /// 도감 칸의 ✨ 를 읽어주는 명사 — 이모지는 스크린리더가 일관되게 읽지 못한다.
     var dexShinyLabel: String { t("이로치", "Shiny", "色違い", "Variocolor") }
+    var dexNormalLabel: String { t("일반", "Normal", "通常色", "Normal") }
+    var dexShinyLocked: String { t("이 종의 이로치를 아직 못 잡았어요", "Haven't caught this species' shiny yet", "この種の色違いはまだ捕まえていません", "Aún no has capturado la variante variocolor de esta especie") }
+    var dexStatRangeTitle: String { t("능력치 범위 (Lv.100 기준)", "Stat range (at Lv.100)", "ステータス範囲（Lv.100基準）", "Rango de estadísticas (a Nv.100)") }
+    var dexAbilitiesTitle: String { t("가능한 특성", "Possible abilities", "とくせいの可能性", "Habilidades posibles") }
     func rarityLabel(_ r: Rarity) -> String {
         switch r {
         case .common:    return rarityCommon
@@ -583,6 +627,8 @@ struct L {
     }
     var useAfterHatch: String { t("부화 후 사용할 수 있어요", "Usable after hatching", "孵化後に使えます", "Se puede usar después de eclosionar") }
     var useNeedsPokemon: String { t("사용할 포켓몬이 없어요", "No Pokémon to use it on", "使えるポケモンがいません", "No hay ningún Pokémon en quien usarlo") }
+    /// 비타민은 대상(먹일 포켓몬)을 골라야 해서 가방이 아니라 PC 상세 화면에서 쓴다 — 가방 카드엔 이 안내만.
+    var useFromPcDetail: String { t("PC에서 포켓몬을 골라 먹여요", "Feed it from a Pokémon's PC detail screen", "PCでポケモンを選んで与えます", "Dáselo desde la pantalla de detalle de un Pokémon en el PC") }
 
     /// 아이템 표시명 — species 처럼 공식 현지명.
     func itemName(_ kind: ItemKind) -> String {
@@ -590,6 +636,14 @@ struct L {
         case .rareCandy: return t("이상한 사탕", "Rare Candy", "ふしぎなアメ", "Caramelo Raro")
         case .mint:      return t("민트", "Mint", "ミント", "Menta")
         case .shinyCharm: return t("이로치 부적", "Shiny Charm", "ひかるおまもり", "Amuleto Iris")
+        // 본가 공식 번역 명칭(PokéAPI /item/{name} names 기준) — species/move 처럼 하드코딩 없이 런타임
+        // 조회하고 싶지만, 상점/가방 텍스트는 이 앱에서 상수 6종뿐이라 다른 아이템과 같은 방식을 따른다.
+        case .hpUp:    return t("맥스업", "HP Up", "マックスアップ", "Más PS")
+        case .protein: return t("타우린", "Protein", "タウリン", "Proteína")
+        case .iron:    return t("사포닌", "Iron", "ブロムヘキシン", "Hierro")
+        case .calcium: return t("리보플라빈", "Calcium", "リゾチウム", "Calcio")
+        case .zinc:    return t("키토산", "Zinc", "キトサン", "Zinc")
+        case .carbos:  return t("알칼로이드", "Carbos", "インドメタシン", "Carburante")
         }
     }
     func itemDescription(_ kind: ItemKind) -> String {
@@ -610,6 +664,25 @@ struct L {
                      "While owned, raises the chance of hatching a shiny.",
                      "持っていると色違いが生まれる確率が上がります。",
                      "Mientras lo tengas, aumenta la probabilidad de que nazca un Pokémon variocolor.")
+        case .hpUp, .protein, .iron, .calcium, .zinc, .carbos:
+            let ev = Vitamin.evGain
+            let stat = vitaminStatName(kind)
+            return t("PC 상세 화면에서 원하는 포켓몬에게 먹여 \(stat) 노력치(EV)를 \(ev) 올려요.",
+                     "Feed it to any Pokémon from its PC detail screen to raise its \(stat) EVs by \(ev).",
+                     "PC詳細画面で好きなポケモンに与えて\(stat)の努力値(EV)を\(ev)上げます。",
+                     "Dáselo a un Pokémon desde su pantalla de detalle en el PC para subir sus EVs de \(stat) en \(ev).")
+        }
+    }
+    /// itemDescription 에서 쓰는 스탯 이름 — pcStats* 라벨(HP/공격/…)을 그대로 재사용.
+    private func vitaminStatName(_ kind: ItemKind) -> String {
+        switch kind {
+        case .hpUp: return statHP
+        case .protein: return statAttack
+        case .iron: return statDefense
+        case .calcium: return statSpecialAttack
+        case .zinc: return statSpecialDefense
+        case .carbos: return statSpeed
+        default: return ""
         }
     }
     /// 가방 사용 컨트롤의 효과 힌트 — 민트("성격 랜덤 변경", 사탕의 "+XP" 자리).

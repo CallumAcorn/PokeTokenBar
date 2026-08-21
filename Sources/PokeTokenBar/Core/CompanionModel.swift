@@ -129,11 +129,13 @@ enum PokemonBalance {
     }
 }
 
-/// 인벤토리 아이템 종류 — 확장 대비 enum(현재 이상한 사탕 1종). rawValue 로 CompanionState.inventory 에 저장.
+/// 인벤토리 아이템 종류 — rawValue 로 CompanionState.inventory 에 저장.
+/// 비타민 6종(hpUp/protein/iron/calcium/zinc/carbos) = 본가 EV 증가 아이템, 스탯 1개당 1종.
 enum ItemKind: String, Codable, Sendable, CaseIterable {
     case rareCandy
     case mint
     case shinyCharm
+    case hpUp, protein, iron, calcium, zinc, carbos
 
     /// PokéAPI 아이템 스프라이트 파일명(.../sprites/items/{name}.png). nil = 스프라이트 없음(이모지 폴백만).
     var spriteName: String? {
@@ -141,6 +143,12 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .rareCandy: return "rare-candy"
         case .mint: return nil   // PokéAPI 에 민트 스프라이트 없음(8세대 아이템) → 이모지 폴백
         case .shinyCharm: return "shiny-charm"
+        case .hpUp: return "hp-up"
+        case .protein: return "protein"
+        case .iron: return "iron"
+        case .calcium: return "calcium"
+        case .zinc: return "zinc"
+        case .carbos: return "carbos"
         }
     }
     /// 스프라이트 로딩 전/미제공/실패 시 폴백 이모지.
@@ -149,6 +157,7 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .rareCandy: return "🍬"
         case .mint: return "🌿"
         case .shinyCharm: return "✨"
+        case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return "💊"
         }
     }
     /// 상점 판매가(재화 = 사용한 토큰). nil = 상점 미판매.
@@ -157,15 +166,38 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .rareCandy: return RareCandy.price
         case .mint: return Mint.price
         case .shinyCharm: return ShinyCharm.price
+        case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return Vitamin.price
         }
     }
     /// 보유형(패시브) 아이템 — 소비하지 않고 보유하는 동안 상시 효과. 1회 구매(재구매 불가), 가방엔 "적용 중" 표시.
     var isPassive: Bool {
         switch self {
-        case .rareCandy, .mint: return false
+        case .rareCandy, .mint, .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return false
         case .shinyCharm: return true
         }
     }
+    /// 이 비타민이 올리는 EV 필드 — 비타민이 아니면 nil(useVitamin 이 이걸로 대상 여부도 판정).
+    var vitaminStat: WritableKeyPath<StatSpread, Int>? {
+        switch self {
+        case .hpUp: return \.hp
+        case .protein: return \.attack
+        case .iron: return \.defense
+        case .calcium: return \.specialAttack
+        case .zinc: return \.specialDefense
+        case .carbos: return \.speed
+        case .rareCandy, .mint, .shinyCharm: return nil
+        }
+    }
+}
+
+/// 비타민(EV 증가 아이템) 밸런스 상수 — 본가 규칙: 1개당 +10 EV, 스탯당 252·합계 510 상한.
+enum Vitamin {
+    static let evGain = 10
+    static let evCapPerStat = 252
+    static let evCapTotal = 510
+    /// 상점 구매가 — 사탕(500M)보다 훨씬 싸게: EV 는 사탕처럼 레벨을 올리지 않는 순수 코스메틱에
+    /// 가까운 전투 스탯 보정이라(이 앱엔 아직 전투가 없다) 가벼운 가격으로 둔다. 민트(100M)와 동급.
+    static let price = 100_000_000
 }
 
 /// 이상한 사탕 밸런스 상수.
@@ -354,6 +386,18 @@ struct EvoNode: Codable, Sendable {
         children.isEmpty ? [speciesID] : children.flatMap(\.finalIDs)
     }
 
+    /// self(뿌리)에서 target 까지의 조상 경로(뿌리→target 순서, target 포함). 없으면 nil.
+    /// 도감 종 개요(DexSpeciesDetailView)가 개체의 pathIDs 없이도 CompanionStore.lineItems 를
+    /// 재사용할 수 있게 해준다 — "이 종에 도달했다"는 도감 언락 자체가 그 경로 전체를 지나왔다는
+    /// 증거라(진화는 항상 앞으로만 가므로) 조상 구간을 전부 .done 취급해도 안전하다.
+    func pathToNode(_ target: Int) -> [Int]? {
+        if speciesID == target { return [speciesID] }
+        for c in children {
+            if let sub = c.pathToNode(target) { return [speciesID] + sub }
+        }
+        return nil
+    }
+
     /// 서비스에 GIF 에셋이 있는 종만 남긴 진화 트리. 지원하지 않는 종부터 그 하위 체인도 제외한다.
     func keepingAnimatedSprites() -> EvoNode? {
         guard PokemonAssets.hasAnimatedSprite(speciesID: speciesID) else { return nil }
@@ -403,13 +447,49 @@ struct EvoLine: Sendable {
     }
 }
 
-/// 성격 — 본가 25종. 부화 시 확정, 능력치 영향 없음(개체 아이덴티티 표시용).
+/// 능력치 5종 — HP 는 성격 보정을 받지 않아(본가 규칙) 이 열거형엔 없다.
+enum Stat: String, Codable, Sendable, CaseIterable {
+    case attack, defense, specialAttack, specialDefense, speed
+}
+
+/// 성격 — 본가 25종. 부화 시 확정. `Phase B`(stats.md)부터 실제 능력치 보정(±10%)을 갖는다 —
+/// 그전엔 개체 아이덴티티 표시용 코스메틱 필드였다.
 enum PokemonNature: String, Codable, Sendable, CaseIterable {
     case hardy, lonely, brave, adamant, naughty
     case bold, docile, relaxed, impish, lax
     case timid, hasty, serious, jolly, naive
     case modest, mild, quiet, bashful, rash
     case calm, gentle, sassy, careful, quirky
+
+    /// 오르는 능력치(+10%) — 중립 성격(하디/도사일/시리어스/배시풀/퀄키)은 nil.
+    var boostedStat: Stat? { modifiers.0 }
+    /// 내리는 능력치(-10%) — 중립 성격은 nil.
+    var loweredStat: Stat? { modifiers.1 }
+    private var modifiers: (Stat?, Stat?) {
+        switch self {
+        case .hardy, .docile, .serious, .bashful, .quirky: return (nil, nil)
+        case .lonely:  return (.attack, .defense)
+        case .brave:   return (.attack, .speed)
+        case .adamant: return (.attack, .specialAttack)
+        case .naughty: return (.attack, .specialDefense)
+        case .bold:    return (.defense, .attack)
+        case .relaxed: return (.defense, .speed)
+        case .impish:  return (.defense, .specialAttack)
+        case .lax:     return (.defense, .specialDefense)
+        case .timid:   return (.speed, .attack)
+        case .hasty:   return (.speed, .defense)
+        case .jolly:   return (.speed, .specialAttack)
+        case .naive:   return (.speed, .specialDefense)
+        case .modest:  return (.specialAttack, .attack)
+        case .mild:    return (.specialAttack, .defense)
+        case .quiet:   return (.specialAttack, .speed)
+        case .rash:    return (.specialAttack, .specialDefense)
+        case .calm:    return (.specialDefense, .attack)
+        case .gentle:  return (.specialDefense, .defense)
+        case .sassy:   return (.specialDefense, .speed)
+        case .careful: return (.specialDefense, .specialAttack)
+        }
+    }
 
     /// 본가 공식 번역 명칭 (ko/en/ja/es).
     func name(_ lang: AppLanguage) -> String {
@@ -445,6 +525,89 @@ enum PokemonNature: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// 능력치 6종 값 묶음 — IV(0~31, 부화 시 확정)와 EV(0~252, 소비 아이템으로 누적)에 재사용.
+struct StatSpread: Codable, Sendable, Equatable {
+    var hp = 0, attack = 0, defense = 0, specialAttack = 0, specialDefense = 0, speed = 0
+}
+
+/// 본가 3세대+ 실전 능력치 계산 — 기준치(PokéAPI base stat) + IV + EV + 레벨 + 성격 보정.
+enum StatCalc {
+    struct Computed: Sendable {
+        let hp, attack, defense, specialAttack, specialDefense, speed: Int
+    }
+
+    private static func core(_ base: Int, _ iv: Int, _ ev: Int, level: Int) -> Int {
+        (2 * base + iv + ev / 4) * level / 100
+    }
+
+    static func compute(base: BaseStats, ivs: StatSpread, evs: StatSpread, level: Int,
+                        nature: PokemonNature?) -> Computed {
+        func other(_ base: Int, _ iv: Int, _ ev: Int, _ stat: Stat) -> Int {
+            let raw = core(base, iv, ev, level: level) + 5
+            guard let nature else { return raw }
+            if nature.boostedStat == stat { return Int((Double(raw) * 1.1).rounded(.down)) }
+            if nature.loweredStat == stat { return Int((Double(raw) * 0.9).rounded(.down)) }
+            return raw
+        }
+        return Computed(
+            hp: core(base.hp, ivs.hp, evs.hp, level: level) + level + 10,
+            attack: other(base.attack, ivs.attack, evs.attack, .attack),
+            defense: other(base.defense, ivs.defense, evs.defense, .defense),
+            specialAttack: other(base.specialAttack, ivs.specialAttack, evs.specialAttack, .specialAttack),
+            specialDefense: other(base.specialDefense, ivs.specialDefense, evs.specialDefense, .specialDefense),
+            speed: other(base.speed, ivs.speed, evs.speed, .speed))
+    }
+
+    /// 이 스탯이 낼 수 있는 실전값의 최소~최대 — 레벨 100, IV/EV/성격 전부 최악 vs 최선일 때.
+    /// 도감 종 개요("이 종은 어디까지 나올 수 있나")용 — 이미 확정된 개체 하나의 값이 아니라 종 전체의
+    /// 잠재 범위를 보여주는 별개 질문이라 compute() 를 그대로 쓰지 않고 같은 core() 를 양 극단에 적용한다.
+    static func statRange(base: Int, level: Int = 100, isHP: Bool) -> (min: Int, max: Int) {
+        let worst = core(base, 0, 0, level: level) + (isHP ? level + 10 : 5)
+        let best = core(base, 31, 252, level: level) + (isHP ? level + 10 : 5)
+        guard !isHP else { return (worst, best) }
+        return (Int(Double(worst) * 0.9), Int((Double(best) * 1.1).rounded(.down)))
+    }
+
+    /// 구버전 저장(도입 전에 부화한 개체)용 결정적 대체값의 공통 기반 — 이미 완성된 시드 문자열을
+    /// 섞는다(namespace 는 호출부가 붙인다 — legacyIVs 는 원래 입력을 그대로 유지해 이미 화면에
+    /// 보이던 대체값이 이 리팩터로 바뀌지 않게 한다). Swift 기본 `Hasher`는 실행마다 시드가 달라
+    /// (해시 DoS 방지) 매번 다른 값이 나오므로 못 쓴다 — 여기선 고정 FNV-1a, 같은 입력은 항상 같은
+    /// 시드(재실행해도 안 바뀜).
+    private static func legacySeed(_ s: String) -> UInt64 {
+        var seed: UInt64 = 0xcbf2_9ce4_8422_2325
+        for b in s.utf8 { seed = (seed ^ UInt64(b)) &* 0x0000_0100_0000_01b3 }
+        return seed
+    }
+    /// splitmix64 한 걸음 — seed 를 전진시키고 그 걸음의 값을 낸다(연속 호출하면 서로 다른 값이 나온다).
+    private static func legacyDraw(_ seed: inout UInt64) -> UInt64 {
+        seed = seed &+ 0x9E37_79B9_7F4A_7C15
+        var z = seed
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
+
+    /// 구버전 저장(IV 도입 전에 부화한 개체)용 대체 IV — 부화 시 굴리는 진짜 IV 롤
+    /// (CompanionStore.hatchCore)과 별개 경로라 rng 시퀀스에 관여하지 않는다 — 기존 개체를 다시
+    /// 세이브에 쓰는 마이그레이션이 필요 없다(그때그때 계산).
+    static func legacyIVs(monID: String) -> StatSpread {
+        var seed = legacySeed(monID)
+        func draw() -> Int { Int(legacyDraw(&seed) % 32) }
+        return StatSpread(hp: draw(), attack: draw(), defense: draw(), specialAttack: draw(),
+                          specialDefense: draw(), speed: draw())
+    }
+
+    /// 구버전 저장(특성 도입 전에 부화한 개체)용 대체 특성 — legacyIVs 와 같은 결정적 해시(다른
+    /// namespace 라 같은 개체라도 IV 대체값과는 무관한 값이 나온다), 종의 실제 특성 후보
+    /// (candidates, 부화 시 실제로 굴리는 것과 같은 목록) 중 하나를 고른다. candidates 가 비면
+    /// (baseStats 미로딩/조회 실패) nil — 로딩되면 화면이 다시 그려 채워진다.
+    static func legacyAbility(monID: String, candidates: [PokemonAbility]) -> String? {
+        guard !candidates.isEmpty else { return nil }
+        var seed = legacySeed(monID + "-ability")
+        return candidates[Int(legacyDraw(&seed) % UInt64(candidates.count))].name
+    }
+}
+
 /// 게임 밸런스 — 개체 롤 확률.
 enum PokemonOdds {
     /// 색이 다른 포켓몬(shiny) 부화 확률 분모 — 1/64 (본가 1/4096 은 데스크톱 앱 규모에선 평생 못 봄).
@@ -473,6 +636,14 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     var totalForms: Int
     var isShiny = false             // 부화 시 확정, 진화해도 유지
     var nature: PokemonNature?      // 부화 시 확정 (구버전 저장은 nil)
+    /// 특성 슬러그(PokéAPI, 예: "static") — 부화 시 그 종의 실제 특성 후보에서 확정 롤, 평생 고정.
+    /// nature 와 같은 처리(구버전 저장/도입 전 부화 개체는 nil) — 대체 롤 없이 그냥 "미상"으로 둔다.
+    var ability: String?
+    /// 개체값(IV, 스탯당 0~31) — 부화 시 확정, 평생 고정. IV 도입 전 부화 개체는 nil — `effectiveIVs`
+    /// 가 `StatCalc.legacyIVs(monID:)`로 대체한다(세이브 마이그레이션 없이 그때그때 계산).
+    var ivs: StatSpread?
+    /// 노력치(EV, 스탯당 0~252) — 아이템(비타민)으로 누적, 부화 시 전부 0.
+    var evs = StatSpread()
     // 메타몽 위장 — nil=일반. 값=정체 메타몽, 이 종으로 위장 중(위장 구간엔 baseID 와 동일, 리빌 후에도 원 위장체 보존).
     var dittoDisguise: Int?
     var dittoRevealed = false       // 위장 → 리빌(정체 공개) 전환 여부
@@ -489,10 +660,20 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     var currentID: Int { pathIDs.isEmpty ? baseID : pathIDs[min(stageIndex, pathIDs.count - 1)] }
     /// 표시 전용 레벨(Lv.1~100) — PokemonBalance.level 참고.
     var level: Int { PokemonBalance.level(rarity: rarity, totalForms: totalForms, stageIndex: stageIndex, usedAtStage: usedAtStage) }
+    /// 화면/계산에 실제로 쓸 IV — 진짜 부화 롤(ivs)이 있으면 그것, 없으면(구버전 개체) id 로 결정적 대체.
+    var effectiveIVs: StatSpread { ivs ?? StatCalc.legacyIVs(monID: id) }
+    /// 화면에 실제로 보여줄 특성 — 진짜 부화 롤(ability)이 있으면 그것, 없으면(특성 도입 전 개체)
+    /// 종의 실제 특성 후보에서 id 로 결정적 대체. candidates 는 호출부가 이미 들고 있는
+    /// baseStats.abilities(그 종의 진짜 후보 목록)를 그대로 넘긴다 — effectiveIVs 와 달리 이건
+    /// 종 데이터가 있어야 뽑을 수 있어 MonState 혼자서는 계산 못 한다(파라미터로 받는 이유).
+    func effectiveAbility(candidates: [PokemonAbility]) -> String? {
+        ability ?? StatCalc.legacyAbility(monID: id, candidates: candidates)
+    }
 
     init(id: String = UUID().uuidString, baseID: Int, pathIDs: [Int], plannedPathIDs: [Int]? = nil,
          stageIndex: Int, usedAtStage: Int, rarity: Rarity, totalForms: Int, isShiny: Bool = false,
-         nature: PokemonNature? = nil, dittoDisguise: Int? = nil, dittoRevealed: Bool = false,
+         nature: PokemonNature? = nil, ability: String? = nil, ivs: StatSpread? = nil, evs: StatSpread = StatSpread(),
+         dittoDisguise: Int? = nil, dittoRevealed: Bool = false,
          acquiredAt: Date = Date(), acquiredVia: AcquisitionSource = .egg, evolutionLocked: Bool = false,
          isFloating: Bool = false) {
         self.id = id
@@ -509,6 +690,9 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         self.totalForms = totalForms
         self.isShiny = isShiny
         self.nature = nature
+        self.ability = ability
+        self.ivs = ivs
+        self.evs = evs
         self.dittoDisguise = dittoDisguise
         self.dittoRevealed = dittoRevealed
         self.acquiredAt = acquiredAt
@@ -539,6 +723,10 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         totalForms = try c.decode(Int.self, forKey: .totalForms)
         isShiny = try c.decodeIfPresent(Bool.self, forKey: .isShiny) ?? false
         nature = try c.decodeIfPresent(PokemonNature.self, forKey: .nature)
+        ability = try c.decodeIfPresent(String.self, forKey: .ability)
+        // 구버전(IV/EV 도입 전) 저장은 둘 다 없음 — ivs는 nil 유지(effectiveIVs가 대체), evs는 0이 정답.
+        ivs = try c.decodeIfPresent(StatSpread.self, forKey: .ivs)
+        evs = try c.decodeIfPresent(StatSpread.self, forKey: .evs) ?? StatSpread()
         dittoDisguise = try c.decodeIfPresent(Int.self, forKey: .dittoDisguise)
         dittoRevealed = try c.decodeIfPresent(Bool.self, forKey: .dittoRevealed) ?? false
         acquiredAt = (try? c.decodeIfPresent(Date.self, forKey: .acquiredAt)) ?? Date()

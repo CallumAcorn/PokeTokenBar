@@ -6,6 +6,33 @@ struct BaseSpecies: Sendable, Codable {
     let captureRate: Int    // 3(뮤츠급)~255(캐터피급), 공식 희귀도 신호
 }
 
+/// 포켓몬 타입 18종 — rawValue 는 PokéAPI `type.name` 그대로(예: "fire"), 디코드에 그대로 재사용.
+enum PokemonType: String, Sendable, Codable, CaseIterable {
+    case normal, fire, water, electric, grass, ice, fighting, poison, ground
+    case flying, psychic, bug, rock, ghost, dragon, dark, steel, fairy
+}
+
+/// 특성 후보 하나 — name 은 PokéAPI 슬러그(예: "static"), 표시명은 별도(`abilityNames`)로 조회한다.
+/// 특성은 300종이 넘어 타입처럼 닫힌 enum 으로 못 두고, rawValue 도 다국어 이름이 아니라 슬러그다.
+struct PokemonAbility: Sendable, Codable, Equatable {
+    let name: String
+    let isHidden: Bool
+}
+
+/// 기준 능력치 + 타입 + 특성 후보 + 신체 치수 — 전부 `/pokemon/{id}` 응답 1건에서 온다
+/// (`pokemon-species` 에는 없음).
+struct BaseStats: Sendable, Codable, Equatable {
+    let hp, attack, defense, specialAttack, specialDefense, speed: Int
+    /// 1~2개, 주 타입이 먼저(PokéAPI slot 오름차순).
+    var types: [PokemonType] = []
+    /// 이 종이 가질 수 있는 특성 후보(일반 + 히든), slot 오름차순. 부화 시 이 중 하나를 확정 롤한다.
+    var abilities: [PokemonAbility] = []
+    /// 미터 — PokéAPI 는 decimeter(예: 4 → 0.4m) 로 주므로 actor 에서 미리 환산해둔다.
+    var heightM: Double = 0
+    /// 킬로그램 — PokéAPI 는 hectogram(예: 60 → 6.0kg) 으로 주므로 actor 에서 미리 환산해둔다.
+    var weightKg: Double = 0
+}
+
 /// 포켓몬 라인 데이터 제공(주입 가능 — 테스트는 스텁 사용).
 protocol PokeProviding: Sendable {
     func line(baseSpeciesID: Int) async throws -> EvoLine
@@ -14,6 +41,25 @@ protocol PokeProviding: Sendable {
     /// 단일 종이 base(진화 시작점)면 BaseSpecies, 아니면 nil.
     /// GraphQL 인덱스 엔드포인트 장애 시 REST(pokemon-species)로 부화 후보를 뽑는 폴백용.
     func baseSpecies(id: Int) async throws -> BaseSpecies?
+    /// 종/폼의 기준 능력치 — PC 상세 화면 스탯 표시 전용, 부화·진화 로직과 무관.
+    func baseStats(speciesID: Int) async throws -> BaseStats
+    /// 특성 슬러그(예: "static")의 다국어 표시명(langCode → name). PC 상세 화면·부화 결과 표시 전용.
+    func abilityNames(slug: String) async throws -> [String: String]
+    /// 도감 설명(langCode → text) — `pokemon-species` 의 flavor_text_entries, 게임판마다 여러 개라
+    /// 언어당 하나만(가장 최근 판) 골라 반환한다. 도감 종 개요 화면 전용.
+    func flavorText(speciesID: Int) async throws -> [String: String]
+    /// 분류(langCode → text, 예: "Mouse Pokémon") — `pokemon-species` 의 genera. 도감 종 개요 화면 전용.
+    func genus(speciesID: Int) async throws -> [String: String]
+}
+
+/// 스탯/특성/설명/분류 표시를 지원하지 않는 provider(대부분의 기존 테스트 스텁)의 기본값 — 호출부는
+/// 옵셔널로 받아 실패를 조용히 흡수한다(CompanionStore.baseStats/abilityName/flavorText/genus). 실
+/// 클라이언트는 아래에서 override.
+extension PokeProviding {
+    func baseStats(speciesID: Int) async throws -> BaseStats { throw URLError(.unsupportedURL) }
+    func abilityNames(slug: String) async throws -> [String: String] { throw URLError(.unsupportedURL) }
+    func flavorText(speciesID: Int) async throws -> [String: String] { throw URLError(.unsupportedURL) }
+    func genus(speciesID: Int) async throws -> [String: String] { throw URLError(.unsupportedURL) }
 }
 
 /// PokéAPI 클라이언트 — 종/진화체인을 런타임 fetch + 파싱. 포켓몬 데이터는 레포에 번들하지 않는다.
@@ -24,6 +70,44 @@ actor PokeAPIClient: PokeProviding {
     private let langCodes = ["ko", "en", "ja-Hrkt", "ja", "es"]
     private var speciesCache: [Int: SpeciesDTO] = [:]
     private var lineCache: [Int: EvoLine] = [:]   // 프리패칭 → 부화 순간 네트워크 0
+    private var statsCache: [Int: BaseStats] = [:]
+    private var abilityNamesCache: [String: [String: String]] = [:]
+
+    /// 종/폼의 기준 능력치 + 타입 + 특성 후보(`/pokemon/{id}`) — `pokemon-species`와 별개 엔드포인트라 자체 캐시.
+    func baseStats(speciesID id: Int) async throws -> BaseStats {
+        if let cached = statsCache[id] { return cached }
+        let dto: PokemonDTO = try await get(base.appendingPathComponent("pokemon/\(id)"))
+        var byName: [String: Int] = [:]
+        for entry in dto.stats { byName[entry.stat.name] = entry.base_stat }
+        let types = dto.types.sorted { $0.slot < $1.slot }.compactMap { PokemonType(rawValue: $0.type.name) }
+        let abilities = dto.abilities.sorted { $0.slot < $1.slot }
+            .map { PokemonAbility(name: $0.ability.name, isHidden: $0.is_hidden) }
+        let stats = BaseStats(hp: byName["hp"] ?? 0, attack: byName["attack"] ?? 0,
+                              defense: byName["defense"] ?? 0, specialAttack: byName["special-attack"] ?? 0,
+                              specialDefense: byName["special-defense"] ?? 0, speed: byName["speed"] ?? 0,
+                              types: types, abilities: abilities,
+                              heightM: Double(dto.height) / 10, weightKg: Double(dto.weight) / 10)
+        statsCache[id] = stats
+        return stats
+    }
+
+    /// 분류(`/pokemon-species/{id}` 의 genera) — flavorText 와 같은 응답이라 캐시 히트면 네트워크 0.
+    func genus(speciesID id: Int) async throws -> [String: String] {
+        let sp = try await species(id)
+        var byLang: [String: String] = [:]
+        for g in sp.genera where langCodes.contains(g.language.name) { byLang[g.language.name] = g.genus }
+        return byLang
+    }
+
+    /// 특성 슬러그의 다국어 표시명(`/ability/{slug}`) — species 이름과 같은 패턴(런타임 조회 + 캐시).
+    func abilityNames(slug: String) async throws -> [String: String] {
+        if let cached = abilityNamesCache[slug] { return cached }
+        let dto: AbilityDTO = try await get(base.appendingPathComponent("ability/\(slug)"))
+        var byLang: [String: String] = [:]
+        for n in dto.names where langCodes.contains(n.language.name) { byLang[n.language.name] = n.name }
+        abilityNamesCache[slug] = byLang
+        return byLang
+    }
 
     func line(baseSpeciesID: Int) async throws -> EvoLine {
         if let cached = lineCache[baseSpeciesID] { return cached }
@@ -165,6 +249,27 @@ actor PokeAPIClient: PokeProviding {
         return dto
     }
 
+    /// pokemon-species 는 line(baseSpeciesID:) 가 라인 조회 때 이미 캐시해뒀을 수 있다 —
+    /// species(_:) 를 그대로 재사용하므로 그 경우 추가 네트워크 없이 즉시 반환된다.
+    func flavorText(speciesID id: Int) async throws -> [String: String] {
+        let sp = try await species(id)
+        var byLang: [String: String] = [:]
+        // 언어당 마지막 항목(대체로 더 최근 게임판) 사용 — 게임판별 표기 차이는 여기선 무시한다.
+        for e in sp.flavor_text_entries where langCodes.contains(e.language.name) {
+            byLang[e.language.name] = Self.cleanedFlavorText(e.flavor_text)
+        }
+        return byLang
+    }
+
+    /// PokéAPI 도감 설명은 옛 게임 텍스트박스 줄바꿈(\n)·페이지 넘김(\u{0C})·연철 하이픈(\u{AD})이
+    /// 그대로 남아있다 — 한 줄 문장으로 정리한다.
+    static func cleanedFlavorText(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "\u{AD}", with: "")
+            .replacingOccurrences(of: "\u{0C}", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// REST 폴백 — 단일 종 상세(pokemon-species/{id})로 base 여부·capture_rate 판정.
     /// GraphQL base 인덱스가 죽어도 REST(pokeapi.co/api/v2)는 별개 엔드포인트라 동작한다.
     func baseSpecies(id: Int) async throws -> BaseSpecies? {
@@ -210,7 +315,22 @@ struct SpeciesDTO: Decodable, Sendable {
     let names: [NameDTO]
     let evolution_chain: URLRef
     let evolves_from_species: NamedRef?   // nil = 진화라인 시작점(base)
+    let flavor_text_entries: [FlavorTextEntryDTO]
+    let genera: [GenusEntryDTO]
 }
+struct FlavorTextEntryDTO: Decodable, Sendable { let flavor_text: String; let language: NamedRef }
+struct GenusEntryDTO: Decodable, Sendable { let genus: String; let language: NamedRef }
+struct PokemonDTO: Decodable, Sendable {
+    let height: Int   // decimeter
+    let weight: Int   // hectogram
+    let stats: [StatEntryDTO]
+    let types: [TypeEntryDTO]
+    let abilities: [AbilityEntryDTO]
+}
+struct StatEntryDTO: Decodable, Sendable { let base_stat: Int; let stat: NamedRef }
+struct TypeEntryDTO: Decodable, Sendable { let slot: Int; let type: NamedRef }
+struct AbilityEntryDTO: Decodable, Sendable { let slot: Int; let is_hidden: Bool; let ability: NamedRef }
+struct AbilityDTO: Decodable, Sendable { let names: [NameDTO] }
 struct NameDTO: Decodable, Sendable { let name: String; let language: NamedRef }
 struct NamedRef: Decodable, Sendable { let name: String; let url: String? }
 struct URLRef: Decodable, Sendable { let url: String }
