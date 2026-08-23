@@ -47,12 +47,23 @@ struct TradeView: View {
         confirmingLink = link
     }
 
-    /// A 401 only ever means "this deployment/URL isn't answering as expected" (wrong host, or a
-    /// protected preview URL) — never a trade-flow bug, so it gets its own actionable copy instead
-    /// of the generic failure message.
+    /// Maps the status codes the server actually documents (see PokeTokenBarOnline's /docs) to
+    /// localized copy; anything else (network errors, decoding, unexpected codes) falls back to the
+    /// generic title — better than dumping a raw Swift enum on someone who's not a developer.
     private func friendlyMessage(for error: TradeClient.TradeError) -> String {
-        if case .server(status: 401) = error { return l.tradeAuthErrorMessage }
-        return "\(l.tradeFailedTitle): \(String(describing: error))"
+        switch error {
+        case .server(status: 401): return l.tradeAuthErrorMessage
+        case .server(status: 400): return l.tradeInvalidOfferMessage
+        case .server(status: 403): return l.tradeNotParticipantMessage
+        case .server(status: 409): return l.tradeConflictMessage
+        default: return "\(l.tradeFailedTitle): \(String(describing: error))"
+        }
+    }
+
+    /// Mirrors the server's own offer validation (trades.ts: non-empty, ≤60 chars) so a missing
+    /// display name is caught here instead of round-tripping to a 400.
+    private var hasValidDisplayName: Bool {
+        (1...60).contains(online.displayName.trimmingCharacters(in: .whitespacesAndNewlines).count)
     }
 
     private func sameServer(_ a: String, _ b: String) -> Bool {
@@ -104,6 +115,9 @@ struct TradeView: View {
             } else {
                 pasteInviteRow
             }
+            if !hasValidDisplayName {
+                Text(l.tradeDisplayNameRequired).font(.caption2).foregroundStyle(.orange)
+            }
             Text(l.tradePickOffer).font(.caption).foregroundStyle(.secondary)
             if candidates.isEmpty {
                 Text(l.tradeNoBenchedMons).font(.caption2).foregroundStyle(.tertiary)
@@ -134,7 +148,7 @@ struct TradeView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(selectedMonID == nil)
+                .disabled(selectedMonID == nil || !hasValidDisplayName)
             }
         }
     }

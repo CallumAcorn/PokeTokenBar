@@ -196,9 +196,8 @@ final class TradeStore {
                 break   // "open" — still waiting for a join, nothing to do yet
             }
         } catch TradeClient.TradeError.server(status: 404) {
-            phase = .expired
             releaseReservation()
-            pollTask?.cancel()
+            fail(.server(status: 404))
         } catch TradeClient.TradeError.server(status: 401) {
             // A 401 is never transient — the server is unreachable as configured (wrong URL, or a
             // deployment behind an auth wall) and will keep rejecting every poll, so don't let this
@@ -228,10 +227,16 @@ final class TradeStore {
 
     /// Puts up the failure screen, then automatically returns to the offer picker (same as tapping
     /// "Try again") after a beat — a stuck dead-end screen just makes someone quit and re-open the
-    /// popover, which does the same reset anyway.
+    /// popover, which does the same reset anyway. A 404 always means the session is gone (expired or
+    /// never existed) regardless of which call surfaced it — create/join/confirm/poll all route
+    /// through here so that's handled in one place instead of once per call site.
     private func fail(_ error: TradeClient.TradeError) {
         pollTask?.cancel()
         pollTask = nil
+        if case .server(status: 404) = error {
+            phase = .expired
+            return
+        }
         phase = .failed(error)
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_500_000_000)

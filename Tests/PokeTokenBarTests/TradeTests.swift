@@ -264,6 +264,20 @@ final class TradeStoreFailureTests: XCTestCase {
         let returnedToIdle = await waitUntil { trade.phase == .idle }
         XCTAssertTrue(returnedToIdle, "a failed trade must not be a dead end requiring a manual tap")
     }
+
+    /// [Regression] A 404 from create/join/confirm (session deleted or never existed) used to land on
+    /// the generic failure screen there, even though polling already treats the same status as
+    /// .expired. Both paths must agree — it's the same condition regardless of which call surfaced it.
+    func testJoinTradeWith404SurfacesExpiredNotGenericFailure() async {
+        StubURLProtocol.statusCode = 404
+        StubURLProtocol.body = Data(#"{"error":"not found"}"#.utf8)
+        let (trade, offered) = makeStores()
+
+        await trade.joinTrade(sessionId: "gone", server: "https://mock.test", offering: offered)
+
+        XCTAssertEqual(trade.phase, .expired)
+        XCTAssertFalse(trade.reservedMonIDs.contains(offered.id))
+    }
 }
 
 // MARK: SaveTransfer.sanitizedMon

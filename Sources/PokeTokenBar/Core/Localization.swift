@@ -466,6 +466,24 @@ struct L {
     var tradeInvalidInviteLink: String {
         t("유효한 거래 링크가 아니에요", "That's not a valid trade link", "有効な交換リンクではありません", "Ese no es un enlace de intercambio válido")
     }
+    var tradeDisplayNameRequired: String {
+        t("설정에서 표시 이름(1~60자)을 먼저 설정해주세요", "Set a display name (1–60 characters) in Settings first",
+          "先に設定で表示名（1〜60文字）を設定してください", "Primero configura un nombre para mostrar (1–60 caracteres) en Ajustes")
+    }
+    var tradeInvalidOfferMessage: String {
+        t("제안이 유효하지 않아요 — 설정에서 표시 이름(1~60자)을 확인해주세요.",
+          "That offer wasn't valid — check your display name in Settings (1–60 characters).",
+          "オファーが無効です — 設定で表示名（1〜60文字）を確認してください。",
+          "Esa oferta no era válida: comprueba tu nombre para mostrar en Ajustes (1–60 caracteres).")
+    }
+    var tradeNotParticipantMessage: String {
+        t("더 이상 이 거래에 참여하고 있지 않아요.", "You're not part of this trade anymore.",
+          "このトレードにはもう参加していません。", "Ya no formas parte de este intercambio.")
+    }
+    var tradeConflictMessage: String {
+        t("이 거래는 이미 진행됐어요 — 새로 시작해주세요.", "This trade already moved on — try starting a new one.",
+          "この交換はすでに進行しています — 新しく始めてください。", "Este intercambio ya avanzó — intenta empezar uno nuevo.")
+    }
 
     // MARK: Evolution lock
     var evolutionLockedHelp: String { t("진화 잠김 — 탭하면 해제(경험치는 계속 쌓여요)", "Evolution locked — tap to unlock (still earns XP)", "進化ロック中 — タップで解除（経験値は引き続き貯まります）", "Evolución bloqueada — toca para desbloquear (sigue ganando XP)") }
