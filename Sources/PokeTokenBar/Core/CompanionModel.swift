@@ -856,6 +856,15 @@ struct CompanionState: Codable, Sendable {
     // PC — 소유한 모든 포켓몬. 훈련 중(토큰 사용량을 받는) 개체는 trainingSlotID 로 가리킨다.
     var party: [MonState] = []
     var trainingSlotID: String?
+    /// 메뉴바에 고정한 대표 종. nil = 훈련 중인 포켓몬(없으면 알)을 그대로 따라간다.
+    ///
+    /// 종 단위 선택이라 성격 같은 개체 정보는 들지 않는다. 고를 수 있는 범위는 도감과 같고
+    /// (`dexUnlocked`), 그 범위에서 빠지면 `reconcileRepresentativeSelection` 이 nil 로 되돌린다.
+    ///
+    /// 업스트림(#158)은 이 선택을 메뉴바와 플로팅 펫 양쪽에 적용했다. 여기서는 **메뉴바에만**
+    /// 적용한다 — 이 포크의 플로팅 펫은 파티 개체별 `isFloating` 토글이라 "어떤 개체를 띄울지"를
+    /// 사용자가 이미 개체 단위로 고르고 있고, 거기에 종 단위 고정을 겹치면 두 선택이 서로를 덮는다.
+    var representativeSpeciesID: Int?
     // 포획 로그 — 개체가 파티에 합류한 시점(알/거래) 1행. dexEntriesSorted 가 시각순으로 보여준다.
     var dex: [DexEntry] = []
     // 도감(종 단위) 영구 언락 — 한 번 도달한 종은 그 개체를 나중에 잃어도(거래) 지워지지 않는다.
@@ -904,6 +913,7 @@ struct CompanionState: Codable, Sendable {
             party          = c.lenient([Lossy<MonState>].self, forKey: .party, default: []).compactMap(\.value)
             trainingSlotID = c.lenientOptional(String.self, forKey: .trainingSlotID)
             dexUnlocked    = c.lenient([Int: DexUnlock].self, forKey: .dexUnlocked, default: [:])
+            representativeSpeciesID = c.lenientOptional(Int.self, forKey: .representativeSpeciesID)
         } else {
             // 구버전 세이브 — 단일 active 를 party 의 첫 원소로 승격하고, 기존 dex(졸업 기록) +
             // active 의 도달분을 접어 dexUnlocked 를 1회성으로 재구성한다(최선 근사 — 실제 합류
@@ -954,6 +964,21 @@ struct CompanionState: Codable, Sendable {
             }
         }
         return out
+    }
+
+    /// 이 종을 보유했는가 — 대표 종 선택 범위. `dexUnlocked` 가 이미 종 단위 영구 언락 맵이라
+    /// 업스트림처럼 도감과 현재 개체를 훑을 필요가 없다(같은 판정, 한 번의 조회).
+    func ownsSpecies(_ speciesID: Int) -> Bool { dexUnlocked[speciesID] != nil }
+
+    /// 보유한 종의 이로치 여부. 위장 중인 메타몽은 `unlockSpecies` 가 리빌 전까지 shiny 를 올리지
+    /// 않으므로 여기서 따로 가릴 필요가 없다.
+    func ownsShinySpecies(_ speciesID: Int) -> Bool { dexUnlocked[speciesID]?.isShiny == true }
+
+    /// 대표 종은 실제로 보유한 종만 가리킨다. 손편집 세이브·거래로 빠져나간 종이 메뉴바에
+    /// 유령으로 남지 않게 로드/불러오기마다 정리한다.
+    mutating func reconcileRepresentativeSelection() {
+        guard let selected = representativeSpeciesID else { return }
+        if !ownsSpecies(selected) { representativeSpeciesID = nil }
     }
 
     /// `dexUnlocked` 를 `dex`(포획 로그)·`party` 에서 다시 접어 **빠진 항목만** 채운다(있는 항목은

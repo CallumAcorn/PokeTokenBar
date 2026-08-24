@@ -35,6 +35,13 @@ struct SettingsView: View {
 
     private var isBundledApp: Bool { AppEnv.isBundledApp }
 
+    /// 고정된 종 이름(없으면 안내). 이름이 아직 없는 구버전 졸업분은 도감 번호로 떨어진다.
+    private var representativeSubtitle: String {
+        guard let id = companion.representativeSpeciesID else { return l.representativeNone }
+        let name = companion.dexSpecies.first(where: { $0.id == id })?.name ?? "#\(id)"
+        return l.representativePinned(name)
+    }
+
     /// 세이브 봉투에 남길 출처 표기 — 어느 Mac에서 내보낸 파일인지 나중에 알아보기 위한 것.
     private static var deviceName: String {
         Host.current().localizedName ?? ProcessInfo.processInfo.hostName
@@ -432,6 +439,20 @@ struct SettingsView: View {
                     Spacer()
                     Toggle("", isOn: $store.disableKeychainAccess)
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                Divider()
+                groupRow {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(l.representativeTitle)
+                        // 고정은 도감에서 하지만 해제는 여기서도 가능해야 한다 — 고정해 둔 종을
+                        // 다시 찾아 들어가야만 풀 수 있으면 되돌리기가 숨은 기능이 된다.
+                        Text(representativeSubtitle).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    if companion.representativeSpeciesID != nil {
+                        Button(l.representativeUnpin) { companion.clearRepresentative() }
+                            .controlSize(.small)
+                    }
                 }
                 Divider()
                 groupRow {

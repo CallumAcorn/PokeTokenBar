@@ -637,9 +637,12 @@ final class SaveTransferTests: XCTestCase {
         // eggTier(알 등급 보증) = 진행 — 산 물건이지 이 기기의 장부가 아니라 기기를 옮겨도 따라간다.
         // eggRegion(지역 필터) 도 같은 부류 — 상시 선호도지만 "이 기기에서 보는 방식"(language)이
         // 아니라 플레이어의 선택이라 계정/진행을 따라간다(새 기기에서 다시 고르게 하지 않는다).
+        // representativeSpeciesID is progress, matching upstream (#158): it names a species you own,
+        // and ownership travels with the save. sanitized() reconciles it after backfilling
+        // dexUnlocked, so a hand-edited save cannot import a pin for a species the state lacks.
         let progress: Set<String> = ["usedSinceInstall", "spentTokens", "eggUsage", "eggTier", "eggRegion",
                                      "pendingHatchID", "party", "trainingSlotID", "dexUnlocked",
-                                     "dex", "collectedFinals", "inventory"]
+                                     "dex", "collectedFinals", "inventory", "representativeSpeciesID"]
         let deviceLedger: Set<String> = ["installBaselineSet", "claimedTodayTokensByProvider", "lastDate"]
         let accountLedger: Set<String> = ["candyGrantTier", "candyFeatureSeeded"]
         let devicePreference: Set<String> = ["language"]

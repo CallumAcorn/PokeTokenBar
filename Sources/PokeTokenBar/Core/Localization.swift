@@ -184,6 +184,15 @@ struct L {
     var calibrationLogging: String { t("보정 로그 기록", "Record calibration log", "キャリブレーションログを記録", "Registrar log de calibración") }
     var calibrationLoggingHint: String { t("한도 %와 토큰 수를 같이 남겨, Claude Code 밖(웹·디자인·코워크) 사용량을 토큰으로 환산할 수 있는지 조사합니다. 화면에 이미 있는 값만 로컬 파일에 적고 계정 식별자는 남기지 않습니다", "Records limit % alongside token counts, to study whether non-Claude-Code usage (Web, Design, Cowork) can be converted into a token figure. Writes only values already on screen, to a local file, with no account identifier", "上限 % とトークン数を併せて記録し、Claude Code 以外（Web・Design・Cowork）の使用量をトークンに換算できるか調べます。画面に出ている値だけをローカルファイルに書き、アカウント識別子は残しません", "Registra el % de límite junto a los tokens, para estudiar si el uso fuera de Claude Code (Web, Design, Cowork) puede convertirse en una cifra de tokens. Solo escribe valores ya visibles, en un archivo local y sin identificador de cuenta") }
 
+    // MARK: 대표 포켓몬 (메뉴바 고정)
+    var representativeTitle: String { t("대표 포켓몬", "Representative Pokémon", "代表ポケモン", "Pokémon representativo", "Pokémon représentatif", "Pokémon representante") }
+    var representativePin: String { t("메뉴바에 고정", "Pin to menu bar", "メニューバーに固定", "Fijar en la barra de menús", "Épingler à la barre de menus", "Fixar na barra de menus") }
+    var representativeUnpin: String { t("고정 해제", "Unpin", "固定を解除", "Dejar de fijar", "Détacher", "Desafixar") }
+    var representativeNone: String { t("고정 안 함 — 훈련 중인 포켓몬을 따라감", "Not pinned — follows the Pokémon you're training", "固定なし — 育成中のポケモンに追従", "Sin fijar — sigue al Pokémon que estás entrenando", "Non épinglé — suit le Pokémon que vous entraînez", "Sem fixar — segue o Pokémon que você está treinando") }
+    func representativePinned(_ name: String) -> String {
+        t("\(name) 고정 중", "\(name) pinned", "\(name) を固定中", "\(name) fijado", "\(name) épinglé", "\(name) fixado")
+    }
+
     var shellResolution: String { t("셸로 도구 경로 찾기", "Find tool paths via your shell", "シェルでツールのパスを探す", "Buscar rutas de herramientas con tu shell") }
     var shellResolutionHint: String { t("끔이 기본. 켜면 `$SHELL -ilc` 로 로그인 셸을 띄워 PATH 를 읽습니다 — .zshrc 전체가 앱 안에서 실행돼요. Homebrew·mise·asdf·Volta·Bun·npm·~/.local/bin 은 켜지 않아도 찾습니다", "Off by default. When on, spawns `$SHELL -ilc` to read your PATH — your whole .zshrc runs inside the app. Homebrew, mise, asdf, Volta, Bun, npm and ~/.local/bin are found without it", "既定でオフ。オンにすると `$SHELL -ilc` でログインシェルを起動して PATH を読みます — .zshrc 全体がアプリ内で実行されます。Homebrew・mise・asdf・Volta・Bun・npm・~/.local/bin はオフでも見つかります", "Desactivado por defecto. Si se activa, lanza `$SHELL -ilc` para leer tu PATH — todo tu .zshrc se ejecuta dentro de la app. Homebrew, mise, asdf, Volta, Bun, npm y ~/.local/bin se encuentran sin esto") }
     var refreshLimitToken: String { t("한도 토큰 캐시 갱신", "Refresh limit token cache", "上限トークンキャッシュを更新", "Actualizar caché del token de límite", "Actualiser le cache du token de limite", "Atualizar cache do token de limite") }

@@ -103,6 +103,9 @@ final class CompanionStore {
     var hasActive: Bool { trainingMon != nil }
     var rarity: Rarity? { trainingMon?.rarity }
     var currentIsShiny: Bool {
+        // 대표 종이 고정돼 있으면 그 종의 이로치 보유 여부를 따른다 — 개체가 아니라 종 단위 선택이라
+        // 훈련 중인 개체의 이로치와는 무관하다.
+        if let rep = state.representativeSpeciesID { return state.ownsShinySpecies(rep) }
         guard let a = trainingMon else { return false }
         if a.dittoDisguise != nil && !a.dittoRevealed { return false }   // 위장 중엔 이로치 숨김(리빌 때 공개)
         return a.isShiny
@@ -120,7 +123,29 @@ final class CompanionStore {
         guard let a = trainingMon, let line = currentLine else { return "Token Egg" }
         return line.localizedName(a.currentID, state.language)
     }
-    var currentSpeciesID: Int? { trainingMon?.currentID }
+    /// 메뉴바가 그릴 종. 대표 종이 고정돼 있으면 그것, 아니면 훈련 중인 개체(없으면 알 → nil).
+    /// 메뉴바 스프라이트와 애니메이션이 전부 이 한 지점을 지나므로 고정도 여기 한 곳에서 끝난다.
+    var currentSpeciesID: Int? { state.representativeSpeciesID ?? trainingMon?.currentID }
+
+    /// 고정된 대표 종(없으면 nil) — UI 가 "고정 중" 상태를 표시·해제할 때 읽는다.
+    var representativeSpeciesID: Int? { state.representativeSpeciesID }
+
+    /// 대표 종 고정. 보유하지 않은 종은 무시한다 — 도감에서만 고르게 되어 있지만, 고정 지점에서
+    /// 한 번 더 막아야 손편집 세이브나 향후 호출부가 유령 종을 메뉴바에 남길 수 없다.
+    @discardableResult
+    func setRepresentative(_ speciesID: Int) -> Bool {
+        guard state.ownsSpecies(speciesID) else { return false }
+        state.representativeSpeciesID = speciesID
+        save()
+        return true
+    }
+
+    /// 고정 해제 — 메뉴바가 다시 훈련 중인 개체를 따라간다.
+    func clearRepresentative() {
+        guard state.representativeSpeciesID != nil else { return }
+        state.representativeSpeciesID = nil
+        save()
+    }
     var isFinalStage: Bool {
         guard let a = trainingMon, let line = currentLine else { return false }
         return line.tree.node(withID: a.currentID)?.children.isEmpty ?? true

@@ -1428,6 +1428,7 @@ private struct DexSpeciesDetailView: View {
                     EvoLineView(nodes: lineNodes, mysteryLabel: store.l.unknownNextEvolution,
                                 shiny: species.isShiny, maxWidth: PopoverMetrics.contentWidth)
                 }
+                representativeRow
                 abilitiesSection
                 statsRangeSection
             }
@@ -1442,6 +1443,24 @@ private struct DexSpeciesDetailView: View {
             flavorText = await store.flavorText(speciesID: species.id)
             genus = await store.genus(speciesID: species.id)
         }
+    }
+
+    /// 메뉴바 고정 토글. 종 단위 선택이라 개체 화면(MonDetailView)이 아니라 도감 상세에 둔다 —
+    /// 고를 수 있는 범위가 곧 도감이다.
+    @ViewBuilder
+    private var representativeRow: some View {
+        let isPinned = store.representativeSpeciesID == species.id
+        HStack(spacing: 6) {
+            Image(systemName: isPinned ? "pin.fill" : "pin")
+                .font(.caption).foregroundStyle(isPinned ? Color.accentColor : .secondary)
+            Text(store.l.representativeTitle).font(.caption)
+            Spacer()
+            Button(isPinned ? store.l.representativeUnpin : store.l.representativePin) {
+                if isPinned { store.clearRepresentative() } else { store.setRepresentative(species.id) }
+            }
+            .controlSize(.small)
+        }
+        .padding(.vertical, 2)
     }
 
     @ViewBuilder
