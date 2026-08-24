@@ -123,11 +123,11 @@ final class ShopTests: XCTestCase {
 
     // MARK: 정렬 (가격 저렴한 순 + 구매 완료 보유형 맨 아래)
 
-    /// 상점 목록은 가격 오름차순(민트/비타민 6종 100M < 사탕 500M < 이로치 부적 3B).
-    /// 동가(민트·비타민 6종)는 안정 정렬이라 ItemKind 선언 순서(mint 가 비타민보다 먼저)를 유지한다.
+    /// The shop list is price-ascending (Mint/Move Reroll/the 6 vitamins at 100M < Rare Candy 500M < Shiny Charm 3B).
+    /// Ties (Mint · Move Reroll · the 6 vitamins) keep ItemKind's declaration order via stable sort (mint comes before moveReroll/vitamins).
     func testItemsSortedByPriceAscending() {
         let items = store(used: 0).purchasableItems
-        XCTAssertEqual(items, [.mint, .hpUp, .protein, .iron, .calcium, .zinc, .carbos, .rareCandy, .shinyCharm])
+        XCTAssertEqual(items, [.mint, .moveReroll, .hpUp, .protein, .iron, .calcium, .zinc, .carbos, .rareCandy, .shinyCharm])
         let prices = items.compactMap(\.shopPrice)
         XCTAssertEqual(prices, prices.sorted(), "shopPrice 오름차순 — 가격 상수가 바뀌어도 정렬 불변식 유지")
     }

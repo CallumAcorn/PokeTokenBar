@@ -640,11 +640,12 @@ final class SaveTransferTests: XCTestCase {
         // representativeSpeciesID is progress, matching upstream (#158): it names a species you own,
         // and ownership travels with the save. sanitized() reconciles it after backfilling
         // dexUnlocked, so a hand-edited save cannot import a pin for a species the state lacks.
+        // ownedTMs (owned TMs) = same class as inventory — it's owned goods, so it follows progress (not this device's ledger).
         let progress: Set<String> = ["usedSinceInstall", "spentTokens", "eggUsage", "eggTier", "eggRegion",
                                      "pendingHatchID", "party", "trainingSlotID", "dexUnlocked",
-                                     "dex", "collectedFinals", "inventory", "representativeSpeciesID"]
+                                     "dex", "collectedFinals", "inventory", "representativeSpeciesID", "ownedTMs"]
         let deviceLedger: Set<String> = ["installBaselineSet", "claimedTodayTokensByProvider", "lastDate"]
-        let accountLedger: Set<String> = ["candyGrantTier", "candyFeatureSeeded"]
+        let accountLedger: Set<String> = ["candyGrantTier", "candyFeatureSeeded", "movesFeatureSeeded"]
         let devicePreference: Set<String> = ["language"]
 
         let classified = progress.union(deviceLedger).union(accountLedger).union(devicePreference)

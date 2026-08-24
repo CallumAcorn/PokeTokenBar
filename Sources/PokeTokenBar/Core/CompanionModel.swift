@@ -147,6 +147,7 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
     case rareCandy
     case mint
     case shinyCharm
+    case moveReroll
     case hpUp, protein, iron, calcium, zinc, carbos
 
     /// PokéAPI 아이템 스프라이트 파일명(.../sprites/items/{name}.png). nil = 스프라이트 없음(이모지 폴백만).
@@ -155,6 +156,7 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .rareCandy: return "rare-candy"
         case .mint: return nil   // PokéAPI 에 민트 스프라이트 없음(8세대 아이템) → 이모지 폴백
         case .shinyCharm: return "shiny-charm"
+        case .moveReroll: return nil   // Not a real item, a cosmetic concept — no sprite, emoji fallback only
         case .hpUp: return "hp-up"
         case .protein: return "protein"
         case .iron: return "iron"
@@ -169,6 +171,7 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .rareCandy: return "🍬"
         case .mint: return "🌿"
         case .shinyCharm: return "✨"
+        case .moveReroll: return "🔀"
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return "💊"
         }
     }
@@ -178,13 +181,14 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .rareCandy: return RareCandy.price
         case .mint: return Mint.price
         case .shinyCharm: return ShinyCharm.price
+        case .moveReroll: return MoveReroll.price
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return Vitamin.price
         }
     }
     /// 보유형(패시브) 아이템 — 소비하지 않고 보유하는 동안 상시 효과. 1회 구매(재구매 불가), 가방엔 "적용 중" 표시.
     var isPassive: Bool {
         switch self {
-        case .rareCandy, .mint, .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return false
+        case .rareCandy, .mint, .moveReroll, .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return false
         case .shinyCharm: return true
         }
     }
@@ -197,7 +201,7 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .calcium: return \.specialAttack
         case .zinc: return \.specialDefense
         case .carbos: return \.speed
-        case .rareCandy, .mint, .shinyCharm: return nil
+        case .rareCandy, .mint, .shinyCharm, .moveReroll: return nil
         }
     }
 }
@@ -302,6 +306,12 @@ enum Mint {
     /// 사탕(500M)의 1/5로 싸게 둬서 성격을 마음에 들 때까지 굴려보는 가벼운 재미. 성장을 안 줘서
     /// 이중계산 이슈도 없음(가격 = 순수 소비).
     static let price = 100_000_000
+}
+
+/// Move reroll balance constant — same shape as Mint (consume → random reroll), so the price matches it too.
+enum MoveReroll {
+    /// Shop price. Priced the same as Mint (nature reroll) since this is a near-cosmetic reroll too.
+    static let price = Mint.price
 }
 
 /// 이로치 부적 밸런스 상수 — 보유형(1회 구매·영구, 소비 안 됨).
@@ -464,6 +474,56 @@ struct EvoLine: Sendable {
     func localizedName(_ id: Int, _ lang: AppLanguage) -> String {
         lang.resolveName(names[id] ?? [:]) ?? "#\(id)"   // 폴백 순서는 AppLanguage.resolveName 단일 소스
     }
+}
+
+/// The reference version group for move/TM lookups — TM numbers and learn levels drift across
+/// generations, so this pins one. Reuses generation 5 Black/White (same generation as the existing
+/// animated-sprite ceiling of #649).
+enum MoveDataVersion {
+    static let versionGroup = "black-white"
+}
+
+/// Move damage class (physical/special/status) — matches PokéAPI's `move-damage-class.name` as-is.
+enum MoveDamageClass: String, Codable, Sendable {
+    case physical, special, status
+}
+
+/// A single move (type/power/accuracy/PP/damage class + localized names) — fetched at runtime from
+/// `/move/{id}` and cached by the provider the same way EvoLine names are. Used by both the TM shop
+/// catalog and a mon's known-move list.
+struct Move: Sendable, Codable, Equatable {
+    let id: Int
+    let type: PokemonType
+    let power: Int?       // nil for status moves
+    let accuracy: Int?    // nil for moves that never miss
+    let pp: Int
+    let damageClass: MoveDamageClass
+    /// langCode → name
+    let names: [String: String]
+
+    func localizedName(_ lang: AppLanguage) -> String {
+        lang.resolveName(names) ?? "#\(id)"
+    }
+}
+
+/// How a species learns a given move — only level-up/TM are modeled (egg/tutor are out of scope, YAGNI).
+enum LearnMethod: String, Sendable, Equatable {
+    case levelUp = "level-up"
+    case machine
+}
+
+/// One line of a species' learnset — `PokeAPIClient.learnableMoves(speciesID:)` filters down to
+/// `MoveDataVersion.versionGroup`. `level` is meaningless for machine entries, so it's always 0 there.
+struct LearnableMove: Sendable, Equatable {
+    let moveID: Int
+    let method: LearnMethod
+    let level: Int
+}
+
+/// TM (technical machine) balance constants — shop purchase only (doc: "shop purchase only for now").
+enum TM {
+    /// Shop price. A battle-prep item that doesn't feed growth, so it's priced in the same light tier as Vitamin.
+    static let price = Vitamin.price
 }
 
 /// 능력치 5종 — HP 는 성격 보정을 받지 않아(본가 규칙) 이 열거형엔 없다.
@@ -677,6 +737,11 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     /// User-set — this individual gets its own floating desktop pet window (PC detail screen).
     /// Multiple party members can be floating at once, independent of who's training.
     var isFloating = false
+    /// Currently known moves (move ids), slot order = order learned. Capped at 4 like the real games
+    /// (CompanionStore enforces it). Empty right after hatching — level-up moves auto-fill up to 4
+    /// slots as the mon grows (CompanionStore.autoFillKnownMoves); past that, only a manual TM teach
+    /// or a slot replacement adds more.
+    var knownMoves: [Int] = []
     // pathIDs 가 비면(손상된 상태 파일) baseID 로 폴백 — 렌더마다 읽히므로 out-of-bounds 크래시 방지.
     var currentID: Int { pathIDs.isEmpty ? baseID : pathIDs[min(stageIndex, pathIDs.count - 1)] }
     /// 표시 전용 레벨(Lv.1~100) — PokemonBalance.level 참고.
@@ -696,7 +761,7 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
          nature: PokemonNature? = nil, ability: String? = nil, ivs: StatSpread? = nil, evs: StatSpread = StatSpread(),
          dittoDisguise: Int? = nil, dittoRevealed: Bool = false,
          acquiredAt: Date = Date(), acquiredVia: AcquisitionSource = .egg, evolutionLocked: Bool = false,
-         isFloating: Bool = false) {
+         isFloating: Bool = false, knownMoves: [Int] = []) {
         self.id = id
         self.baseID = baseID
         self.pathIDs = pathIDs
@@ -720,6 +785,7 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         self.acquiredVia = acquiredVia
         self.evolutionLocked = evolutionLocked
         self.isFloating = isFloating
+        self.knownMoves = knownMoves
     }
 
     // 하위호환 디코딩: shiny/nature/id/acquiredAt/acquiredVia 는 구버전 저장에 없음 → 기본값.
@@ -754,6 +820,7 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         acquiredVia = (try? c.decodeIfPresent(AcquisitionSource.self, forKey: .acquiredVia)) ?? .egg
         evolutionLocked = (try? c.decodeIfPresent(Bool.self, forKey: .evolutionLocked)) ?? false
         isFloating = (try? c.decodeIfPresent(Bool.self, forKey: .isFloating)) ?? false
+        knownMoves = (try? c.decodeIfPresent([Int].self, forKey: .knownMoves)) ?? []
     }
 }
 
@@ -895,10 +962,18 @@ struct CompanionState: Codable, Sendable {
     var language: AppLanguage = .systemDefault   // 신규 설치 = 시스템 로케일
     // 인벤토리 (ItemKind.rawValue → 개수)
     var inventory: [String: Int] = [:]
+    // Owned TMs (technical machines) — move id → count. ItemKind is a small hand-written closed enum
+    // (~10 cases), so the ~100 move-specific TMs get their own dynamic map instead of new cases
+    // (doc: moves-shop.md).
+    var ownedTMs: [Int: Int] = [:]
     // 사탕 지급 엣지 상태(창 key → 지급한 tier). ★영속 — notifiedTier(인메모리)와 달리 재시작 무한지급 방지.
     var candyGrantTier: [String: Int] = [:]
     // 사탕 지급 첫 실행 시드 완료 — 업데이트 직후 이미 100%였던 창의 소급 지급 차단.
     var candyFeatureSeeded = false
+    // One-time auto-learn migration complete — fills every party member with up to 4 level-up moves
+    // they can currently learn (lowest level first), once, to catch up saves from before this
+    // feature existed. Same class of field as candyFeatureSeeded (a one-time seed flag).
+    var movesFeatureSeeded = false
 
     init() {}
 
@@ -959,8 +1034,10 @@ struct CompanionState: Codable, Sendable {
         collectedFinals    = c.lenient(Set<String>.self, forKey: .collectedFinals, default: [])
         language           = c.lenient(AppLanguage.self, forKey: .language, default: .systemDefault)
         inventory          = c.lenient([String: Int].self, forKey: .inventory, default: [:])
+        ownedTMs           = c.lenient([Int: Int].self, forKey: .ownedTMs, default: [:])
         candyGrantTier     = c.lenient([String: Int].self, forKey: .candyGrantTier, default: [:])
         candyFeatureSeeded = c.lenient(Bool.self, forKey: .candyFeatureSeeded, default: false)
+        movesFeatureSeeded = c.lenient(Bool.self, forKey: .movesFeatureSeeded, default: false)
     }
 
     /// 구버전 세이브 1회 마이그레이션 — 졸업 기록(dex) 각 항목의 chainOrder 전 종 + 구버전 active 의

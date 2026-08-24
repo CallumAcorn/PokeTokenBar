@@ -50,6 +50,13 @@ protocol PokeProviding: Sendable {
     func flavorText(speciesID: Int) async throws -> [String: String]
     /// 분류(langCode → text, 예: "Mouse Pokémon") — `pokemon-species` 의 genera. 도감 종 개요 화면 전용.
     func genus(speciesID: Int) async throws -> [String: String]
+    /// This species' learnset (level-up/TM, per `MoveDataVersion.versionGroup`) — for the PC detail
+    /// screen's learn-a-move flow only.
+    func learnableMoves(speciesID: Int) async throws -> [LearnableMove]
+    /// Detail for a single move (`/move/{id}`) — for displaying known moves/learnset only.
+    func moveDetail(id: Int) async throws -> Move
+    /// The full TM list for `MoveDataVersion.versionGroup` — for the shop's TM catalog only.
+    func tmCatalog() async throws -> [Move]
 }
 
 /// 스탯/특성/설명/분류 표시를 지원하지 않는 provider(대부분의 기존 테스트 스텁)의 기본값 — 호출부는
@@ -60,6 +67,9 @@ extension PokeProviding {
     func abilityNames(slug: String) async throws -> [String: String] { throw URLError(.unsupportedURL) }
     func flavorText(speciesID: Int) async throws -> [String: String] { throw URLError(.unsupportedURL) }
     func genus(speciesID: Int) async throws -> [String: String] { throw URLError(.unsupportedURL) }
+    func learnableMoves(speciesID: Int) async throws -> [LearnableMove] { throw URLError(.unsupportedURL) }
+    func moveDetail(id: Int) async throws -> Move { throw URLError(.unsupportedURL) }
+    func tmCatalog() async throws -> [Move] { throw URLError(.unsupportedURL) }
 }
 
 /// PokéAPI 클라이언트 — 종/진화체인을 런타임 fetch + 파싱. 포켓몬 데이터는 레포에 번들하지 않는다.
@@ -77,11 +87,23 @@ actor PokeAPIClient: PokeProviding {
     private var lineCache: [Int: EvoLine] = [:]   // 프리패칭 → 부화 순간 네트워크 0
     private var statsCache: [Int: BaseStats] = [:]
     private var abilityNamesCache: [String: [String: String]] = [:]
+    private var pokemonDTOCache: [Int: PokemonDTO] = [:]     // shared by baseStats/learnableMoves (same `/pokemon/{id}`)
+    private var learnableMovesCache: [Int: [LearnableMove]] = [:]
+    private var moveCache: [Int: Move] = [:]
+
+    /// `/pokemon/{id}` — baseStats (base stats) and learnableMoves (learnset) both split the same
+    /// response, so the cache is pooled here (same pattern as species(_:) being split by flavorText/genus).
+    private func pokemon(_ id: Int) async throws -> PokemonDTO {
+        if let c = pokemonDTOCache[id] { return c }
+        let dto: PokemonDTO = try await get(base.appendingPathComponent("pokemon/\(id)"))
+        pokemonDTOCache[id] = dto
+        return dto
+    }
 
     /// 종/폼의 기준 능력치 + 타입 + 특성 후보(`/pokemon/{id}`) — `pokemon-species`와 별개 엔드포인트라 자체 캐시.
     func baseStats(speciesID id: Int) async throws -> BaseStats {
         if let cached = statsCache[id] { return cached }
-        let dto: PokemonDTO = try await get(base.appendingPathComponent("pokemon/\(id)"))
+        let dto = try await pokemon(id)
         var byName: [String: Int] = [:]
         for entry in dto.stats { byName[entry.stat.name] = entry.base_stat }
         let types = dto.types.sorted { $0.slot < $1.slot }.compactMap { PokemonType(rawValue: $0.type.name) }
@@ -112,6 +134,125 @@ actor PokeAPIClient: PokeProviding {
         for n in dto.names where langCodes.contains(n.language.name) { byLang[n.language.name] = n.name }
         abilityNamesCache[slug] = byLang
         return byLang
+    }
+
+    /// This species' learnset — filters `/pokemon/{id}`'s moves (per version group) down to
+    /// `MoveDataVersion.versionGroup` alone, keeping only level-up/TM (egg/tutor are out of scope).
+    func learnableMoves(speciesID id: Int) async throws -> [LearnableMove] {
+        if let cached = learnableMovesCache[id] { return cached }
+        let dto = try await pokemon(id)
+        var out: [LearnableMove] = []
+        for entry in dto.moves {
+            let moveID = Self.id(from: entry.move.url ?? "")
+            guard moveID > 0 else { continue }
+            for vgd in entry.version_group_details where vgd.version_group.name == MoveDataVersion.versionGroup {
+                switch vgd.move_learn_method.name {
+                case "level-up": out.append(LearnableMove(moveID: moveID, method: .levelUp, level: vgd.level_learned_at))
+                case "machine":  out.append(LearnableMove(moveID: moveID, method: .machine, level: 0))
+                default: break
+                }
+            }
+        }
+        learnableMovesCache[id] = out
+        return out
+    }
+
+    /// Detail for a single move (`/move/{id}`) — same pattern as species/ability names (runtime lookup + cache).
+    func moveDetail(id: Int) async throws -> Move {
+        if let cached = moveCache[id] { return cached }
+        let dto: MoveDTO = try await get(base.appendingPathComponent("move/\(id)"))
+        var byLang: [String: String] = [:]
+        for n in dto.names where langCodes.contains(n.language.name) { byLang[n.language.name] = n.name }
+        let move = Move(id: id, type: PokemonType(rawValue: dto.type.name) ?? .normal,
+                        power: dto.power, accuracy: dto.accuracy, pp: dto.pp,
+                        damageClass: MoveDamageClass(rawValue: dto.damage_class.name) ?? .status,
+                        names: byLang)
+        moveCache[id] = move
+        return move
+    }
+
+    // MARK: TM catalog (the full TM list for the version group)
+
+    private var tmCatalogCache: [Move]?
+    private static let tmCatalogFile: URL = {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("PokeTokenBar")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("tm-catalog.json")
+    }()
+    private struct TMCatalogSnapshot: Codable { let fetchedAt: Date; let entries: [Move] }
+
+    /// The full TM list (~100) for `MoveDataVersion.versionGroup` — one GraphQL query (same pattern as baseSpeciesIndex).
+    /// Priority: memory → disk (30-day TTL) → fetch (refreshes disk on success) → stale disk (offline fallback).
+    func tmCatalog() async throws -> [Move] {
+        if let c = tmCatalogCache { return c }
+        let disk = (try? Data(contentsOf: Self.tmCatalogFile))
+            .flatMap { try? JSONDecoder().decode(TMCatalogSnapshot.self, from: $0) }
+        if let disk, Date().timeIntervalSince(disk.fetchedAt) < 30 * 86400, !disk.entries.isEmpty {
+            tmCatalogCache = disk.entries
+            for m in disk.entries { moveCache[m.id] = m }
+            return disk.entries
+        }
+        do {
+            let entries = try await fetchTMCatalog()
+            tmCatalogCache = entries
+            for m in entries { moveCache[m.id] = m }   // instant hit on moveDetail(id:) without refetching
+            if let data = try? JSONEncoder().encode(TMCatalogSnapshot(fetchedAt: Date(), entries: entries)) {
+                try? data.write(to: Self.tmCatalogFile, options: .atomic)
+            }
+            return entries
+        } catch {
+            if let disk, !disk.entries.isEmpty {
+                tmCatalogCache = disk.entries
+                for m in disk.entries { moveCache[m.id] = m }
+                return disk.entries
+            }
+            throw error
+        }
+    }
+
+    private struct GraphQLTMResponse: Decodable {
+        struct DataBox: Decodable { let machine: [Row] }
+        struct Row: Decodable { let move: MoveRow }
+        struct MoveRow: Decodable {
+            let id: Int
+            let power: Int?
+            let accuracy: Int?
+            let pp: Int
+            let type: NamedGQL
+            let movedamageclass: NamedGQL
+            let movenames: [MoveNameGQL]
+        }
+        struct NamedGQL: Decodable { let name: String }
+        struct MoveNameGQL: Decodable { let name: String; let language: NamedGQL }
+        let data: DataBox
+    }
+
+    private func fetchTMCatalog() async throws -> [Move] {
+        guard let url = URL(string: "https://graphql.pokeapi.co/v1beta2") else { throw URLError(.badURL) }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let langList = langCodes.map { "\"\($0)\"" }.joined(separator: ", ")
+        let query = """
+        { machine(where: {versiongroup: {name: {_eq: "\(MoveDataVersion.versionGroup)"}}}, order_by: {machine_number: asc}) \
+        { move { id power accuracy pp type { name } movedamageclass { name } \
+        movenames(where: {language: {name: {_in: [\(langList)]}}}) { name language { name } } } } }
+        """
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        let decoded = try JSONDecoder().decode(GraphQLTMResponse.self, from: data)
+        guard !decoded.data.machine.isEmpty else { throw URLError(.cannotParseResponse) }
+        return decoded.data.machine.map { row in
+            var byLang: [String: String] = [:]
+            for n in row.move.movenames { byLang[n.language.name] = n.name }
+            return Move(id: row.move.id, type: PokemonType(rawValue: row.move.type.name) ?? .normal,
+                       power: row.move.power, accuracy: row.move.accuracy, pp: row.move.pp,
+                       damageClass: MoveDamageClass(rawValue: row.move.movedamageclass.name) ?? .status,
+                       names: byLang)
+        }
     }
 
     func line(baseSpeciesID: Int) async throws -> EvoLine {
@@ -331,11 +472,26 @@ struct PokemonDTO: Decodable, Sendable {
     let stats: [StatEntryDTO]
     let types: [TypeEntryDTO]
     let abilities: [AbilityEntryDTO]
+    let moves: [MoveEntryDTO]
 }
 struct StatEntryDTO: Decodable, Sendable { let base_stat: Int; let stat: NamedRef }
 struct TypeEntryDTO: Decodable, Sendable { let slot: Int; let type: NamedRef }
 struct AbilityEntryDTO: Decodable, Sendable { let slot: Int; let is_hidden: Bool; let ability: NamedRef }
 struct AbilityDTO: Decodable, Sendable { let names: [NameDTO] }
+struct MoveEntryDTO: Decodable, Sendable { let move: NamedRef; let version_group_details: [VersionGroupDetailDTO] }
+struct VersionGroupDetailDTO: Decodable, Sendable {
+    let level_learned_at: Int
+    let move_learn_method: NamedRef
+    let version_group: NamedRef
+}
+struct MoveDTO: Decodable, Sendable {
+    let power: Int?
+    let accuracy: Int?
+    let pp: Int
+    let type: NamedRef
+    let damage_class: NamedRef
+    let names: [NameDTO]
+}
 struct NameDTO: Decodable, Sendable { let name: String; let language: NamedRef }
 struct NamedRef: Decodable, Sendable { let name: String; let url: String? }
 struct URLRef: Decodable, Sendable { let url: String }
