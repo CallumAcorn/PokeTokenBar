@@ -149,7 +149,7 @@ Cask 에서 제거한 동작이라 여기서 다시 제공하지 않습니다. �
 업스트림의 릴리스와 Cask 는 [chattymin/PokeTokenBar](https://github.com/chattymin/PokeTokenBar) 에
 있습니다. **그쪽은 이 포크가 아니라 업스트림 빌드를 설치하며**, 여기 적힌 강화가 적용되지 않습니다.
 
-### 소스 빌드
+### 개발할 때
 
 ```bash
 swift build                  # 디버그

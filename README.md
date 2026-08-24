@@ -151,7 +151,7 @@ Upstream's own releases and cask are at
 [chattymin/PokeTokenBar](https://github.com/chattymin/PokeTokenBar). **They install upstream's
 build, not this one**, without the hardening described here.
 
-### Build from source
+### Developing on it
 
 ```bash
 swift build                  # debug
