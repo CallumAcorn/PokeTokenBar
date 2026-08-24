@@ -149,3 +149,31 @@ production diverge from test behaviour via a bundled-app check, which would have
 default was never covered by a test at all.
 
 Full suite: 688 tests, 0 failures. Logic-core line coverage 89.94% against a 75% floor.
+
+## Tokens-per-percent study — result
+
+**The gate failed. No token figure is displayed for Claude Web, Design, Cowork or Desktop, and
+none should be added.**
+
+Those surfaces write no local transcript, so the only account-wide signal is the limit window
+percentage. The question was whether a percentage converts to a token count tightly enough to show
+as a number. `scripts/analyse-calibration.py` answered it against 629 samples over 119 hours:
+
+| Window | Usable intervals | tokens per 1% (p10 / median / p90) | Spread |
+|---|---|---|---|
+| seven_day (primary) | 18 | 389k / 3.60M / 8.04M | **20.69x** |
+| five_hour (rolls) | 78 | 366k / 2.32M / 6.96M | 19.01x |
+
+The pass threshold was 1.5x. Cache-heavy intervals run ~1.9x the ratio of cache-light ones, which
+is a large share of the variance and why the log records token kinds separately — but even
+weighting kinds cannot close a 20x gap.
+
+So the percentage drives **growth only** (`ExternalUsageCredit`), where being roughly right costs a
+companion advancing at the wrong speed rather than a displayed number that lies.
+
+The study also corrected the growth constant itself. It had been set from 9 **five-hour**
+intervals while the feature reads the **seven-day** window — calibrated on a different instrument
+from the one in use. Now the seven-day median from 18 intervals.
+
+Calibration logging can stay on for a longer series, but the decision does not need it: 20x is not
+a number that tightens into 1.5x.

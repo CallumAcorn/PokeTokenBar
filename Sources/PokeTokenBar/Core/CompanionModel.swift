@@ -235,11 +235,22 @@ enum ExternalUsageCredit {
         UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
     }
 
-    /// Provisional conversion, from the median of 9 same-source intervals measured over 21 hours
-    /// (684k to 2.75M tokens per 1%, median 1.28M). The 4x spread rules this out as a *displayed*
-    /// token figure, but it is adequate for driving growth, where being within an order of
-    /// magnitude is enough. Phase 1 of the calibration study replaces this with a fitted value.
-    static let tokensPerPercent = 1_280_000
+    /// Conversion from a weekly-window percentage point to growth XP.
+    ///
+    /// Replaces a provisional 1_280_000, which was wrong twice over: it came from only 9 intervals,
+    /// and it was measured on the **five-hour** window while this feature reads the **seven-day**
+    /// one. Calibrating on a different instrument from the one in use is not an approximation, it
+    /// is a mismatch.
+    ///
+    /// This is the median of 18 seven-day intervals over 119 hours of real data
+    /// (`scripts/analyse-calibration.py`): p10 389k, median 3.60M, p90 8.04M per 1%.
+    ///
+    /// **That spread is 20.69x, and it is why no token figure is displayed anywhere.** The Phase 1
+    /// gate failed decisively, so the estimate drives growth only, where being roughly right is
+    /// enough and being wrong costs a pet growing at the wrong speed rather than a number that
+    /// lies. Cache-heavy intervals run ~1.9x the ratio of cache-light ones, which is a large part
+    /// of the variance and the reason the study logs token kinds separately.
+    static let tokensPerPercent = 3_600_000
 
     /// A single percentage point is large, so cap one interval's award. Without this, a window
     /// reset misread as a rise, or a plan change, could graduate a companion in one poll.
