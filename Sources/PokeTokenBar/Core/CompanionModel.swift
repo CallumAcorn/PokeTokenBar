@@ -1002,6 +1002,40 @@ struct CompanionState: Codable, Sendable {
         if !ownsSpecies(selected) { representativeSpeciesID = nil }
     }
 
+    /// 구버전에서 **졸업하며 폐기된** 개체를 포획 로그로부터 PC 에 되살린다.
+    ///
+    /// 지금 모델은 최종 형태에 도달해도 개체를 버리지 않는다 — PC 에 남고 훈련 슬롯만 풀린다.
+    /// 하지만 구버전은 졸업 시 `active` 를 폐기했고, `active` → `party` 마이그레이션은 **그 시점에
+    /// 살아 있던 한 마리만** 옮겼다. 그 결과 예전에 졸업시킨 개체들이 도감에는 있는데 PC 에는 없는,
+    /// 새 모델의 약속과 어긋나는 상태로 남았다(실측: 8/21 에 졸업한 첫 개체가 PC 에 없음).
+    ///
+    /// 로그 행이 파티의 어떤 개체도 가리키지 않으면 그 행으로 개체를 복원한다. 되살린 개체는 최종
+    /// 단계에 서 있고 `usedAtStage` 는 0 이다 — 그때의 진행도는 기록에 없고, 지어내면 레벨이 거짓말을
+    /// 한다. 훈련 슬롯은 건드리지 않는다(복원이 지금 키우는 개체를 바꾸면 안 된다).
+    static func restoredPartyFromCatchLog(party: [MonState], dex: [DexEntry]) -> [MonState] {
+        let liveIDs = Set(party.map(\.id))
+        var out = party
+        for entry in dex {
+            // 이 행이 살아 있는 개체를 가리키면 건너뛴다.
+            if let monID = entry.monID, liveIDs.contains(monID) { continue }
+            // monID 가 있는데 파티에 없다 = 거래로 떠난 개체. 되살리면 안 된다.
+            if entry.monID != nil { continue }
+            guard !entry.chainOrder.isEmpty else { continue }   // 빈 pathIDs 는 디코드 불가 상태
+            out.append(MonState(
+                baseID: entry.baseID,
+                pathIDs: entry.chainOrder,
+                stageIndex: entry.chainOrder.count - 1,
+                usedAtStage: 0,
+                rarity: entry.rarity,
+                totalForms: entry.chainOrder.count,
+                isShiny: entry.isShiny,
+                nature: entry.nature,
+                acquiredAt: entry.caughtAt ?? Date(),
+                acquiredVia: entry.source))
+        }
+        return out
+    }
+
     /// `dexUnlocked` 를 `dex`(포획 로그)·`party` 에서 다시 접어 **빠진 항목만** 채운다(있는 항목은
     /// 안 건드림 — union, never downgrade). 정상 흐름(hatch/evolve/graduate)에서는 매번
     /// `unlockSpecies` 가 그때그때 갱신하므로 이 함수가 할 일이 없지만, 손편집·외부 시드 스크립트·

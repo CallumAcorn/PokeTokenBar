@@ -198,6 +198,9 @@ enum SaveTransfer {
         if let tid = s.trainingSlotID, !s.party.contains(where: { $0.id == tid }) { s.trainingSlotID = nil }
         // dexUnlocked 가 dex/party 보다 뒤처진 세이브(손편집·외부 시드 스크립트 등)를 매 로드마다
         // 따라잡는다 — 있는 항목은 안 건드리는 union 이라 정상 세이브엔 아무 영향이 없다.
+        // 구버전에서 졸업하며 폐기된 개체를 PC 로 되살린다. dexUnlocked 백필보다 **먼저** 돌려야
+        // 되살린 개체의 도달분까지 언락에 접힌다.
+        s.party = CompanionState.restoredPartyFromCatchLog(party: s.party, dex: s.dex)
         s.dexUnlocked = CompanionState.backfilledDexUnlocked(existing: s.dexUnlocked, dex: s.dex, party: s.party)
         // 대표 종 정리는 **backfill 다음**이어야 한다. dexUnlocked 가 dex/party 보다 뒤처진 세이브가
         // backfill 이 존재하는 이유인데, 그 전에 판정하면 실제로 보유한 종을 "미보유"로 읽고 고정을
