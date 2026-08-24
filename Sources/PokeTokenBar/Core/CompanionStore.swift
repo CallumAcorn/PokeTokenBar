@@ -640,33 +640,47 @@ final class CompanionStore {
     /// 라인 미로딩(재시작 직후·오프라인)이면 비활성 — 사탕이 진화 없이 적립만 되는 것 방지.
     var canUseRareCandy: Bool { hasActive && currentLine != nil && rareCandyCount > 0 }
 
-    /// Baselines for external-usage credit. Deliberately **not** persisted.
+    /// State for external-usage credit. Deliberately **not** persisted.
     ///
-    /// Persisting them would make them a per-device ledger, which the save-transfer rules require
-    /// rebasing on import, for a feature whose whole value is "what did this app observe while it
-    /// was watching". Keeping them in memory means a relaunch simply re-establishes the baseline
-    /// and skips one interval, which costs nothing and avoids a whole class of transfer bug.
+    /// Persisting would make it a per-device ledger, which the save-transfer rules require rebasing
+    /// on import, for a feature whose value is "what did this app observe while it was watching".
+    /// A relaunch simply restarts the accumulation.
     private var lastExternalPercent: Double?
     private var lastExternalLocalTokens: Int?
+    /// Polls since the last weekly-window tick, split by whether local token counts moved. The
+    /// window ticks in whole percents roughly every six hours, so attribution has to accumulate
+    /// across that gap rather than judge the single poll the tick lands in.
+    private var quietPolls = 0
+    private var activePolls = 0
 
     /// Credit growth for usage that produced no local tokens. Called once per refresh, right
     /// alongside `grantCandies`, so it sees the same freshly-loaded limit windows.
     func creditExternalUsage(weeklyPercent: Double?, localTokenTotal: Int, limitsReady: Bool) {
-        guard ExternalUsageCredit.isEnabled, limitsReady else { return }
+        guard ExternalUsageCredit.isEnabled, limitsReady, let weeklyPercent else { return }
+
+        // Classify this poll before judging the tick — a tick is only meaningful against the
+        // period that produced it.
+        if let previousTokens = lastExternalLocalTokens {
+            if localTokenTotal == previousTokens { quietPolls += 1 } else { activePolls += 1 }
+        }
+        lastExternalLocalTokens = localTokenTotal
 
         let xp = ExternalUsageCredit.credit(
             previousPercent: lastExternalPercent,
             currentPercent: weeklyPercent,
-            previousLocalTokens: lastExternalLocalTokens,
-            currentLocalTokens: localTokenTotal)
+            quietPolls: quietPolls,
+            activePolls: activePolls)
 
-        // Advance the baseline whatever happened, so a skipped interval does not accumulate into
-        // the next one and pay out twice over.
+        // A rise closes the accumulation period whether or not it paid out; a fall or a flat
+        // reading leaves it open so the next tick still sees the whole span.
+        if let previous = lastExternalPercent, weeklyPercent > previous {
+            quietPolls = 0
+            activePolls = 0
+        }
         lastExternalPercent = weeklyPercent
-        lastExternalLocalTokens = localTokenTotal
 
         guard let xp, xp > 0 else { return }
-        AppLog.write("external usage credit: +\(xp) xp from weekly limit movement with local tokens flat")
+        AppLog.write("external usage credit: +\(xp) xp from weekly limit movement")
         applyUsage(xp)
     }
 

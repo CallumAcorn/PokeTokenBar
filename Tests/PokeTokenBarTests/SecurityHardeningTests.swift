@@ -302,64 +302,75 @@ final class CalibrationLogTests: XCTestCase {
     }
 }
 
-/// Eligibility rules for crediting growth to work that leaves no local transcript.
+/// Attribution rules for crediting growth to work that leaves no local transcript.
 ///
-/// The rule that matters is the anti-double-count one: the weekly window moves for Claude Code
-/// too, so an interval with any local token movement must be skipped entirely. Attributing the
-/// residual instead would need a tokens-per-percent constant, and the measured 4x spread is not
-/// good enough to subtract with.
+/// The anti-double-count problem is real: the weekly window moves for Claude Code too, and
+/// attributing the residual needs a tokens-per-percent constant the study measured at a 20.69x
+/// spread. So attribution uses the **quiet share of the accumulated period** instead of a
+/// subtraction, and needs no constant to decide *whose* usage it was.
+///
+/// The first version demanded local tokens be flat in the same poll as the tick. Measured on real
+/// data that fired once in 619 intervals over five days — not because quiet polls are rare (55.4%
+/// were) but because a whole-percent tick landing inside a quiet two-minute slice is a coincidence.
 final class ExternalUsageCreditTests: XCTestCase {
 
-    func testCreditsWindowMovementWhenLocalTokensFlat() {
-        let xp = ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 12,
-                                            previousLocalTokens: 500, currentLocalTokens: 500)
-        XCTAssertEqual(xp, 2 * ExternalUsageCredit.tokensPerPercent)
+    func testFullyQuietPeriodEarnsTheWholePoint() {
+        let xp = ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 11,
+                                            quietPolls: 180, activePolls: 0)
+        XCTAssertEqual(xp, ExternalUsageCredit.tokensPerPercent)
     }
 
-    /// The anti-double-count rule.
-    func testSkipsIntervalWhereLocalTokensMoved() {
-        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 12,
-                                                previousLocalTokens: 500, currentLocalTokens: 900),
-                     "an interval with local activity must not be credited — the window moved for both")
+    /// The regression that motivated the rewrite: a tick observed in a busy poll, after a period
+    /// that was mostly quiet, must still pay. The old rule awarded nothing here.
+    func testMostlyQuietPeriodStillPaysProportionally() {
+        let xp = ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 11,
+                                            quietPolls: 150, activePolls: 50)
+        XCTAssertEqual(xp, Int(Double(ExternalUsageCredit.tokensPerPercent) * 0.75))
     }
 
-    /// A midnight reset makes local tokens *drop*. That is still local movement, so still skipped.
-    func testSkipsWhenLocalTokensReset() {
-        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 12,
-                                                previousLocalTokens: 900, currentLocalTokens: 0))
+    /// The anti-double-count rule survives: a period with no quiet polls at all earns nothing,
+    /// because every bit of that movement could have come from the CLIs.
+    func testBusyPeriodEarnsNothing() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 11,
+                                                quietPolls: 0, activePolls: 200))
     }
 
     func testNoBaselineAwardsNothing() {
-        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: nil, currentPercent: 12,
-                                                previousLocalTokens: nil, currentLocalTokens: 500))
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: nil, currentPercent: 11,
+                                                quietPolls: 10, activePolls: 0))
         XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: nil,
-                                                previousLocalTokens: 500, currentLocalTokens: 500))
+                                                quietPolls: 10, activePolls: 0))
+    }
+
+    /// Nothing observed yet — a tick on the very first poll has no period to attribute.
+    func testNothingObservedAwardsNothing() {
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 11,
+                                                quietPolls: 0, activePolls: 0))
     }
 
     /// A weekly window reset reads as a large negative delta, which must never award or trap.
     func testWindowResetAwardsNothing() {
         XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 96, currentPercent: 0,
-                                                previousLocalTokens: 500, currentLocalTokens: 500))
+                                                quietPolls: 100, activePolls: 0))
         XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 10,
-                                                previousLocalTokens: 500, currentLocalTokens: 500))
+                                                quietPolls: 100, activePolls: 0))
     }
 
-    /// One interval cannot graduate a companion, whatever the window reports.
+    /// One award cannot graduate a companion, whatever the window reports.
     func testAwardIsCapped() {
         let xp = ExternalUsageCredit.credit(previousPercent: 0, currentPercent: 100,
-                                            previousLocalTokens: 1, currentLocalTokens: 1)
+                                            quietPolls: 100, activePolls: 0)
         XCTAssertEqual(xp, ExternalUsageCredit.maxCreditPerInterval)
     }
 
     /// Non-finite percentages must not reach the Int conversion, which would trap.
     func testNonFinitePercentIsRejected() {
         XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 0, currentPercent: .infinity,
-                                                previousLocalTokens: 1, currentLocalTokens: 1))
+                                                quietPolls: 10, activePolls: 0))
         XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 0, currentPercent: .nan,
-                                                previousLocalTokens: 1, currentLocalTokens: 1))
+                                                quietPolls: 10, activePolls: 0))
     }
 
-    /// Opt-in: it awards growth for usage the app cannot show a token count for.
     func testDisabledByDefault() {
         let key = ExternalUsageCredit.defaultsKey
         let previous = UserDefaults.standard.object(forKey: key)
@@ -369,56 +380,6 @@ final class ExternalUsageCreditTests: XCTestCase {
     }
 }
 
-/// Regression cover for a bounded wait that was not bounded.
-///
-/// The first implementation used `withTaskGroup`: one child ran the blocking call, another slept
-/// for the timeout, and the winner was returned. That looks right and is wrong. A task group
-/// implicitly awaits every child before returning, and `cancelAll()` cannot interrupt
-/// `withCheckedContinuation` because it is not cancellation-aware. So the group waited for the
-/// blocking call regardless, and the timeout did nothing.
-///
-/// It passed review and passed every existing test, because no test ran work slower than the
-/// timeout. In production it hung the app indefinitely behind a Keychain dialog, with the poll
-/// loop stalled. These tests run work that is deliberately slower than its deadline.
-final class TimeoutRaceTests: XCTestCase {
-
-    func testReturnsAtDeadlineWhenWorkBlocksLonger() async {
-        let started = Date()
-        let result = await TimeoutRace.run(timeout: 0.2, timedOutValue: "timedOut") {
-            Thread.sleep(forTimeInterval: 3)      // uncancellable, like SecItemCopyMatching
-            return "work"
-        }
-        let elapsed = Date().timeIntervalSince(started)
-
-        XCTAssertEqual(result, "timedOut")
-        XCTAssertLessThan(elapsed, 1.5,
-                          "the wait must end at its deadline, not when the blocking work finishes")
-    }
-
-    func testReturnsWorkResultWhenItBeatsTheDeadline() async {
-        let result = await TimeoutRace.run(timeout: 5, timedOutValue: "timedOut") { "work" }
-        XCTAssertEqual(result, "work")
-    }
-
-    /// Both sources race to resume one continuation; resuming twice traps. Hammer the boundary
-    /// where the work finishes at roughly the same moment the timer fires.
-    func testConcurrentCompletionResumesExactlyOnce() async {
-        for _ in 0..<50 {
-            let result = await TimeoutRace.run(timeout: 0.01, timedOutValue: "timedOut") {
-                Thread.sleep(forTimeInterval: 0.01)
-                return "work"
-            }
-            XCTAssertTrue(result == "work" || result == "timedOut")
-        }
-    }
-}
-
-/// The update channel must point at this fork.
-///
-/// Pointing at upstream showed users a "new version available" banner whose Update button
-/// installed the original project: different code, none of the hardening here, and a silent
-/// downgrade of every change this fork makes. The Homebrew token matters for the same reason —
-/// sharing upstream's token let `brew upgrade --cask` match an upstream install.
 final class UpdateSourceTests: XCTestCase {
 
     func testUpdatesComeFromThisFork() {

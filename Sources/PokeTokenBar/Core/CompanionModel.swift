@@ -219,14 +219,20 @@ enum Vitamin {
 ///
 /// The naive version of this double-counts: Claude Code moves the same window, so its usage would
 /// grow the companion twice, once as real tokens and once again as window movement. Attributing
-/// only the *residual* would need a tokens-per-percent constant, and a first measurement put that
-/// at a 4x spread, which is not good enough to subtract with.
+/// only the *residual* would need a tokens-per-percent constant, and the study measured that at a
+/// **20.69x spread** — not good enough to subtract with.
 ///
-/// So credit is taken only from intervals where **local token counts did not move at all**. Any
-/// window movement across such an interval cannot have come from a local CLI, so no subtraction
-/// and no calibration is required. Intervals mixing both are skipped entirely, which under-counts
-/// — the safe direction, and it still captures the case this exists for: a Design or Web session
-/// with the CLIs idle.
+/// So attribution avoids the constant entirely and uses **how much of the elapsed time was quiet**
+/// instead. Every poll records whether local token counts moved. When the weekly window finally
+/// ticks up, the award is scaled by the share of that accumulated period in which the CLIs were
+/// idle: all quiet earns the full point, half quiet earns half, never quiet earns nothing.
+///
+/// The first version demanded local tokens be flat **in the same poll** as the tick, and measured
+/// on real data that fires almost never — 1 interval in 619 over five days. Not because quiet
+/// intervals are rare (55.4% of them were) but because the window ticks in whole percents roughly
+/// 20 times in five days, and the odds of a tick landing inside a quiet two-minute slice are tiny.
+/// The cause is spread over hours; the signal is instantaneous. Requiring them to coincide made
+/// the feature dead by construction.
 enum ExternalUsageCredit {
     static let defaultsKey = "creditExternalUsage"
 
@@ -256,19 +262,23 @@ enum ExternalUsageCredit {
     /// reset misread as a rise, or a plan change, could graduate a companion in one poll.
     static let maxCreditPerInterval = 5 * tokensPerPercent
 
-    /// XP to award for one interval, or nil when the interval is not eligible.
+    /// XP to award when the weekly window ticks up, or nil when nothing is due.
     ///
-    /// Pure so the eligibility rules are testable without a store, a clock or a network.
-    /// - `previousPercent`/`previousLocalTokens` nil means no baseline yet: establish one, award
-    ///   nothing. That is also what happens on the first poll after launch.
+    /// `quietPolls`/`activePolls` count the polls accumulated since the last tick, split by whether
+    /// local token counts moved. The award is scaled by the quiet share, which attributes the
+    /// movement without needing a tokens-per-percent constant to subtract with.
+    ///
+    /// Pure so the rules are testable without a store, a clock or a network.
     static func credit(previousPercent: Double?, currentPercent: Double?,
-                       previousLocalTokens: Int?, currentLocalTokens: Int) -> Int? {
-        guard let previousPercent, let currentPercent, let previousLocalTokens else { return nil }
-        // Local activity in this interval — cannot separate the two sources without calibration.
-        guard currentLocalTokens == previousLocalTokens else { return nil }
+                       quietPolls: Int, activePolls: Int) -> Int? {
+        guard let previousPercent, let currentPercent else { return nil }   // no baseline yet
         let delta = currentPercent - previousPercent
         guard delta > 0, delta.isFinite else { return nil }        // reset, idle, or garbage
-        let xp = Int(delta * Double(tokensPerPercent))
+        let observed = quietPolls + activePolls
+        guard observed > 0 else { return nil }                     // nothing observed to attribute
+        let quietShare = Double(quietPolls) / Double(observed)
+        guard quietShare > 0 else { return nil }                   // CLIs were busy throughout
+        let xp = Int(delta * Double(tokensPerPercent) * quietShare)
         return min(max(0, xp), maxCreditPerInterval)
     }
 }
