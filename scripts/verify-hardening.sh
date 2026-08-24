@@ -61,9 +61,9 @@ expect "자동 재시작 에이전트에는 KeepAlive 있음" "grep -q KeepAlive
 echo "==> cask"
 # 주석에 이 문자열들이 **설명으로** 등장하므로, 지시문만 잡도록 행 선두 기준으로 본다.
 # (느슨한 grep 은 자기 문서를 위반으로 신고한다 — 실제로 그렇게 한 번 틀렸다.)
-refute "cask 가 sha256 :no_check 를 쓰지 않음" "grep -qE '^[[:space:]]*sha256[[:space:]]+:no_check' packaging/Casks/poke-token-bar.rb"
-refute "cask 가 quarantine 을 벗기지 않음(xattr 실행 없음)" "grep -qE '^[[:space:]]*(system_command|postflight|args:).*xattr' packaging/Casks/poke-token-bar.rb"
-expect "cask 가 sha256 을 고정" "grep -qE '^[[:space:]]*sha256[[:space:]]+\"[0-9a-f]{64}\"' packaging/Casks/poke-token-bar.rb"
+refute "cask 가 sha256 :no_check 를 쓰지 않음" "grep -qE '^[[:space:]]*sha256[[:space:]]+:no_check' packaging/Casks/*.rb"
+refute "cask 가 quarantine 을 벗기지 않음(xattr 실행 없음)" "grep -qE '^[[:space:]]*(system_command|postflight|args:).*xattr' packaging/Casks/*.rb"
+expect "cask 가 sha256 을 고정" "grep -qE '^[[:space:]]*sha256[[:space:]]+\"[0-9a-f]{64}\"' packaging/Casks/*.rb"
 
 echo "==> 셸 함정 (pipefail + grep -q)"
 # `set -o pipefail` 인 스크립트에서 `… | grep -q` 는 매치 즉시 파이프를 닫아 앞 명령에 SIGPIPE 를
@@ -84,6 +84,14 @@ if [[ -z "$offenders" ]]; then
 else
   bad "pipefail + grep -q 조합:$offenders (-q 를 빼고 >/dev/null 로 버리세요)"
 fi
+
+echo "==> 업데이트 출처 (이 포크여야 한다)"
+# 업스트림 저장소를 업데이트 소스로 두면 "새 버전 있음" 배너의 Update 버튼이 **원본 프로젝트**를
+# 설치한다 — 여기 있는 하드닝이 하나도 없는 다른 코드로 조용히 갈아치우는 것과 같다.
+# cask 토큰도 마찬가지다: 업스트림과 같은 토큰이면 `brew upgrade --cask` 가 업스트림 설치를 잡는다.
+refute "UpdateChecker 가 업스트림 저장소를 가리키지 않음" "grep -rn 'chattymin/PokeTokenBar' Sources/PokeTokenBar/Core/UpdateChecker.swift"
+expect "UpdateChecker 가 이 포크를 가리킴" "grep -q 'CallumAcorn/PokeTokenBar' Sources/PokeTokenBar/Core/UpdateChecker.swift"
+refute "cask 토큰이 업스트림과 겹치지 않음" "grep -qE '^[[:space:]]*cask \"poke-token-bar\"' packaging/Casks/*.rb"
 
 echo "==> 소스 불변식"
 expect "build-app.sh 가 hardened runtime 으로 서명" "grep -q 'options runtime' scripts/build-app.sh"

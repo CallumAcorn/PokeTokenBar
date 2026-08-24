@@ -412,3 +412,24 @@ final class TimeoutRaceTests: XCTestCase {
         }
     }
 }
+
+/// The update channel must point at this fork.
+///
+/// Pointing at upstream showed users a "new version available" banner whose Update button
+/// installed the original project: different code, none of the hardening here, and a silent
+/// downgrade of every change this fork makes. The Homebrew token matters for the same reason —
+/// sharing upstream's token let `brew upgrade --cask` match an upstream install.
+final class UpdateSourceTests: XCTestCase {
+
+    func testUpdatesComeFromThisFork() {
+        XCTAssertEqual(UpdateChecker.repo, "CallumAcorn/PokeTokenBar")
+        XCTAssertFalse(UpdateChecker.repo.contains("chattymin"),
+                       "the update channel must never point at upstream")
+    }
+
+    func testCaskTokenDoesNotCollideWithUpstream() {
+        XCTAssertNotEqual(UpdateChecker.caskToken, "poke-token-bar",
+                          "sharing upstream's cask token lets brew upgrade pull their build")
+        XCTAssertEqual(UpdateChecker.caskToken, "poke-token-bar-hardened")
+    }
+}
