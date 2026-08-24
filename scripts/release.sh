@@ -124,9 +124,15 @@ echo "  ✓ $VERSION 빌드 성공"
 
 echo "▶ 5/6 커밋 + push"
 git add scripts/build-app.sh
-git commit -q -m "release: bump version to $VERSION
+# 이미 대상 버전이면 스테이지할 게 없다. `git commit` 은 그때 exit 1 이고 `set -e` 아래에서는
+# **빌드는 끝났는데 태그는 안 만들어진** 중간 상태로 릴리스가 죽는다. 범프가 있을 때만 커밋한다.
+if git diff --cached --quiet; then
+  echo "  (VERSION 이 이미 $VERSION — 커밋할 범프 없음)"
+else
+  git commit -q -m "release: bump version to $VERSION
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+fi
 git push -q origin main
 
 echo "▶ 6/6 GitHub Release v$VERSION (태그 전용 — 첨부 바이너리 없음)"
