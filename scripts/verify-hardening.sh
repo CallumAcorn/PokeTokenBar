@@ -104,6 +104,13 @@ echo "==> 라이선스 고지"
 expect "번들에 LICENSE 포함" "test -f '$APP/Contents/Resources/LICENSE'"
 expect "build-app.sh 가 LICENSE 를 번들에 복사" "grep -q 'cp LICENSE' scripts/build-app.sh"
 
+echo "==> 업스트림 원장"
+# 원장이 없으면 다음 리뷰가 전부를 처음부터 다시 유도하고, 의도적으로 거절한 커밋이 아무도 검토한
+# 적 없는 것처럼 다시 올라온다. "N commits behind" 배지는 cherry-pick 이 SHA 를 바꾸므로 영원히
+# 줄지 않는다 — 실측: 배지가 22 를 가리킬 때 실제 미결은 4 건이었다.
+expect "업스트림 원장 존재" "test -f docs/reference/upstream-ledger.md"
+expect "원장 확인 스크립트 존재·실행 가능" "test -x scripts/upstream-status.sh"
+
 echo "==> 소스 불변식"
 expect "build-app.sh 가 hardened runtime 으로 서명" "grep -q 'options runtime' scripts/build-app.sh"
 # 이 포크는 태그 전용 릴리스만 낸다. 바이너리를 붙이는 순간 자체서명·미공증 .app 이 되어
