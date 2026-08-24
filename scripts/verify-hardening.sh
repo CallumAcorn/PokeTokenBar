@@ -93,8 +93,9 @@ echo "==> 업데이트 출처 (이 포크여야 한다)"
 refute "UpdateChecker 가 업스트림 저장소를 가리키지 않음" "grep -rn 'chattymin/PokeTokenBar' Sources/PokeTokenBar/Core/UpdateChecker.swift"
 expect "UpdateChecker 가 이 포크를 가리킴" "grep -q 'CallumAcorn/PokeTokenBar' Sources/PokeTokenBar/Core/UpdateChecker.swift"
 # 앱은 더 이상 brew 를 실행하지 않는다(태그 전용 릴리스 = 받을 바이너리가 없음).
-# 주석에는 "brew" 가 설명으로 남아 있으므로, 실제 실행 문자열만 잡는다.
-refute "앱이 brew 로 업그레이드를 실행하지 않음" "grep -rn 'upgrade --cask' Sources/"
+# **주석 줄은 제외한다** — 왜 없앴는지 설명하는 주석에 그 문자열이 그대로 들어 있어서,
+# 순진한 grep 은 자기 설명을 위반으로 신고한다(이 저장소에서 세 번째로 밟은 함정).
+refute "앱이 brew 로 업그레이드를 실행하지 않음" "grep -rn 'upgrade --cask' Sources/ | grep -vE ':[[:space:]]*//'"
 refute "cask 토큰이 업스트림과 겹치지 않음" "grep -qE '^[[:space:]]*cask \"poke-token-bar\"' packaging/Casks/*.rb"
 
 echo "==> 라이선스 고지"
