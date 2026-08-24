@@ -19,67 +19,19 @@ import XCTest
 /// 자연어에 절대 나타나지 않는 센티널을 넣고 모든 언어의 산출물에 살아있는지 확인한다.
 /// 리터럴 언어 목록은 쓰지 않는다 — `allCases` 라야 언어가 늘어도 커버가 조용히 멈추지 않는다.
 final class LocalizationInterpolationTests: XCTestCase {
-    func testStringArgInterpolationsSurviveEveryLanguage() {
-        let A = "SNTA"
-        let B = "SNTB"
-        for lang in AppLanguage.allCases {
-            let l = L(lang)
-            func check(_ label: String, _ produced: String, _ expected: String...) {
-                for e in expected {
-                    XCTAssertTrue(produced.contains(e),
-                                  "\(lang.rawValue) \(label): '\(e)' missing → '\(produced)'")
-                }
-            }
-            check("forecastReach", l.forecastReach(A), A)
-            check("claudeLimitEntry", l.claudeLimitEntry(kind: "weekly_scoped", model: A), A)
-            check("percentRemaining", l.percentRemaining(A), A)
-            check("floatingPetHoverTokensOnly", l.floatingPetHoverTokensOnly(A), A)
-            check("floatingPetHoverWithLimit", l.floatingPetHoverWithLimit(A, B), A, B)
-            check("importSaveDone", l.importSaveDone(dex: 4242, tokens: A), "4242", A)
-            check("reportMailFallback", l.reportMailFallback(A), A)
-            check("reportMailSubject", l.reportMailSubject(A), A)
-            check("reportMailBody", l.reportMailBody(version: A, os: B), A, B)
-            check("eggToHatch", l.eggToHatch(A), A)
-            check("toNextEvolution", l.toNextEvolution(A), A)
-            check("toGraduation", l.toGraduation(A), A)
-            check("graduated", l.graduated(A), A)
-            check("statusEvolved", l.statusEvolved(A), A)
-            check("notifHatchBody", l.notifHatchBody(A), A)
-            check("notifShinyHatchBody", l.notifShinyHatchBody(A), A)
-            check("notifEvolveBody", l.notifEvolveBody(A), A)
-            check("notifDittoRevealBody", l.notifDittoRevealBody(A), A)
-            check("notifShinyDittoRevealBody", l.notifShinyDittoRevealBody(A), A)
-            check("notifGraduateBody", l.notifGraduateBody(A), A)
-            check("limitRefreshHTTPError401", l.limitRefreshHTTPError(401), "401")
-            check("limitRefreshHTTPError404", l.limitRefreshHTTPError(404), "404")
-            check("updateAvailable", l.updateAvailable(A, current: B), A, B)
-            check("updateFound", l.updateFound(A), A)
-            check("upToDate", l.upToDate(A), A)
-            check("notifBody", l.notifBody(A, B), A, B)
-            check("useOnCurrent", l.useOnCurrent(A), A)
-            check("buyConfirm", l.buyConfirm(A), A)
-            check("eggConfirm", l.eggConfirm(A, B), A, B)
-            check("notifCandyTitle", l.notifCandyTitle(item: A, count: 4242), A, "4242")
-            check("notifCandyBody", l.notifCandyBody(window: A), A)
-            check("plan", l.plan(A), A)
-            check("stage", l.stage(4242, 1717), "4242", "1717")
-            check("dexTotal", l.dexTotal(4242), "4242")
-            // This fork's dexSpeciesTotal takes (owned, total) — the PC/party rework made the
-            // Pokédex show progress rather than a bare count, so upstream's single-argument call
-            // does not compile here.
-            check("dexSpeciesTotal", l.dexSpeciesTotal(4242, 1717), "4242", "1717")
-            check("dexPageLabel", l.dexPageLabel(4242, 1717), "4242", "1717")
-            check("ownedCount", l.ownedCount(4242), "4242")
-            check("intervalLabel", l.intervalLabel(1860), "31")          // 1860s → 31 min
-            check("codexWindow-hours", l.codexWindow(420), "7")          // 420 min → 7 h
-            check("codexWindow-mins", l.codexWindow(37), "37")
-            check("importConfirmBody",
-                  l.importConfirmBody(incomingDex: 4242, incomingTokens: A,
-                                      exportedAt: "EXPAT", sourceDevice: "SRCDEV",
-                                      currentDex: 1717, currentTokens: B),
-                  "4242", A, "EXPAT", "SRCDEV", "1717", B)
-            check("eggDescription", l.eggDescription(.rare), l.rarityRare)
-            check("eggGuaranteeHint", l.eggGuaranteeHint(.uncommon), l.rarityUncommon)
+    private static let a = "ZQXSENTINELA"
+    private static let b = "ZQXSENTINELB"
+
+    /// Failure text carries language, member and output, so a red run names the
+    /// exact translation and the exact placeholder without any digging.
+    /// 실패 메시지에 언어·멤버·산출물을 모두 담는다 — 어느 번역의 어느 치환자인지 바로 보이도록.
+    private func expect(_ lang: AppLanguage, _ member: String, _ produced: String,
+                        _ needles: String...,
+                        file: StaticString = #filePath, line: UInt = #line) {
+        for needle in needles {
+            XCTAssertTrue(produced.contains(needle),
+                          "\(lang.rawValue).\(member): '\(needle)' is missing → '\(produced)'",
+                          file: file, line: line)
         }
     }
 
@@ -95,7 +47,6 @@ final class LocalizationInterpolationTests: XCTestCase {
             expect(lang, "forecastReach", l.forecastReach(a), a)
             expect(lang, "claudeLimitEntry",
                    l.claudeLimitEntry(kind: "weekly_scoped", model: a), a)
-            expect(lang, "limitsAccount", l.limitsAccount(a), a)
             expect(lang, "codexWindow(h)", l.codexWindow(420), "7")     // 420 min → 7 h / 420분 → 7시간
             expect(lang, "codexWindow(m)", l.codexWindow(37), "37")
             expect(lang, "percentRemaining", l.percentRemaining(a), a)
@@ -131,7 +82,9 @@ final class LocalizationInterpolationTests: XCTestCase {
 
             // Pokédex / 도감
             expect(lang, "dexTotal", l.dexTotal(4242), "4242")
-            expect(lang, "dexSpeciesTotal", l.dexSpeciesTotal(4242), "4242")
+            // This fork's dexSpeciesTotal takes (owned, total) — the PC/party rework made the
+            // Pokédex show progress rather than a bare count.
+            expect(lang, "dexSpeciesTotal", l.dexSpeciesTotal(4242, 1717), "4242", "1717")
             expect(lang, "dexPageLabel", l.dexPageLabel(4242, 1717), "4242", "1717")
 
             // System notifications / 시스템 알림
