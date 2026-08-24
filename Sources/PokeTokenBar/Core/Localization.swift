@@ -668,6 +668,8 @@ struct L {
     var dexShinyLocked: String { t("이 종의 이로치를 아직 못 잡았어요", "Haven't caught this species' shiny yet", "この種の色違いはまだ捕まえていません", "Aún no has capturado la variante variocolor de esta especie") }
     var dexStatRangeTitle: String { t("능력치 범위 (Lv.100 기준)", "Stat range (at Lv.100)", "ステータス範囲（Lv.100基準）", "Rango de estadísticas (a Nv.100)") }
     var dexAbilitiesTitle: String { t("가능한 특성", "Possible abilities", "とくせいの可能性", "Habilidades posibles") }
+    var dexMovesLevelUpTitle: String { t("레벨업 기술", "Level-up moves", "レベルアップわざ", "Movimientos por nivel") }
+    var dexMovesTMTitle: String { t("TM 기술", "TM moves", "わざマシンのわざ", "Movimientos por MT") }
     func rarityLabel(_ r: Rarity) -> String {
         switch r {
         case .common:    return rarityCommon

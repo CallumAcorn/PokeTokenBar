@@ -247,6 +247,13 @@ final class CompanionStore {
         }
     }
 
+    /// Display name for a species — reads the same dex-unlock name cache as dexSpecies, so it's free
+    /// (no network): anything owned has already unlocked its species and cached names there. Falls
+    /// back to "#id" only for the placeholder case (shouldn't happen for anything actually owned).
+    func speciesName(_ speciesID: Int) -> String {
+        state.dexUnlocked[speciesID]?.names.flatMap { state.language.resolveName($0) } ?? "#\(speciesID)"
+    }
+
     /// 이름이 없는 구버전 졸업 항목의 체인 이름을 채운다(도감 격자 진입 시 1회).
     ///
     /// 격자는 저장된 이름만 읽으므로 백필이 없으면 칸이 종 번호(`#41`)로 남는다. 포획 로그는 행이

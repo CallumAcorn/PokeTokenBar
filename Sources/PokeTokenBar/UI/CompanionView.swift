@@ -942,14 +942,23 @@ private struct PartyMemberCell: View {
 
     private static let thumb: CGFloat = 44
 
+    /// Progress toward this mon's next evolution/graduation — same calc as MonDetailView's header
+    /// progress bar, just computed straight off the individual (no need for a loaded EvoLine).
+    private var progress: Double {
+        let threshold = PokemonBalance.phaseThreshold(rarity: mon.rarity, totalForms: mon.totalForms, stageIndex: mon.stageIndex)
+        guard threshold > 0 else { return 0 }
+        return min(1, max(0, Double(mon.usedAtStage) / Double(threshold)))
+    }
+
     var body: some View {
         Button(action: onTap) {
             VStack(spacing: 1) {
                 SpriteView(speciesID: mon.currentID, size: Self.thumb, shiny: mon.isShiny)
                     .frame(width: Self.thumb, height: Self.thumb)
-                Text(store.l.pcLevel(mon.level))
-                    .font(.system(size: 9))
-                    .lineLimit(1).minimumScaleFactor(0.8)
+                Text(store.speciesName(mon.currentID))
+                    .font(.system(size: 9, weight: .semibold))
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                ProgressView(value: progress).controlSize(.mini).tint(.orange)
             }
             .frame(maxWidth: .infinity)
             .overlay(alignment: .topLeading) {
@@ -987,7 +996,7 @@ private struct PartyMemberCell: View {
     }
 
     private var tooltip: String {
-        var parts = [store.l.pcLevel(mon.level), store.l.rarityLabel(mon.rarity)]
+        var parts = [store.speciesName(mon.currentID), store.l.pcLevel(mon.level), store.l.rarityLabel(mon.rarity)]
         if mon.isShiny { parts.append(store.l.dexShinyLabel) }
         if isTraining { parts.append(store.l.dexRaising) }
         if mon.evolutionLocked { parts.append(store.l.evolutionLockedBadge) }
@@ -1438,9 +1447,10 @@ private struct MoveRow: View {
     }
 }
 
-/// One cell in the 4-known-slots grid — a 2-row table (name⋯type / damage class⋯PP, edge-aligned),
-/// background filled solid with the type color (same palette/white-text convention as other type
-/// badges). An empty slot (moveID nil) gets a neutral placeholder.
+/// One cell in the 4-known-slots grid — a 2-row table (name⋯type / damage class⋯PP, edge-aligned).
+/// Neutral card background with standard adaptive text (readable in both themes) — the type shows as
+/// a colored outline + colored type label instead of a solid fill, since white-on-type-color reads
+/// poorly for lighter types (electric, ice, etc). An empty slot (moveID nil) gets a plain placeholder.
 private struct KnownMoveCell: View {
     let store: CompanionStore
     let moveID: Int?
@@ -1459,24 +1469,30 @@ private struct KnownMoveCell: View {
                     Spacer(minLength: 4)
                     Text(store.l.typeName(move.type).uppercased())
                         .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(typeColor(move.type))
                 }
                 HStack {
                     Text(store.l.moveDamageClassName(move.damageClass))
                         .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
                     Spacer(minLength: 4)
                     Text("\(store.l.movePPLabel) \(move.pp)")
                         .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
                 }
-                .opacity(0.85)
             } else {
                 Text("···").font(.system(size: 11)).foregroundStyle(.tertiary)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
         .padding(6)
-        .background(move.map { typeColor($0.type) } ?? Color.secondary.opacity(0.08))
-        .foregroundStyle(move != nil ? Color.white : Color.primary)
+        .background(Color.secondary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            if let move {
+                RoundedRectangle(cornerRadius: 8).strokeBorder(typeColor(move.type), lineWidth: 1.5)
+            }
+        }
         .task(id: moveID) {
             guard let moveID else { return }
             move = await store.moveDetail(id: moveID)
@@ -1623,6 +1639,10 @@ private struct DexSpeciesDetailView: View {
     @State private var line: EvoLine?
     @State private var flavorText: String?
     @State private var genus: String?
+    /// The species' full possible learnset (every level-up/TM move it could ever learn) — unlike
+    /// MonDetailView's learnset use, this is never gated by an individual's level; it's a reference
+    /// list of everything the species can learn.
+    @State private var learnset: [LearnableMove] = []
 
     /// species.id 까지의 조상 경로를 트리에서 찾아 CompanionStore.lineItems 에 그대로 넘긴다 — 개체용
     /// pathIDs 가 없어도 같은 계산을 재사용할 수 있다(EvoNode.pathToNode 주석 참고: 종에 도달했다는
@@ -1648,6 +1668,8 @@ private struct DexSpeciesDetailView: View {
                 representativeRow
                 abilitiesSection
                 statsRangeSection
+                levelUpMovesSection
+                tmMovesSection
             }
         }
         .task(id: species.baseID) { line = await store.line(baseID: species.baseID) }
@@ -1659,6 +1681,45 @@ private struct DexSpeciesDetailView: View {
             abilityNames = names
             flavorText = await store.flavorText(speciesID: species.id)
             genus = await store.genus(speciesID: species.id)
+        }
+        // Learnset doesn't depend on language (just id/level) — key on species.id alone.
+        .task(id: species.id) { learnset = await store.learnableMoves(speciesID: species.id) }
+    }
+
+    /// Every level-up move this species can ever learn, lowest level first — a reference list, not
+    /// gated by any individual's current level (that gating lives in MonDetailView instead).
+    private var levelUpMoves: [LearnableMove] {
+        learnset.filter { $0.method == .levelUp }.sorted { $0.level < $1.level }
+    }
+    private var machineMoves: [LearnableMove] {
+        learnset.filter { $0.method == .machine }
+    }
+
+    @ViewBuilder
+    private var levelUpMovesSection: some View {
+        if !levelUpMoves.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.l.dexMovesLevelUpTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(levelUpMoves, id: \.moveID) { lm in
+                    HStack(spacing: 6) {
+                        MoveRow(store: store, moveID: lm.moveID)
+                        Spacer(minLength: 4)
+                        Text(store.l.moveLearnAtLevel(lm.level)).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tmMovesSection: some View {
+        if !machineMoves.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.l.dexMovesTMTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(machineMoves, id: \.moveID) { lm in
+                    MoveRow(store: store, moveID: lm.moveID)
+                }
+            }
         }
     }
 

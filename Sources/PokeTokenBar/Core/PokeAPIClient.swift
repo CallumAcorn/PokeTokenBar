@@ -138,21 +138,44 @@ actor PokeAPIClient: PokeProviding {
 
     /// This species' learnset — filters `/pokemon/{id}`'s moves (per version group) down to
     /// `MoveDataVersion.versionGroup` alone, keeping only level-up/TM (egg/tutor are out of scope).
-    func learnableMoves(speciesID id: Int) async throws -> [LearnableMove] {
-        if let cached = learnableMovesCache[id] { return cached }
-        let dto = try await pokemon(id)
-        var out: [LearnableMove] = []
-        for entry in dto.moves {
+    /// Keyed by "moveID-method" — PokéAPI genuinely lists some moves twice within the same version
+    /// group for evolved species (e.g. Charizard's Ember shows up at both level 1 and level 7 in
+    /// black-white). The level-1 entry is an evolution-inheritance artifact — it shows up in every
+    /// generation's data, always alongside an explicit `order` field, whereas the real/canonical
+    /// level (7 here — what every in-game and community reference actually lists) carries no
+    /// `order`. We don't parse `order`, so the higher level is kept as a proxy: the artifact entries
+    /// are consistently *lower* than the canonical one. Keeping duplicates would double-render the
+    /// row (ForEach id collision), let auto-learn append the same move twice, and — worse — make the
+    /// whole learnset look unlocked from level 1, defeating the level gate entirely. Pure/static so
+    /// it's testable without a network call.
+    static func parseLearnableMoves(from moves: [MoveEntryDTO]) -> [LearnableMove] {
+        var byKey: [String: LearnableMove] = [:]
+        for entry in moves {
             let moveID = Self.id(from: entry.move.url ?? "")
             guard moveID > 0 else { continue }
             for vgd in entry.version_group_details where vgd.version_group.name == MoveDataVersion.versionGroup {
+                let method: LearnMethod
                 switch vgd.move_learn_method.name {
-                case "level-up": out.append(LearnableMove(moveID: moveID, method: .levelUp, level: vgd.level_learned_at))
-                case "machine":  out.append(LearnableMove(moveID: moveID, method: .machine, level: 0))
-                default: break
+                case "level-up": method = .levelUp
+                case "machine":  method = .machine
+                default: continue
+                }
+                let level = method == .levelUp ? vgd.level_learned_at : 0
+                let key = "\(moveID)-\(method.rawValue)"
+                if let existing = byKey[key] {
+                    if level > existing.level { byKey[key] = LearnableMove(moveID: moveID, method: method, level: level) }
+                } else {
+                    byKey[key] = LearnableMove(moveID: moveID, method: method, level: level)
                 }
             }
         }
+        return Array(byKey.values)
+    }
+
+    func learnableMoves(speciesID id: Int) async throws -> [LearnableMove] {
+        if let cached = learnableMovesCache[id] { return cached }
+        let dto = try await pokemon(id)
+        let out = Self.parseLearnableMoves(from: dto.moves)
         learnableMovesCache[id] = out
         return out
     }

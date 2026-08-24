@@ -51,6 +51,58 @@ final class MovesTests: XCTestCase {
                               fileURL: url, rng: SeededRNG(seed: seed))
     }
 
+    // MARK: Learnset parsing (PokeAPIClient.parseLearnableMoves)
+
+    /// Real PokéAPI data quirk (found live on Charizard): an evolved species' Ember shows up twice
+    /// within the same version group — level 1 (an evolution-inheritance artifact) and level 7 (the
+    /// real, canonical level every reference lists). Left undeduped this double-rendered the row
+    /// (ForEach id collision on moveID), let auto-learn append the same move to knownMoves twice,
+    /// and — since the artifact is always the *lower* level — made the move look learnable from
+    /// level 1, defeating the level gate for the whole learnset if kept.
+    func testParseLearnableMovesDedupesDuplicateVersionGroupEntries() {
+        let entry = MoveEntryDTO(
+            move: NamedRef(name: "ember", url: "https://pokeapi.co/api/v2/move/52/"),
+            version_group_details: [
+                VersionGroupDetailDTO(level_learned_at: 7, move_learn_method: NamedRef(name: "level-up", url: nil),
+                                      version_group: NamedRef(name: MoveDataVersion.versionGroup, url: nil)),
+                VersionGroupDetailDTO(level_learned_at: 1, move_learn_method: NamedRef(name: "level-up", url: nil),
+                                      version_group: NamedRef(name: MoveDataVersion.versionGroup, url: nil)),
+            ])
+        let out = PokeAPIClient.parseLearnableMoves(from: [entry])
+        XCTAssertEqual(out.count, 1, "duplicate (move, method) entries in the same version group must collapse to one")
+        XCTAssertEqual(out.first?.level, 7, "keeps the higher (canonical) of the two levels, not the evolution-artifact level 1")
+    }
+
+    /// Level-up and machine are tracked separately even for the same move — a move can be both
+    /// TM-teachable and level-up learnable without one clobbering the other.
+    func testParseLearnableMovesKeepsLevelUpAndMachineSeparate() {
+        let entry = MoveEntryDTO(
+            move: NamedRef(name: "flamethrower", url: "https://pokeapi.co/api/v2/move/53/"),
+            version_group_details: [
+                VersionGroupDetailDTO(level_learned_at: 47, move_learn_method: NamedRef(name: "level-up", url: nil),
+                                      version_group: NamedRef(name: MoveDataVersion.versionGroup, url: nil)),
+                VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "machine", url: nil),
+                                      version_group: NamedRef(name: MoveDataVersion.versionGroup, url: nil)),
+            ])
+        let out = PokeAPIClient.parseLearnableMoves(from: [entry])
+        XCTAssertEqual(out.count, 2)
+        XCTAssertTrue(out.contains { $0.method == .levelUp && $0.level == 47 })
+        XCTAssertTrue(out.contains { $0.method == .machine })
+    }
+
+    /// A different version group (or egg/tutor method) never leaks into the pinned learnset.
+    func testParseLearnableMovesIgnoresOtherVersionGroupsAndMethods() {
+        let entry = MoveEntryDTO(
+            move: NamedRef(name: "irrelevant", url: "https://pokeapi.co/api/v2/move/1/"),
+            version_group_details: [
+                VersionGroupDetailDTO(level_learned_at: 5, move_learn_method: NamedRef(name: "level-up", url: nil),
+                                      version_group: NamedRef(name: "sword-shield", url: nil)),
+                VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "egg", url: nil),
+                                      version_group: NamedRef(name: MoveDataVersion.versionGroup, url: nil)),
+            ])
+        XCTAssertEqual(PokeAPIClient.parseLearnableMoves(from: [entry]), [])
+    }
+
     // MARK: Learning via level-up
 
     func testLearnLevelUpMoveWhenLevelReached() {
