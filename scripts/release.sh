@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 # 포크 기본값. 업스트림으로 배포하려면 환경변수로 덮어쓴다.
 REPO="${PTB_REPO:-CallumAcorn/PokeTokenBar}"
 TAP_REPO="${PTB_TAP_REPO:-CallumAcorn/homebrew-tap}"
-CASK_PATH="Casks/poke-token-bar.rb"
+CASK_PATH="Casks/poke-token-bar-hardened.rb"
 
 # ── 문서 일관성 검토 (배포 전 항상 실행) ───────────────────────────────────
 # 기계적으로 잡을 수 있는 것만 자동 경고. 내용(기능 설명) 변경 여부는 사람이 체크리스트로 판단.

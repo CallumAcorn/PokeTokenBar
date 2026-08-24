@@ -12,7 +12,16 @@ final class UpdateChecker {
     private(set) var isUpdating = false
 
     let currentVersion: String
-    private let repo = "chattymin/PokeTokenBar"
+    /// Update source. **Must be this fork.** Pointing at upstream offered users a "v2.5.2
+    /// available" banner whose Update button installed the original project — different code,
+    /// none of the hardening here, and a silent downgrade of everything this fork changed.
+    /// Guarded mechanically by verify-hardening.sh so it cannot drift back.
+    nonisolated static let repo = "CallumAcorn/PokeTokenBar"
+
+    /// Homebrew cask token. Deliberately **not** upstream's `poke-token-bar`: sharing the token
+    /// meant `brew upgrade --cask poke-token-bar` would match an upstream install and pull their
+    /// build. A distinct token makes the two impossible to confuse.
+    nonisolated static let caskToken = "poke-token-bar-hardened"
     private let clock: () -> Date
     private var lastChecked: Date?
 
@@ -27,7 +36,7 @@ final class UpdateChecker {
     func check(minInterval: TimeInterval = 1800) async {
         if let last = lastChecked, clock().timeIntervalSince(last) < minInterval { return }
         lastChecked = clock()
-        guard let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") else { return }
+        guard let url = URL(string: "https://api.github.com/repos/\(Self.repo)/releases/latest") else { return }
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
@@ -93,7 +102,7 @@ final class UpdateChecker {
         guard let brew = BinaryLocator.resolve("brew", staticPaths: [
             "/opt/homebrew/bin/brew", "/usr/local/bin/brew",
         ]) else { return nil }
-        return run(brew, ["list", "--cask", "poke-token-bar"], timeout: 20) ? brew : nil
+        return run(brew, ["list", "--cask", caskToken], timeout: 20) ? brew : nil
     }
 
     private nonisolated static func run(_ binary: String, _ args: [String], timeout: TimeInterval) -> Bool {
@@ -116,13 +125,13 @@ final class UpdateChecker {
     /// - 앱 종료를 기다림(pgrep): 실행 중 번들 교체 레이스 + 재오픈 LaunchServices(-600) 레이스 회피.
     /// - brew 를 백그라운드+워치독(≤300s)으로 감싸 hang 시에도 reopen 이 반드시 실행되게 함
     ///   (앱이 종료된 채 영영 안 돌아오는 것 방지). 종료 직후 재오픈 실패 대비 `open` 재시도.
-    /// 인자는 positional($1=brew, $2=bundlePath)로 전달 — 셸 인젝션 차단.
+    /// 인자는 positional($1=brew, $2=bundlePath, $3=caskToken)로 전달 — 셸 인젝션 차단.
     private static func launchDetachedUpgrade(brew: String) {
         let bundlePath = Bundle.main.bundlePath
         let script = """
         for i in $(seq 1 40); do pgrep -x PokeTokenBar >/dev/null 2>&1 || break; sleep 0.5; done
         export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
-        ( "$1" update; "$1" upgrade --cask poke-token-bar ) &
+        ( "$1" update; "$1" upgrade --cask "$3" ) &
         brew_pid=$!
         for i in $(seq 1 300); do kill -0 "$brew_pid" 2>/dev/null || break; sleep 1; done
         kill "$brew_pid" 2>/dev/null
@@ -135,7 +144,7 @@ final class UpdateChecker {
         """
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = ["-c", script, "sh", brew, bundlePath]
+        task.arguments = ["-c", script, "sh", brew, bundlePath, Self.caskToken]
         try? task.run()
     }
 }

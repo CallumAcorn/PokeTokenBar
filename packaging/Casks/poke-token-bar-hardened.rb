@@ -1,5 +1,10 @@
 # Hardened cask for this fork. Copy into your own Homebrew tap.
 #
+# The token is deliberately NOT upstream's `poke-token-bar`. Sharing it meant
+# `brew upgrade --cask poke-token-bar` could match an upstream install and pull
+# their build instead of this one, which is the opposite of what a fork user
+# wants. A distinct token makes the two impossible to confuse.
+#
 # Two deliberate differences from the upstream cask:
 #
 #   1. `sha256` is pinned to the release artefact instead of `:no_check`.
@@ -21,10 +26,10 @@
 #      their behalf.
 #
 # Verify before you trust:
-#   shasum -a 256 "$(brew --cache)/downloads/"*poke-token-bar*
+#   shasum -a 256 "$(brew --cache)/downloads/"*poke-token-bar-hardened*
 #   gh attestation verify PokeTokenBar-ci --repo CallumAcorn/PokeTokenBar
 
-cask "poke-token-bar" do
+cask "poke-token-bar-hardened" do
   version "2.5.1"
   # Replaced by scripts/release.sh at publish time. Never set this to :no_check.
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
