@@ -2,14 +2,23 @@ import AppKit
 import Observation
 
 /// GitHub 릴리스 최신 버전을 확인해 새 버전이 있으면 팝오버에 알린다.
-/// 실제 설치는 brew 사용자면 `brew upgrade`, 그 외엔 릴리스 페이지 열기(저위험·인프라 0).
+///
+/// This fork publishes **tag-only releases with no binaries**. Without an Apple Developer ID a
+/// downloadable build is self-signed and un-notarised, so every user would have to defeat
+/// Gatekeeper to open it — the exact bypass this fork removed from the upstream cask. Shipping no
+/// binary avoids the problem outright: a release is a version marker plus notes, and the user
+/// rebuilds from source they can read.
+///
+/// So the app cannot install an update and does not pretend to. It reports that one exists and
+/// shows the commands. The previous `brew upgrade` path is gone: with no binaries there is nothing
+/// for brew to fetch, and a cask upgrade was also the last mechanism that could pull a build from
+/// somewhere other than this fork.
 @MainActor
 @Observable
 final class UpdateChecker {
     struct Available: Equatable { let version: String; let url: String }
 
     private(set) var available: Available?
-    private(set) var isUpdating = false
 
     let currentVersion: String
     /// Update source. **Must be this fork.** Pointing at upstream offered users a "v2.5.2
@@ -62,37 +71,58 @@ final class UpdateChecker {
         available = nil
     }
 
-    /// 업데이트 적용: brew cask 설치본이면 `brew upgrade` 후 재시작, 아니면 릴리스 페이지.
-    func applyUpdate() {
-        guard let update = available, !isUpdating else { return }
-        isUpdating = true
-        Task { @MainActor in
-            // brew cask 설치본이면 분리(detached) 스크립트가 앱 종료 후 tap 갱신→업그레이드→재오픈.
-            // 그 외(brew 미설치/비-cask 설치)면 릴리스 페이지를 연다.
-            let brew = await Task.detached { Self.brewCaskPath() }.value
-            if let brew {
-                Self.launchDetachedUpgrade(brew: brew)
-                NSApp.terminate(nil)
-            } else {
-                isUpdating = false
-                AppLog.write("update: brew cask 아님/brew 미설치 → 릴리스 페이지 열기")
-                if let u = URL(string: update.url) { NSWorkspace.shared.open(u) }
-            }
-        }
+    /// Open the release notes for the available version. Named for what it does — there is no
+    /// install step to trigger.
+    func openReleaseNotes() {
+        guard let update = available, let url = URL(string: update.url) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// The commands that actually perform an update, for display and copying.
+    ///
+    /// `checkoutPath` is intentionally a placeholder rather than a guess at where the user cloned:
+    /// printing a path that does not exist on their machine is worse than an obvious placeholder.
+    nonisolated static func updateCommands(checkoutPath: String = "~/Code/PokeTokenBar") -> String {
+        """
+        cd \(checkoutPath)
+        git pull
+        ./scripts/build-app.sh
+        """
     }
 
     // MARK: 버전 비교
 
-    /// a 가 b 보다 높은 semver 인가. ("2.0.10" > "2.0.9" 등 숫자 비교)
+    /// Version ordering for this fork's scheme: `MAJOR.MINOR.PATCH` optionally followed by
+    /// `-hardened.N`.
+    ///
+    /// The suffix exists because upstream and this fork would otherwise ship different code under
+    /// identical version strings — both sat at 2.5.1 while upstream released its own 2.5.2.
+    ///
+    /// Naive dot-splitting cannot do this. `"2.5.1-hardened.1".split(".")` yields
+    /// `["2","5","1-hardened","1"]`, and `Int("1-hardened")` is nil, so the patch collapses to 0
+    /// and the build reads as *older* than plain 2.5.1 — the update banner would then never fire.
+    nonisolated static func parseVersion(_ v: String) -> (core: [Int], hardened: Int) {
+        let parts = v.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        let core = parts[0].split(separator: ".").map { Int($0) ?? 0 }
+        var hardened = 0
+        if parts.count > 1 {
+            // "hardened.3" -> 3. Any other suffix contributes 0, so it sorts alongside the plain
+            // release rather than silently ranking above or below it.
+            let tail = parts[1].split(separator: ".")
+            if tail.first == "hardened", tail.count > 1, let n = Int(tail[1]) { hardened = n }
+        }
+        return (core, hardened)
+    }
+
+    /// a 가 b 보다 높은 버전인가.
     nonisolated static func isNewer(_ a: String, than b: String) -> Bool {
-        let pa = a.split(separator: ".").map { Int($0) ?? 0 }
-        let pb = b.split(separator: ".").map { Int($0) ?? 0 }
-        for i in 0..<max(pa.count, pb.count) {
-            let x = i < pa.count ? pa[i] : 0
-            let y = i < pb.count ? pb[i] : 0
+        let va = parseVersion(a), vb = parseVersion(b)
+        for i in 0..<max(va.core.count, vb.core.count) {
+            let x = i < va.core.count ? va.core[i] : 0
+            let y = i < vb.core.count ? vb.core[i] : 0
             if x != y { return x > y }
         }
-        return false
+        return va.hardened > vb.hardened
     }
 
     // MARK: brew 적용 (nonisolated — 블로킹 Process 는 detached 에서)

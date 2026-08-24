@@ -76,6 +76,18 @@ Of the fixed hosts, the only outbound request carrying anything of yours is the 
 call, which goes to Anthropic, the party that issued the token, and it can be switched off
 entirely in Settings.
 
+## Releases carry no binaries
+
+Releases are a tag plus notes. Nothing is attached to download.
+
+Without an Apple Developer ID, a distributed build is self-signed and un-notarised, so every user
+would have to defeat Gatekeeper to open it — the same bypass this fork removed from the upstream
+cask. Publishing no binary avoids the problem rather than working around it: you build from source
+you can read, and `verify-hardening.sh` fails if a binary is ever attached to a release.
+
+The app therefore cannot update itself and does not pretend to. It reports a new version and shows
+the commands to rebuild.
+
 ## URL scheme
 
 The app registers `poketokenbar://`, used for trade invite links.

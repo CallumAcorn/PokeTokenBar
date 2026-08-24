@@ -84,8 +84,11 @@ if [[ "${1:-}" == "--check-only" ]]; then
 fi
 
 VERSION="${1:?사용: release.sh <version>  (예: 2.1.1)}"
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "✗ 버전 형식 오류: $VERSION"; exit 1; }
-PREV=$(grep -oE 'VERSION="[0-9.]+"' scripts/build-app.sh | grep -oE '[0-9.]+')
+# 포크 버전 형식: MAJOR.MINOR.PATCH 뒤에 선택적으로 -hardened.N.
+# 접미사가 있는 이유: 업스트림과 이 포크가 **같은 버전 문자열로 다른 코드**를 내보내던 상태였다
+# (둘 다 2.5.1 인데 업스트림은 자체 2.5.2 를 릴리스). 접미사가 둘을 영구히 구분한다.
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-hardened\.[0-9]+)?$ ]] || { echo "✗ 버전 형식 오류: $VERSION (예: 2.5.1-hardened.2)"; exit 1; }
+PREV=$(grep -oE 'VERSION="[^"]+"' scripts/build-app.sh | head -1 | sed -E 's/VERSION="([^"]+)"/\1/')
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 [[ "$BRANCH" == "main" ]] || { echo "✗ main 브랜치에서 실행하세요 (현재: $BRANCH) — 커밋/push 대상 일치 보장"; exit 1; }
 echo "=== PokeTokenBar 릴리스 $PREV → $VERSION ==="
@@ -104,77 +107,45 @@ elif [[ $doc_rc -ne 0 ]]; then
   [[ "$a" == "y" || "$a" == "Y" ]] || { echo "중단 — 문서 먼저 갱신하세요."; exit 1; }
 fi
 
-echo "▶ 코드서명 신원 게이트 (배포 전 — ad-hoc 릴리스 차단으로 사용자 Keychain '항상 허용' 유지)"
-# 릴리스가 ad-hoc(빌드마다 cdhash 변경) 또는 다른 인증서로 나가면, 기존 사용자의 Keychain "항상 허용"이
-# 앱의 지정요구(DR: identifier + certificate leaf)와 안 맞아 매 업그레이드마다 깨진다 → Claude 한도 조회 시
-# macOS 키체인 접근 다이얼로그가 재프롬프트된다. 안정적 자체서명 신원(고정 leaf)으로만 배포되게 강제한다.
-SIGN_IDENTITY="${CODESIGN_IDENTITY:-PokeTokenBar Local}"
-# "PokeTokenBar Local" leaf SHA-1 — 설치본 DR 의 certificate leaf pin. 인증서를 재생성/교체하면 갱신 필요.
-EXPECTED_LEAF="507F814330C727B38AC9A987ECBA929721C52C62"
-LEAF=$(security find-identity -v -p codesigning | awk -v id="\"$SIGN_IDENTITY\"" '$0 ~ id {print $2; exit}')
-if [[ -z "$LEAF" ]]; then
-  echo "✗ 유효 codesigning identity '$SIGN_IDENTITY' 없음(미설치·만료 포함)."
-  echo "  이대로면 build-app.sh 가 ad-hoc 서명 → 이 릴리스로 올린 사용자 전원이 Keychain 을 재승인해야 한다."
-  echo "  복구: ./scripts/create-signing-cert.sh 실행 → 새 leaf 로 이 스크립트의 EXPECTED_LEAF 갱신 → 재실행."
-  exit 1
-fi
-if [[ "$LEAF" != "$EXPECTED_LEAF" ]]; then
-  echo "⚠ 서명 인증서 leaf 불일치: 현재 $LEAF ≠ 고정 $EXPECTED_LEAF"
-  echo "  인증서를 재생성/교체했다면, 이 릴리스로 업그레이드하는 기존 사용자 전원이 Keychain 을 1회 재승인해야 한다."
-  read -r -p "  의도한 변경이면 EXPECTED_LEAF 를 갱신하고 계속하세요. 지금 계속? [y/N] " a
-  [[ "$a" == "y" || "$a" == "Y" ]] || { echo "중단 — 서명 신원을 확인하세요."; exit 1; }
-fi
-echo "  ✓ '$SIGN_IDENTITY' leaf=$LEAF — 안정적 서명으로 배포(사용자 재프롬프트 없음)"
-export PTB_REQUIRE_STABLE_SIGN=1   # build-app.sh 방어선: ad-hoc 폴백으로 새면 즉시 실패
+# 코드서명 신원 게이트는 여기 없다 — 이 포크는 **바이너리를 배포하지 않는다**.
+# 그 게이트의 목적은 "배포된 .app 이 매 업그레이드마다 사용자 Keychain 승인을 깨지 않게" 하는 것인데,
+# 사용자가 각자 로컬에서 빌드하면 서명은 그 사람 기계의 문제이고 릴리스와 무관하다.
+# 바이너리 배포로 돌아간다면 게이트와 EXPECTED_LEAF 핀을 함께 되살려야 한다.
 
 echo "▶ 3/8 VERSION 범프 $PREV → $VERSION (아직 미커밋)"
 perl -pi -e "s/VERSION=\"[0-9.]+\"/VERSION=\"$VERSION\"/" scripts/build-app.sh
 
-echo "▶ 4/8 빌드 + zip (push 전 검증 — 실패해도 범프 미커밋이라 origin/main 무손상)"
+echo "▶ 4/6 빌드 검증 (배포물 아님 — 태그가 실제로 빌드되는지 확인)"
 ./scripts/build-app.sh >/dev/null
-rm -f build/PokeTokenBar.zip build/SHA256SUMS
-ditto -c -k --keepParent build/PokeTokenBar.app build/PokeTokenBar.zip
 BUILT=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" build/PokeTokenBar.app/Contents/Info.plist)
 [[ "$BUILT" == "$VERSION" ]] || { echo "✗ 빌드 버전 불일치: $BUILT (수동 복구: git checkout scripts/build-app.sh)"; exit 1; }
+[[ -f build/PokeTokenBar.app/Contents/Resources/LICENSE ]] || { echo "✗ 번들에 LICENSE 가 없습니다 — MIT 고지 요구사항"; exit 1; }
+echo "  ✓ $VERSION 빌드 성공"
 
-# 체크섬은 릴리스와 cask 양쪽의 단일 근거다. 여기서 못 만들면 배포하지 않는다 —
-# 해시 없는 릴리스는 cask 를 :no_check 로 되돌리게 만들고, 그게 원래 문제였다.
-ZIP_SHA=$(shasum -a 256 build/PokeTokenBar.zip | awk '{print $1}')
-[[ -n "$ZIP_SHA" ]] || { echo "✗ zip SHA256 산출 실패 — 중단"; exit 1; }
-( cd build && shasum -a 256 PokeTokenBar.zip > SHA256SUMS )
-echo "  ✓ SHA256 $ZIP_SHA"
-
-echo "▶ 5/8 커밋 + push (빌드 성공 후)"
+echo "▶ 5/6 커밋 + push"
 git add scripts/build-app.sh
 git commit -q -m "release: bump version to $VERSION
 
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 git push -q origin main
 
-echo "▶ 6/8 GitHub Release v$VERSION"
+echo "▶ 6/6 GitHub Release v$VERSION (태그 전용 — 첨부 바이너리 없음)"
+# 바이너리를 붙이지 않는 이유: Apple Developer ID 가 없어 내려받은 .app 은 자체서명·미공증이고,
+# 사용자가 Gatekeeper 를 손으로 우회해야 한다 — 이 포크가 업스트림 cask 에서 없앤 바로 그 패턴이다.
+# 릴리스는 버전 표식 + 노트이고, 설치는 각자 소스에서 빌드한다(UpdateChecker 가 그 안내를 띄운다).
 NOTES_FILE="${PTB_NOTES_FILE:-}"
 if [[ -n "$NOTES_FILE" && -f "$NOTES_FILE" ]]; then
-  gh release create "v$VERSION" build/PokeTokenBar.zip build/SHA256SUMS --repo "$REPO" --title "PokeTokenBar v$VERSION" --target main --notes-file "$NOTES_FILE"
+  gh release create "v$VERSION" --repo "$REPO" --title "PokeTokenBar v$VERSION" --target main --notes-file "$NOTES_FILE"
 else
-  gh release create "v$VERSION" build/PokeTokenBar.zip build/SHA256SUMS --repo "$REPO" --title "PokeTokenBar v$VERSION" --target main --notes "Release v$VERSION"
+  gh release create "v$VERSION" --repo "$REPO" --title "PokeTokenBar v$VERSION" --target main --notes "Release v$VERSION
+
+Build from source to update:
+
+    cd ~/Code/PokeTokenBar
+    git pull
+    ./scripts/build-app.sh
+
+No binary is attached: without Apple notarisation a downloaded build is blocked by Gatekeeper. See INSTALL.md."
 fi
 
-echo "▶ 7/8 Homebrew cask $VERSION (sha256 고정)"
-TMP_CASK=$(mktemp)
-gh api "repos/$TAP_REPO/contents/$CASK_PATH" --jq '.content' | base64 -d | perl -pe "s/version \"[0-9.]+\"/version \"$VERSION\"/" | perl -pe "s/^(\s*)sha256\s+.*$/\${1}sha256 \"$ZIP_SHA\"/" > "$TMP_CASK"
-# 회귀 방지 게이트: :no_check 로 되돌아간 cask 는 밀지 않는다.
-if grep -q 'sha256 :no_check' "$TMP_CASK"; then
-  echo "✗ cask 가 sha256 :no_check 입니다 — 해시 고정 실패, 중단." >&2
-  rm -f "$TMP_CASK"; exit 1
-fi
-grep -q "sha256 \"$ZIP_SHA\"" "$TMP_CASK" || { echo "✗ cask 에 sha256 이 반영되지 않았습니다 — 중단." >&2; rm -f "$TMP_CASK"; exit 1; }
-SHA=$(gh api "repos/$TAP_REPO/contents/$CASK_PATH" --jq '.sha')
-gh api -X PUT "repos/$TAP_REPO/contents/$CASK_PATH" \
-  -f message="cask: poke-token-bar $VERSION" \
-  -f content="$(base64 -i "$TMP_CASK")" -f sha="$SHA" --jq '.commit.html_url'
-rm -f "$TMP_CASK"
-
-echo "▶ 8/8 GitHub Pages 재빌드(랜딩 동적 배지 갱신 유도)"
-gh api -X POST "repos/$REPO/pages/builds" >/dev/null 2>&1 || true
-
-echo "✓ v$VERSION 배포 완료. 검증: brew upgrade --cask poke-token-bar"
+echo "✓ v$VERSION 태그 릴리스 완료. 사용자는 git pull + ./scripts/build-app.sh 로 갱신합니다."

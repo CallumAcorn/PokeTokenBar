@@ -31,6 +31,7 @@ rm -rf build/verify
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Library/LaunchAgents"
 cp .build/release/PokeTokenBar "$APP/Contents/MacOS/PokeTokenBar"
 cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp LICENSE "$APP/Contents/Resources/LICENSE"
 
 # build-app.sh 가 만드는 것과 같은 plist 두 벌(내용 검사가 목적).
 for variant in login autorestart; do
@@ -93,9 +94,18 @@ refute "UpdateChecker 가 업스트림 저장소를 가리키지 않음" "grep -
 expect "UpdateChecker 가 이 포크를 가리킴" "grep -q 'CallumAcorn/PokeTokenBar' Sources/PokeTokenBar/Core/UpdateChecker.swift"
 refute "cask 토큰이 업스트림과 겹치지 않음" "grep -qE '^[[:space:]]*cask \"poke-token-bar\"' packaging/Casks/*.rb"
 
+echo "==> 라이선스 고지"
+# MIT 는 "모든 사본"에 고지 포함을 요구한다. 소스만 배포할 땐 저장소의 LICENSE 로 충족되지만,
+# .app 을 넘기는 순간 그 사본에는 고지가 없다. 번들에 들어가는지 기계로 확인한다.
+expect "번들에 LICENSE 포함" "test -f '$APP/Contents/Resources/LICENSE'"
+expect "build-app.sh 가 LICENSE 를 번들에 복사" "grep -q 'cp LICENSE' scripts/build-app.sh"
+
 echo "==> 소스 불변식"
 expect "build-app.sh 가 hardened runtime 으로 서명" "grep -q 'options runtime' scripts/build-app.sh"
-expect "release.sh 가 SHA256 을 산출" "grep -q 'shasum -a 256' scripts/release.sh"
+# 이 포크는 태그 전용 릴리스만 낸다. 바이너리를 붙이는 순간 자체서명·미공증 .app 이 되어
+# 사용자가 Gatekeeper 를 손으로 우회해야 한다 — 업스트림 cask 에서 없앤 바로 그 패턴이다.
+# 바이너리 배포로 돌아간다면 SHA256SUMS·서명 게이트·EXPECTED_LEAF 핀을 함께 되살려야 한다.
+refute "release.sh 가 릴리스에 바이너리를 첨부하지 않음" "grep -qE 'ditto -c -k|release (create|upload).*\.zip' scripts/release.sh"
 refute "워크플로 액션이 전부 커밋 SHA 로 고정" "grep -rnE 'uses: .*@(v[0-9]+|main|master)\$' .github/workflows/"
 
 rm -rf build/verify
