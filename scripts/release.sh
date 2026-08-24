@@ -116,7 +116,9 @@ echo "▶ 3/8 VERSION 범프 $PREV → $VERSION (아직 미커밋)"
 perl -pi -e "s/VERSION=\"[0-9.]+\"/VERSION=\"$VERSION\"/" scripts/build-app.sh
 
 echo "▶ 4/6 빌드 검증 (배포물 아님 — 태그가 실제로 빌드되는지 확인)"
-./scripts/build-app.sh >/dev/null
+# 설치는 하지 않는다. 확인용 빌드가 실행 중인 앱을 죽이고 /Applications 를 교체하면, 릴리스를
+# 끊는 것만으로 사용자의 메뉴바 앱이 사라진다(실측). 검증은 build/ 안에서 끝낸다.
+PTB_NO_INSTALL=1 ./scripts/build-app.sh >/dev/null
 BUILT=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" build/PokeTokenBar.app/Contents/Info.plist)
 [[ "$BUILT" == "$VERSION" ]] || { echo "✗ 빌드 버전 불일치: $BUILT (수동 복구: git checkout scripts/build-app.sh)"; exit 1; }
 [[ -f build/PokeTokenBar.app/Contents/Resources/LICENSE ]] || { echo "✗ 번들에 LICENSE 가 없습니다 — MIT 고지 요구사항"; exit 1; }

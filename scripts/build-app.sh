@@ -145,9 +145,17 @@ else
     exit 1
 fi
 
-echo "==> 기존 인스턴스 종료 + /Applications 설치"
-pkill -x "$APP_NAME" 2>/dev/null || true
-rm -rf "/Applications/$APP_NAME.app"
-cp -R "$APP" /Applications/
-
-echo "완료: open /Applications/$APP_NAME.app"
+# PTB_NO_INSTALL=1 — 빌드/서명/검증만 하고 설치는 건너뛴다.
+# release.sh 가 "이 태그가 실제로 빌드되나"를 확인할 때 쓴다. 확인 목적의 빌드가 실행 중인 앱을
+# pkill 하고 /Applications 를 갈아끼우면 안 된다 — 실측: 릴리스를 한 번 끊었더니 사용자의 메뉴바
+# 앱이 조용히 사라졌고, 다시 띄워주는 단계도 없었다.
+if [[ "${PTB_NO_INSTALL:-0}" == "1" ]]; then
+    echo "==> 설치 건너뜀 (PTB_NO_INSTALL=1) — 빌드 검증 전용"
+    echo "완료: $APP (설치 안 함)"
+else
+    echo "==> 기존 인스턴스 종료 + /Applications 설치"
+    pkill -x "$APP_NAME" 2>/dev/null || true
+    rm -rf "/Applications/$APP_NAME.app"
+    cp -R "$APP" /Applications/
+    echo "완료: open /Applications/$APP_NAME.app"
+fi
