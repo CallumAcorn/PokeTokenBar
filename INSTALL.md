@@ -120,6 +120,20 @@ codex not in static paths and shell resolution is disabled — skipping shell sp
 revives it after any non-zero exit. Here that is a separate opt-in switch, off by default.
 "Launch at login" on its own only starts the app at login.
 
+## Updating
+
+The app tells you when a new version exists but **cannot install it** — this fork publishes
+tag-only releases with no downloadable build. Press "How to update" on the banner and run:
+
+```
+cd ~/Code/PokeTokenBar
+git pull
+./scripts/build-app.sh
+```
+
+Versions here look like `2.5.1-hardened.1`. The suffix exists because upstream and this fork would
+otherwise ship different code under the same version string.
+
 ## First run
 
 Expect a slow first scan. The app reads local usage logs from every AI CLI you have, and a large

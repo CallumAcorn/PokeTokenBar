@@ -633,7 +633,13 @@ struct L {
           "🆕 v\(version) が利用可能（現在 \(current)）",
           "🆕 v\(version) disponible (tienes \(current))")
     }
-    var updateButton: String { t("업데이트", "Update", "更新", "Actualizar") }
+    /// The app cannot install an update (releases carry no binaries), so the button says what it
+    /// actually does. Labelling it "Update" promised an install that never happened.
+    var updateButton: String { t("업데이트 방법", "How to update", "更新方法", "Cómo actualizar") }
+    var updateHowToTitle: String { t("소스에서 다시 빌드", "Rebuild from source", "ソースから再ビルド", "Reconstruir desde el código") }
+    var updateHowToBody: String { t("이 포크는 바이너리를 배포하지 않습니다(Apple 공증 없이 내려받은 앱은 Gatekeeper 가 막습니다). 아래를 실행해 업데이트하세요.", "This fork ships no binaries — without Apple notarisation a downloaded build is blocked by Gatekeeper. Run these to update.", "このフォークはバイナリを配布しません（Apple の公証がないダウンロード版は Gatekeeper に阻まれます）。以下を実行して更新してください。", "Este fork no distribuye binarios — sin la certificación de Apple, una descarga queda bloqueada por Gatekeeper. Ejecuta esto para actualizar.") }
+    var updateCopyCommands: String { t("명령 복사", "Copy commands", "コマンドをコピー", "Copiar comandos") }
+    var updateReleaseNotes: String { t("릴리스 노트", "Release notes", "リリースノート", "Notas de la versión") }
     var updateLater: String { t("나중에", "Later", "後で", "Más tarde") }
     var updating: String { t("업데이트 중…", "Updating…", "更新中…", "Actualizando…") }
     var updateSectionTitle: String { t("업데이트", "Updates", "アップデート", "Actualizaciones") }

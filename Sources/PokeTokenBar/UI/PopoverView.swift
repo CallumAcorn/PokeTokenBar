@@ -39,6 +39,10 @@ struct PopoverView: View {
     @Environment(TradeStore.self) private var trade
     @Environment(PopoverNavigation.self) private var nav
 
+    /// Shown from the update banner. The app cannot install an update, so the button opens
+    /// instructions rather than starting anything.
+    @State private var showUpdateHowTo = false
+
     private var l: L { companion.l }
 
     var body: some View {
@@ -71,19 +75,24 @@ struct PopoverView: View {
                 Text(l.updateAvailable(update.version, current: updater.currentVersion))
                     .font(.caption)
                 Spacer()
-                if updater.isUpdating {
-                    Text(l.updating).font(.caption2).foregroundStyle(.secondary)
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button(l.updateButton) { updater.applyUpdate() }
-                        .buttonStyle(.borderedProminent).controlSize(.small)
-                    Button(l.updateLater) { updater.skipCurrent() }
-                        .buttonStyle(.borderless).controlSize(.small).foregroundStyle(.secondary)
-                }
+                Button(l.updateButton) { showUpdateHowTo = true }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                Button(l.updateLater) { updater.skipCurrent() }
+                    .buttonStyle(.borderless).controlSize(.small).foregroundStyle(.secondary)
             }
             .padding(8)
             .background(Color.accentColor.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .alert(l.updateHowToTitle, isPresented: $showUpdateHowTo) {
+                Button(l.updateCopyCommands) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(UpdateChecker.updateCommands(), forType: .string)
+                }
+                Button(l.updateReleaseNotes) { updater.openReleaseNotes() }
+                Button(l.tradeCancelButton, role: .cancel) {}
+            } message: {
+                Text("\(l.updateHowToBody)\n\n\(UpdateChecker.updateCommands())")
+            }
         }
     }
 

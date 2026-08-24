@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="2.5.1"
+VERSION="2.5.1-hardened.1"
 APP_NAME="PokeTokenBar"
 BUILD_DIR="build"
 APP="$BUILD_DIR/$APP_NAME.app"
@@ -18,6 +18,9 @@ cp ".build/release/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
 # 심볼 strip — 릴리스 바이너리 1.84MB → 0.80MB(-57%). codesign 전에 수행(서명 무효화 방지).
 strip -rSTx "$APP/Contents/MacOS/$APP_NAME" 2>/dev/null || strip -rSx "$APP/Contents/MacOS/$APP_NAME"
 cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# MIT 는 "모든 사본"에 저작권 고지와 허가 고지를 포함하라고 요구한다. 소스 배포만 할 때는
+# 저장소의 LICENSE 로 충족되지만, .app 을 배포하는 순간 그 사본에는 고지가 없다. 번들에 넣어 둔다.
+cp LICENSE "$APP/Contents/Resources/LICENSE"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

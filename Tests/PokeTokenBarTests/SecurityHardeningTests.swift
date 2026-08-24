@@ -433,3 +433,50 @@ final class UpdateSourceTests: XCTestCase {
         XCTAssertEqual(UpdateChecker.caskToken, "poke-token-bar-hardened")
     }
 }
+
+/// Version ordering for this fork's `MAJOR.MINOR.PATCH[-hardened.N]` scheme.
+///
+/// The suffix exists because upstream and this fork shipped different code under identical
+/// version strings — both sat at 2.5.1 while upstream released its own 2.5.2.
+final class ForkVersionOrderingTests: XCTestCase {
+
+    /// The regression the naive parser caused: `"2.5.1-hardened.1".split(".")` gives
+    /// `["2","5","1-hardened","1"]`, `Int("1-hardened")` is nil, the patch collapses to 0, and the
+    /// build reads as OLDER than plain 2.5.1 — so the update banner would never fire.
+    func testHardenedBuildRanksAboveThePlainRelease() {
+        XCTAssertTrue(UpdateChecker.isNewer("2.5.1-hardened.1", than: "2.5.1"))
+        XCTAssertFalse(UpdateChecker.isNewer("2.5.1", than: "2.5.1-hardened.1"))
+    }
+
+    func testHardenedCountersOrderNumerically() {
+        XCTAssertTrue(UpdateChecker.isNewer("2.5.1-hardened.10", than: "2.5.1-hardened.9"))
+        XCTAssertFalse(UpdateChecker.isNewer("2.5.1-hardened.2", than: "2.5.1-hardened.2"))
+    }
+
+    /// Core version still dominates the suffix.
+    func testCoreVersionBeatsSuffix() {
+        XCTAssertTrue(UpdateChecker.isNewer("2.6.0", than: "2.5.1-hardened.99"))
+        XCTAssertFalse(UpdateChecker.isNewer("2.5.1-hardened.99", than: "2.6.0"))
+    }
+
+    /// Plain semver behaviour is unchanged.
+    func testPlainSemverStillWorks() {
+        XCTAssertTrue(UpdateChecker.isNewer("2.0.10", than: "2.0.9"))
+        XCTAssertFalse(UpdateChecker.isNewer("2.0.9", than: "2.0.10"))
+        XCTAssertFalse(UpdateChecker.isNewer("2.5.1", than: "2.5.1"))
+    }
+
+    /// An unrecognised suffix contributes 0 rather than sorting unpredictably.
+    func testUnknownSuffixIsNeutral() {
+        XCTAssertFalse(UpdateChecker.isNewer("2.5.1-beta.4", than: "2.5.1"))
+        XCTAssertFalse(UpdateChecker.isNewer("2.5.1", than: "2.5.1-beta.4"))
+    }
+
+    /// The instructions must name the script that exists, not a download.
+    func testUpdateCommandsRebuildFromSource() {
+        let cmds = UpdateChecker.updateCommands()
+        XCTAssertTrue(cmds.contains("git pull"))
+        XCTAssertTrue(cmds.contains("./scripts/build-app.sh"))
+        XCTAssertFalse(cmds.lowercased().contains("brew"), "no binary exists for brew to install")
+    }
+}

@@ -290,14 +290,16 @@ struct SettingsView: View {
                 }
                 .disabled(isCheckingUpdate)
             }
-            // 확인 결과 — 알림을 꺼둔 사용자도 여기서 새 버전을 알고 바로 적용할 수 있게 업데이트 버튼을 함께 노출.
+            // 확인 결과 — 알림을 꺼둔 사용자도 여기서 새 버전을 알 수 있게 노출(설치는 소스 재빌드).
             if didCheckUpdate, !isCheckingUpdate {
                 Divider()
                 groupRow {
                     if let version = updater.available?.version {
                         Text(l.updateFound(version)).font(.caption).foregroundStyle(.orange)
                         Spacer()
-                        Button(l.updateButton) { updater.applyUpdate() }.controlSize(.small)
+                        // No install to trigger — releases carry no binaries. Open the notes,
+                        // which is where the rebuild instructions live.
+                        Button(l.updateReleaseNotes) { updater.openReleaseNotes() }.controlSize(.small)
                     } else {
                         Text(l.upToDate(Self.appVersion)).font(.caption).foregroundStyle(.secondary)
                         Spacer()
