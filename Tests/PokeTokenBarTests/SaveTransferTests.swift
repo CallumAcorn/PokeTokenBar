@@ -323,8 +323,10 @@ final class SaveTransferTests: XCTestCase {
         await entered.wait()   // 부화가 라인 fetch(네트워크) 대기 지점에 도달
 
         var imported = oldMacState(today: "2026-08-03")
-        imported.active = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
+        let importedMon = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
                                    stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        imported.party = [importedMon]
+        imported.trainingSlotID = importedMon.id
         let data = try SaveTransfer.encode(state: imported, appVersion: "2.5.0",
                                            deviceName: "Old Mac", now: transferNow)
         try s.applySave(try SaveTransfer.decode(data), todayTokensByProvider: ["test": 1],
@@ -333,7 +335,7 @@ final class SaveTransferTests: XCTestCase {
         await release.fire()
         await hatching.value
 
-        XCTAssertEqual(s.state.active?.baseID, 403, "뒤늦게 끝난 부화가 불러온 개체를 덮어쓰면 안 된다")
+        XCTAssertEqual(s.trainingMon?.baseID, 403, "뒤늦게 끝난 부화가 불러온 개체를 덮어쓰면 안 된다")
         XCTAssertEqual(s.state.dex.count, imported.dex.count, "도감도 부화 경로에 밀려나면 안 된다")
     }
 
@@ -356,14 +358,16 @@ final class SaveTransferTests: XCTestCase {
 
         let s = CompanionStore(provider: GatedIndexProvider(entered: entered, release: release, result: evo),
                                clock: { transferNow }, fileURL: url)
-        XCTAssertNil(s.state.active, "전제: 알 상태에서 시작")
+        XCTAssertNil(s.trainingMon, "전제: 알 상태에서 시작")
 
         let hatching = Task { await s.hatchIfNeeded() }
         await entered.wait()   // 종 롤이 인덱스 대기 지점에 도달
 
         var imported = oldMacState(today: "2026-08-03")
-        imported.active = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
+        let importedMon = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
                                    stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        imported.party = [importedMon]
+        imported.trainingSlotID = importedMon.id
         let data = try SaveTransfer.encode(state: imported, appVersion: "2.5.0",
                                            deviceName: "Old Mac", now: transferNow)
         try s.applySave(try SaveTransfer.decode(data), todayTokensByProvider: ["test": 1],
@@ -372,7 +376,7 @@ final class SaveTransferTests: XCTestCase {
         await release.fire()
         await hatching.value
 
-        XCTAssertEqual(s.state.active?.baseID, 403, "종 롤 대기 중 들어온 불러오기를 부화가 덮어쓰면 안 된다")
+        XCTAssertEqual(s.trainingMon?.baseID, 403, "종 롤 대기 중 들어온 불러오기를 부화가 덮어쓰면 안 된다")
         XCTAssertEqual(s.state.dex.count, imported.dex.count)
     }
 
@@ -394,8 +398,10 @@ final class SaveTransferTests: XCTestCase {
         await entered.wait()
 
         var imported = oldMacState(today: "2026-08-03")
-        imported.active = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
+        let importedMon = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
                                    stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        imported.party = [importedMon]
+        imported.trainingSlotID = importedMon.id
         let data = try SaveTransfer.encode(state: imported, appVersion: "2.5.0",
                                            deviceName: "Old Mac", now: transferNow)
         try s.applySave(try SaveTransfer.decode(data), todayTokensByProvider: ["test": 1],
@@ -421,8 +427,10 @@ final class SaveTransferTests: XCTestCase {
         let url = tempURL("noegg")
         let s = store(at: url)
         var imported = oldMacState(today: today)
-        imported.active = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
+        let importedMon = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
                                    stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        imported.party = [importedMon]
+        imported.trainingSlotID = importedMon.id
         let data = try SaveTransfer.encode(state: imported, appVersion: "2.5.0",
                                            deviceName: "Old Mac", now: transferNow)
         try s.applySave(try SaveTransfer.decode(data), todayTokensByProvider: ["test": 0], todayDate: today, hasUsageData: false)
@@ -430,7 +438,7 @@ final class SaveTransferTests: XCTestCase {
 
         s.update(todayTokensByProvider: ["test": 0], todayDate: today, monthTotal: 0,
                  burnTier: .idle, limitWarning: false, hasUsageData: false)
-        XCTAssertNotNil(s.state.active, "개체는 그대로 있어야 한다")
+        XCTAssertNotNil(s.trainingMon, "개체는 그대로 있어야 한다")
         XCTAssertEqual(s.displayState, .idle, "개체가 있는데 알로 표시하면 안 된다")
 
         // 알 상태에서 같은 경로를 타면 여전히 알이어야 한다(반대 방향 고정).
@@ -452,9 +460,11 @@ final class SaveTransferTests: XCTestCase {
         evil.spentTokens = Int.min
         evil.eggUsage = Int.max
         evil.claimedTodayTokensByProvider = ["test": -42]
-        evil.active = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1],
+        let evilMon = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1],
                                stageIndex: Int.max, usedAtStage: Int.max, rarity: .common,
                                totalForms: Int.max)
+        evil.party = [evilMon]
+        evil.trainingSlotID = evilMon.id
 
         let data = try SaveTransfer.encode(state: evil, appVersion: "2.5.0",
                                            deviceName: "Corrupt", now: transferNow)
@@ -465,9 +475,9 @@ final class SaveTransferTests: XCTestCase {
         XCTAssertEqual(s.spentTokens, 0, "음수는 0 으로")
         XCTAssertEqual(s.eggUsage, SaveTransfer.maxTokenValue)
         XCTAssertEqual(s.claimedTodayTokensByProvider?["test"], 0)
-        XCTAssertEqual(s.active?.usedAtStage, SaveTransfer.maxTokenValue)
-        XCTAssertEqual(s.active?.totalForms, 12)
-        XCTAssertEqual(s.active?.stageIndex, 0, "pathIDs 범위를 넘지 않아야 한다")
+        XCTAssertEqual(s.party.first?.usedAtStage, SaveTransfer.maxTokenValue)
+        XCTAssertEqual(s.party.first?.totalForms, 12)
+        XCTAssertEqual(s.party.first?.stageIndex, 0, "pathIDs 범위를 넘지 않아야 한다")
 
         // 정규화된 값으로 실제 산술 경로를 태워 트랩이 안 나는지 확인한다.
         let url = tempURL("clamped")
@@ -503,14 +513,133 @@ final class SaveTransferTests: XCTestCase {
         XCTAssertLessThanOrEqual(s.state.usedSinceInstall, SaveTransfer.maxTokenValue + 1_000)
     }
 
+    /// [PC 리팩터] party 는 배열이라 한 원소만 클램프하면 나머지가 새 오버플로 트랩으로 남는다 —
+    /// 전 원소를 훑는지 2명 이상으로 확인한다. trainingSlotID 가 아무 party 원소도 가리키지 않으면
+    /// (손편집·마이그레이션 버그) trainingMon 이 영원히 nil 이 되어 조용히 멈춘 것처럼 보이므로 같이 정리한다.
+    func testSanitizedSweepsEveryPartyMemberAndDropsDanglingTrainingSlot() {
+        var s = CompanionState()
+        let poisoned1 = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1],
+                                 stageIndex: Int.max, usedAtStage: Int.max, rarity: .common, totalForms: Int.max)
+        let poisoned2 = MonState(baseID: 2, pathIDs: [2], plannedPathIDs: [2],
+                                 stageIndex: Int.min, usedAtStage: Int.min, rarity: .rare, totalForms: Int.min)
+        s.party = [poisoned1, poisoned2]
+        s.trainingSlotID = "no-such-id"
+
+        let cleaned = SaveTransfer.sanitized(s)
+
+        XCTAssertEqual(cleaned.party.count, 2, "정규화가 원소를 지우면 안 된다")
+        // poisoned1 은 Int.max(상한 클램프), poisoned2 는 Int.min(하한 클램프) — 방향이 다르므로
+        // 값이 아니라 두 원소 모두 유효 범위 안에 있는지로 검증한다(둘 다 훑는지가 이 테스트의 핵심).
+        for mon in cleaned.party {
+            XCTAssertGreaterThanOrEqual(mon.totalForms, 1, "두 번째 원소도 첫 번째와 같이 클램프돼야 한다")
+            XCTAssertLessThanOrEqual(mon.totalForms, 12)
+            XCTAssertGreaterThanOrEqual(mon.usedAtStage, 0)
+            XCTAssertLessThanOrEqual(mon.usedAtStage, SaveTransfer.maxTokenValue)
+            XCTAssertEqual(mon.stageIndex, 0, "pathIDs 범위를 넘지 않아야 한다")
+        }
+        XCTAssertNil(cleaned.trainingSlotID, "아무도 안 가리키는 훈련 슬롯은 정리돼야 한다")
+    }
+
+    /// [실사용 발견] 외부 시드 스크립트가 party/dex 는 다 진화한(egg 로) 개체로 채워놓고 dexUnlocked 는
+    /// base 종만 적어놓은 세이브 — 중간·최종 진화체가 도감에서 통째로 빠져 보였다. sanitized 가 매
+    /// 로드마다 dex/party 에서 다시 접어 따라잡아야 한다.
+    func testSanitizedBackfillsDexUnlockedFromDexAndPartyWhenSeedDataIsIncomplete() {
+        var s = CompanionState()
+        // 포획 로그는 전체 체인을 알고 있는데(egg 로 직접 진화시킨 Bulbasaur→Ivysaur→Venusaur)…
+        s.dex = [DexEntry(baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: .common, caughtAt: nil, source: .egg)]
+        // …도감 언락은 base 하나만 적혀 있다(시드 스크립트의 실수, 이 앱이 만든 상태가 아님).
+        s.dexUnlocked = [1: DexUnlock(baseID: 1, rarity: .common, names: nil, isShiny: false)]
+        // party 쪽도 같은 부류 공백 — egg 로 Charizard(6)까지 직접 진화시켰는데 dexUnlocked 엔 없다.
+        let charizard = MonState(baseID: 4, pathIDs: [4, 5, 6], plannedPathIDs: [4, 5, 6],
+                                 stageIndex: 2, usedAtStage: 0, rarity: .common, totalForms: 3, acquiredVia: .egg)
+        s.party = [charizard]
+
+        let cleaned = SaveTransfer.sanitized(s)
+
+        XCTAssertEqual(Set(cleaned.dexUnlocked.keys), [1, 2, 3, 4, 5, 6], "직접 진화시킨 개체는 체인 전체가 채워져야 한다")
+        XCTAssertEqual(cleaned.dexUnlocked[1]?.rarity, .common, "이미 있던 항목은 안 건드린다")
+    }
+
+    /// [실사용 발견] 거래로 이미 진화한 개체를 받으면 **받은 형태만** 도감에 언락돼야 한다 — 이전 진화
+    /// 단계는 보낸 쪽이 겪은 역사지 받는 쪽이 목격한 게 아니다. 실사용 세이브는 이 규칙이 없어서
+    /// Venusaur/Blastoise 를 거래로 받았는데 Ivysaur/Wartortle 같은 중간 단계까지 도감에 새 들어왔다.
+    func testSanitizedBackfillRestrictsTradedMonsToTheReceivedFormOnly() {
+        var s = CompanionState()
+        // 포획 로그가 전체 체인을 적어놨어도(구버전 데이터·외부 시드가 남긴 흔적) 거래 출처면 받은
+        // 형태(finalID)만 신뢰한다.
+        s.dex = [DexEntry(baseID: 7, finalID: 9, chainOrder: [7, 8, 9], rarity: .common, caughtAt: nil,
+                          source: .trade(from: "seed script"))]
+        let blastoise = MonState(baseID: 7, pathIDs: [7, 8, 9], plannedPathIDs: [7, 8, 9],
+                                 stageIndex: 2, usedAtStage: 0, rarity: .common, totalForms: 3,
+                                 acquiredVia: .trade(from: "seed script"))
+        s.party = [blastoise]
+
+        let cleaned = SaveTransfer.sanitized(s)
+
+        XCTAssertEqual(Set(cleaned.dexUnlocked.keys), [9], "받은 형태(Blastoise)만 — Squirtle/Wartortle 은 새지 않는다")
+    }
+
+    /// 이미 정상인 세이브(dexUnlocked 가 dex/party 와 이미 일치)는 백필이 손대지 않는다 — union 이라
+    /// 기존 값을 덮어쓰지 않는지 확인(예: 다른 rarity 로 잘못 덮어쓰면 회귀).
+    func testBackfillNeverOverwritesAnAlreadyPresentEntry() {
+        var s = CompanionState()
+        s.dex = [DexEntry(baseID: 1, finalID: 1, chainOrder: [1], rarity: .common, caughtAt: nil)]
+        // dexUnlocked 에 이미 다른(더 높은) rarity 로 기록돼 있다면 그대로 유지돼야 한다.
+        s.dexUnlocked = [1: DexUnlock(baseID: 1, rarity: .legendary, names: nil, isShiny: true)]
+
+        let cleaned = SaveTransfer.sanitized(s)
+
+        XCTAssertEqual(cleaned.dexUnlocked[1]?.rarity, .legendary, "기존 항목의 rarity 는 백필로 안 바뀐다")
+        XCTAssertEqual(cleaned.dexUnlocked[1]?.isShiny, true)
+    }
+
+    /// [스탯 도입 후속] IV/EV 도 StatCalc.compute 의 `2*base + iv + ev/4` 산술에 그대로 들어간다 —
+    /// usedAtStage 와 같은 부류의 트랩 위험이라 같은 신뢰경계에서 막혀야 한다(딥리뷰 H2 부류 스윕).
+    /// 거래로 받은 개체도 같은 addTradedMon → sanitizedMon 경로를 타므로 이 테스트가 그쪽도 커버한다.
+    func testExtremeIVsAndEVsAreClampedAtTheTrustBoundary() throws {
+        let poisonedSpread = StatSpread(hp: Int.max, attack: Int.min, defense: Int.max,
+                                        specialAttack: Int.min, specialDefense: Int.max, speed: Int.min)
+        let evilMon = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1],
+                               stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1,
+                               ivs: poisonedSpread, evs: poisonedSpread)
+
+        let cleaned = SaveTransfer.sanitizedMon(evilMon)
+
+        let ivs = try XCTUnwrap(cleaned.ivs)
+        for v in [ivs.hp, ivs.attack, ivs.defense, ivs.specialAttack, ivs.specialDefense, ivs.speed] {
+            XCTAssertTrue((0...31).contains(v), "IV out of range: \(v)")
+        }
+        let evs = cleaned.evs
+        for v in [evs.hp, evs.attack, evs.defense, evs.specialAttack, evs.specialDefense, evs.speed] {
+            XCTAssertTrue((0...Vitamin.evCapPerStat).contains(v), "EV out of range: \(v)")
+        }
+
+        // 정규화된 값으로 실제 산술 경로(StatCalc.compute)를 태워 오버플로 트랩이 안 나는지 확인.
+        let base = BaseStats(hp: 100, attack: 100, defense: 100, specialAttack: 100, specialDefense: 100, speed: 100)
+        _ = StatCalc.compute(base: base, ivs: cleaned.effectiveIVs, evs: cleaned.evs, level: 100, nature: nil)
+
+        // 같은 극단값이 세이브 파일 전체 왕복(encode→decode)에서도 클램프되는지 확인.
+        var evil = CompanionState()
+        evil.party = [evilMon]
+        evil.trainingSlotID = evilMon.id
+        let data = try SaveTransfer.encode(state: evil, appVersion: "2.5.0", deviceName: "Corrupt", now: transferNow)
+        let roundTripped = try SaveTransfer.decode(data).state.party.first
+        let rtIVs = try XCTUnwrap(roundTripped?.ivs)
+        XCTAssertTrue((0...31).contains(rtIVs.attack))
+        XCTAssertTrue((0...Vitamin.evCapPerStat).contains(roundTripped?.evs.attack ?? -1))
+    }
+
     // MARK: 필드 부류 (딥리뷰 M-c·M-e·M-g)
 
     /// [딥리뷰 M-g] 이전 시 필드 분류가 산문 규약뿐이라, 새 필드가 추가되면 아무 판단 없이 "진행"으로
     /// 딸려 들어간다(`language` 가 실제로 그랬다). 필드 목록을 테스트로 고정해 **분류를 강제**한다.
     func testEveryCompanionStateFieldIsClassifiedForTransfer() {
         // eggTier(알 등급 보증) = 진행 — 산 물건이지 이 기기의 장부가 아니라 기기를 옮겨도 따라간다.
-        let progress: Set<String> = ["usedSinceInstall", "spentTokens", "eggUsage", "eggTier",
-                                     "pendingHatchID", "active", "dex", "collectedFinals", "inventory"]
+        // eggRegion(지역 필터) 도 같은 부류 — 상시 선호도지만 "이 기기에서 보는 방식"(language)이
+        // 아니라 플레이어의 선택이라 계정/진행을 따라간다(새 기기에서 다시 고르게 하지 않는다).
+        let progress: Set<String> = ["usedSinceInstall", "spentTokens", "eggUsage", "eggTier", "eggRegion",
+                                     "pendingHatchID", "party", "trainingSlotID", "dexUnlocked",
+                                     "dex", "collectedFinals", "inventory"]
         let deviceLedger: Set<String> = ["installBaselineSet", "claimedTodayTokensByProvider", "lastDate"]
         let accountLedger: Set<String> = ["candyGrantTier", "candyFeatureSeeded"]
         let devicePreference: Set<String> = ["language"]
@@ -648,8 +777,10 @@ final class SaveTransferTests: XCTestCase {
     func testApplySaveSetsDisplayStateFromWhetherACompanionCameIn() throws {
         let today = "2026-08-03"
         var withMon = oldMacState(today: today)
-        withMon.active = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
+        let withMonMon = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
                                   stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        withMon.party = [withMonMon]
+        withMon.trainingSlotID = withMonMon.id
         let a = store(at: tempURL("dispA"))
         try a.applySave(try SaveTransfer.decode(
             try SaveTransfer.encode(state: withMon, appVersion: "2.5.0", deviceName: "A", now: transferNow)),

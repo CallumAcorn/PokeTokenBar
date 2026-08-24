@@ -146,13 +146,18 @@ security tooling may also take an interest in it: it runs continuously, reads se
 credential-adjacent directories, and can register a launchd agent. None of that is malicious, and
 all of it is documented in [SECURITY.md](SECURITY.md), but it is the shape that gets flagged.
 
-Two things make that conversation easier:
+Four things make that conversation easier:
 
 - The app reads **token counters only**. Prompt and response content is never parsed, stored or
   transmitted. [SECURITY.md](SECURITY.md) lists every path it touches.
-- It talks to **seven hosts**, none of which carry your usage, prompts or project paths. The only
-  request carrying anything of yours is the Claude limits call, which goes to Anthropic, and can
-  be switched off entirely in Settings.
+- It talks to **seven fixed hosts**, none of which carry your usage, prompts or project paths. The
+  only request carrying anything of yours is the Claude limits call, which goes to Anthropic, and
+  can be switched off entirely in Settings.
+- Trading adds **one more host, and only if you configure it** — a trade server you run yourself.
+  It receives a Pokémon, a display name you type, and a random client id; no usage data and no
+  credential. Leave the field empty and the feature is inert.
+- It registers the `poketokenbar://` URL scheme for trade invites. Any web page can open such a
+  link, so the app names the server and asks before connecting to it.
 
 Ask first. Do not strip quarantine or disable protections to make it run.
 
