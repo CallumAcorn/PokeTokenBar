@@ -26,25 +26,40 @@ struct TradeView: View {
         .frame(width: PopoverMetrics.width)
         .task { checkPendingInvite() }
         .onChange(of: trade.pendingInvite) { checkPendingInvite() }
-        .alert(l.tradeJoinButton, isPresented: Binding(get: { confirmingLink != nil }, set: { if !$0 { confirmingLink = nil } }),
+        .alert(l.tradeJoinButton, isPresented: Binding(get: { confirmingLink != nil }, set: { if !$0 { declineInvite() } }),
                presenting: confirmingLink) { link in
             Button(l.tradeJoinButton) { online.serverURL = link.server; confirmingLink = nil }
-            Button(l.tradeCancelButton, role: .cancel) { confirmingLink = nil }
+            // Declining must drop the invite itself, not just the alert. Clearing `confirmingLink`
+            // alone left `trade.pendingInvite` set, and the picker below reads that directly — so
+            // the join screen stayed up, pointed at the very server the user just refused.
+            Button(l.tradeCancelButton, role: .cancel) { declineInvite() }
         } message: { link in
-            Text(l.tradeDifferentServerConfirm(link.server))
+            Text(online.serverURL.isEmpty
+                 ? l.tradeConnectServerConfirm(link.server)
+                 : l.tradeDifferentServerConfirm(link.server))
         }
     }
 
-    /// Checks an invite that arrived via deep link — if it's for a different server than the one
-    /// currently connected, asks once before switching (PLAN.md's "ask once for a different
-    /// server" promise). If it's the same, or no server is configured yet, goes straight to the
-    /// join screen.
+    /// Checks an invite that arrived via deep link and confirms the server before anything is
+    /// offered to it.
+    ///
+    /// The only case that needs no prompt is an invite for the server the user already chose.
+    /// Everything else asks, **including the no-server-configured case** — that is the default
+    /// state of a fresh install, and it used to fall straight through to the join screen. A
+    /// `poketokenbar://` link can be opened by any web page, so skipping the prompt there meant a
+    /// page could put the user one click away from offering a Pokémon, their display name and
+    /// their client id to a host they never chose and were never shown.
     private func checkPendingInvite() {
         guard let link = trade.pendingInvite else { return }
-        if online.serverURL.isEmpty || sameServer(online.serverURL, link.server) {
-            return   // already the same server — the picker below reads pendingInvite directly and renders join mode
+        if !online.serverURL.isEmpty, sameServer(online.serverURL, link.server) {
+            return   // already the server the user picked — the picker renders join mode directly
         }
         confirmingLink = link
+    }
+
+    private func declineInvite() {
+        confirmingLink = nil
+        trade.declineInvite()
     }
 
     /// Maps the status codes the server actually documents (see PokeTokenBarOnline's /docs) to

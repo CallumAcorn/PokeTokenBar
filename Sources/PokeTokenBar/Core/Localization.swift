@@ -458,6 +458,15 @@ struct L {
           "現在別のサーバーに接続されています。\(server) に切り替えて交換に参加しますか？",
           "Actualmente estás conectado a otro servidor. ¿Cambiar a \(server) y unirte a este intercambio?")
     }
+    /// Shown when an invite link names a server and none is configured yet. The link can come from
+    /// anywhere — a web page can open `poketokenbar://` — so the host is always named and always
+    /// confirmed before the app talks to it or offers anything to it.
+    func tradeConnectServerConfirm(_ server: String) -> String {
+        t("이 초대 링크는 \(server) 서버를 사용합니다. 연결하고 거래에 참가할까요?",
+          "This invite link uses the server \(server). Connect to it and join this trade?",
+          "この招待リンクはサーバー \(server) を使用します。接続して交換に参加しますか？",
+          "Este enlace de invitación usa el servidor \(server). ¿Conectar y unirte a este intercambio?")
+    }
     var tradeEntryPointHelp: String { t("포켓몬 거래", "Trade a Pokémon", "ポケモン交換", "Intercambiar un Pokémon") }
     /// 링크를 탭해서 못 여는 경우(다른 기기에서 텍스트로 받음, 링크 핸들러 미등록 등)의 대안 입력.
     var tradePasteInviteLinkPlaceholder: String {

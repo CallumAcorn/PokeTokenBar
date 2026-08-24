@@ -75,10 +75,37 @@ final class OnlineStore {
         guard !trimmed.isEmpty else { return nil }
         let withScheme = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
         guard var components = URLComponents(string: withScheme),
-              let host = components.host, !host.isEmpty else { return nil }
-        components.path = path
+              let host = components.host, !host.isEmpty,
+              isAllowedScheme(components.scheme, host: host) else { return nil }
+        // Preserve a base path so a server hosted under a prefix works. Overwriting the path
+        // outright sent `example.com/poke` to `example.com/health`, silently talking to the wrong
+        // place instead of failing where the user could see it.
+        let base = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+        components.path = base + path
         if !queryItems.isEmpty { components.queryItems = queryItems }
         return components.url
+    }
+
+    /// Transport policy for the server address.
+    ///
+    /// A server address can arrive from a `poketokenbar://` link, which any web page can open, so
+    /// it is attacker-influenced input rather than something only the user types. Plaintext to a
+    /// remote host would put a trade payload on the wire in the clear and is refused here rather
+    /// than left to fail opaquely inside ATS.
+    ///
+    /// Loopback keeps `http`: it never leaves the machine, and running the server locally over
+    /// plain HTTP is the normal way to develop against it.
+    nonisolated static func isAllowedScheme(_ scheme: String?, host: String) -> Bool {
+        switch scheme?.lowercased() {
+        case "https": return true
+        case "http": return isLoopback(host)
+        default: return false
+        }
+    }
+
+    nonisolated static func isLoopback(_ host: String) -> Bool {
+        let h = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        return h == "localhost" || h == "127.0.0.1" || h == "::1" || h.hasSuffix(".localhost")
     }
 
     nonisolated static func healthURL(from input: String) -> URL? {

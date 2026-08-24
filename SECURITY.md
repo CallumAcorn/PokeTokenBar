@@ -48,7 +48,8 @@ rotation. Turn it off in Settings → Advanced, and delete the file to remove th
 
 ## Network egress
 
-Seven hosts, and nothing else. There is no telemetry, no analytics, and no vendor server.
+Seven fixed hosts, plus one optional host you choose yourself. There is no telemetry, no
+analytics, and no vendor server.
 
 | Host | Purpose | Carries |
 |---|---|---|
@@ -57,10 +58,32 @@ Seven hosts, and nothing else. There is no telemetry, no analytics, and no vendo
 | `pokeapi.co`, `graphql.pokeapi.co` | Species and evolution data | Nothing |
 | `raw.githubusercontent.com` | Sprite images | Nothing |
 | `status.claude.com`, `status.openai.com` | Incident banner | Nothing |
+| **A trade server you configure** | Pokémon trading (opt-in) | A Pokémon, your display name, a random client id |
 
-The only outbound request carrying anything of yours is the Claude limits call, which goes to
-Anthropic, the party that issued the token, and it can be switched off entirely in Settings. The
-single `POST` in the codebase is a GraphQL query to PokéAPI.
+**The trade server is off unless you set one.** With no server address configured the app never
+contacts anything beyond the seven fixed hosts. There is no default or hosted instance; you point
+it at a server you run.
+
+What that host receives is game state only: one `MonState`, the display name you typed, and a
+random `clientUUID` generated on first use. No usage figures, no prompts, no project paths, and no
+credential. The `clientUUID` is a per-trade participant identifier, not an account, and lives in
+UserDefaults rather than the Keychain because it protects nothing.
+
+Transport is HTTPS. Plaintext `http` is refused for any remote host and permitted only for
+loopback, where it never leaves the machine.
+
+Of the fixed hosts, the only outbound request carrying anything of yours is the Claude limits
+call, which goes to Anthropic, the party that issued the token, and it can be switched off
+entirely in Settings.
+
+## URL scheme
+
+The app registers `poketokenbar://`, used for trade invite links.
+
+Treat this as untrusted input: **any web page can open a `poketokenbar://` URL**, so an invite can
+name any server. The app therefore always names the host and asks before connecting, including
+when no server is configured yet. Declining drops the invite entirely rather than only closing the
+prompt. Nothing is offered to a server you have not confirmed.
 
 ## Credentials
 

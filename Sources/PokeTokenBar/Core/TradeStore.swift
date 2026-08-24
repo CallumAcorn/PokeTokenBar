@@ -144,6 +144,13 @@ final class TradeStore {
         pendingInvite = link
     }
 
+    /// Drop an invite the user refused. Needed because the join UI reads `pendingInvite` directly:
+    /// dismissing the confirmation alert without clearing this left the join screen up, aimed at
+    /// the server that was just declined.
+    func declineInvite() {
+        pendingInvite = nil
+    }
+
     func joinTrade(sessionId: String, server: String, offering mon: MonState) async {
         cancel()
         myOfferedMonID = mon.id
