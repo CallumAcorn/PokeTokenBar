@@ -480,3 +480,47 @@ final class ForkVersionOrderingTests: XCTestCase {
         XCTAssertFalse(cmds.lowercased().contains("brew"), "no binary exists for brew to install")
     }
 }
+
+/// The credential opt-out must cover **every** provider that reads one, not just Claude.
+///
+/// Upstream's Antigravity provider arrived checking the gate only inside `readKeychain`, while
+/// `accessToken` reads `~/.gemini/jetski-standalone-oauth-token` before reaching it. That is the
+/// same defect this fork already fixed once for Claude (MED 5), reintroduced by a new provider —
+/// which is exactly why this is asserted per provider rather than trusted to review.
+final class CredentialGateCoverageTests: XCTestCase {
+
+    override func tearDown() {
+        KeychainAccessGate.isDisabled = false
+        super.tearDown()
+    }
+
+    func testAntigravityProviderHonoursTheGate() async {
+        KeychainAccessGate.isDisabled = true
+        do {
+            _ = try await AntigravityRateLimitsProvider().fetch(allowKeychainPrompt: false)
+            XCTFail("Antigravity fetch succeeded with credential access disabled")
+        } catch let error as LimitsError {
+            guard case .keychainAccessDisabled = error else {
+                return XCTFail("expected .keychainAccessDisabled, got \(error) — a credential source was read before the gate")
+            }
+        } catch {
+            XCTFail("expected LimitsError.keychainAccessDisabled, got \(error)")
+        }
+    }
+
+    /// The user-action path is gated identically — the gate is a promise about reading credentials,
+    /// not about which button was pressed.
+    func testAntigravityUserActionPathHonoursTheGate() async {
+        KeychainAccessGate.isDisabled = true
+        do {
+            _ = try await AntigravityRateLimitsProvider().fetch(allowKeychainPrompt: true)
+            XCTFail("Antigravity fetch succeeded on the user path with credential access disabled")
+        } catch let error as LimitsError {
+            guard case .keychainAccessDisabled = error else {
+                return XCTFail("expected .keychainAccessDisabled on the user path, got \(error)")
+            }
+        } catch {
+            XCTFail("expected LimitsError.keychainAccessDisabled, got \(error)")
+        }
+    }
+}

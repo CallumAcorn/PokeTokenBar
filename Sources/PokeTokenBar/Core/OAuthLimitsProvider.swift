@@ -416,7 +416,7 @@ private actor OAuthAccessTokenCache {
         }
 
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        let status = KeychainReader.copyMatching(query, &item)
         if status == errSecInteractionNotAllowed {
             throw LimitsError.keychainInteractionNotAllowed
         }
