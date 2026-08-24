@@ -49,7 +49,10 @@ final class LocalizationInterpolationTests: XCTestCase {
             check("plan", l.plan(A), A)
             check("stage", l.stage(4242, 1717), "4242", "1717")
             check("dexTotal", l.dexTotal(4242), "4242")
-            check("dexSpeciesTotal", l.dexSpeciesTotal(4242), "4242")
+            // This fork's dexSpeciesTotal takes (owned, total) — the PC/party rework made the
+            // Pokédex show progress rather than a bare count, so upstream's single-argument call
+            // does not compile here.
+            check("dexSpeciesTotal", l.dexSpeciesTotal(4242, 1717), "4242", "1717")
             check("dexPageLabel", l.dexPageLabel(4242, 1717), "4242", "1717")
             check("ownedCount", l.ownedCount(4242), "4242")
             check("intervalLabel", l.intervalLabel(1860), "31")          // 1860s → 31 min

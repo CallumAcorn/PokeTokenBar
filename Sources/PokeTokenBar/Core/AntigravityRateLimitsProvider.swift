@@ -80,6 +80,18 @@ private actor AntigravityTokenCache {
     private var cachedCredential: AntigravityOAuthCredential?
 
     func accessToken(allowKeychainPrompt: Bool, bypassCache: Bool = false) async throws -> String {
+        // The opt-out gate is checked FIRST, before the cache and before any credential source.
+        //
+        // It was checked only inside `readKeychain`, which is the same defect the Claude provider
+        // had and this fork already fixed once (MED 5): the token *file* below is read before that
+        // point, so with "Disable credential access" on the app still read a credential from disk
+        // on every automatic poll, and an already-cached token kept being served after opt-out.
+        // The setting promises no credential is read at all; honour it at the single choke point.
+        if KeychainAccessGate.isDisabled {
+            cachedCredential = nil
+            throw LimitsError.keychainAccessDisabled
+        }
+
         if !bypassCache, let cachedCredential, !cachedCredential.isExpired {
             return cachedCredential.accessToken
         }
