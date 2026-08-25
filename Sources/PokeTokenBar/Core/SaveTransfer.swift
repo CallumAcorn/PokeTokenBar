@@ -153,6 +153,13 @@ enum SaveTransfer {
         m.stageIndex = min(max(0, m.stageIndex), max(0, m.pathIDs.count - 1))
         // IV/EV feed StatCalc.compute's `2*base + iv + ev/4` — same overflow-trap shape as usedAtStage,
         // just with real games' own valid ranges as the clamp instead of maxTokenValue.
+        // knownMoves 는 산술이 아니라 **게임 규칙** 불변식이다. 쓰기 경로는 전부 maxKnownMoves 가드를
+        // 지나지만 거래·임포트로 들어온 개체는 그 가드를 한 번도 통과하지 않아 상한을 넘긴 채 자리잡고,
+        // 그 값이 저장돼 PC 상세의 ForEach(0..<count) 를 그대로 부풀린다. 4개 초과는 정상 플레이로
+        // 만들 수 없는 상태라 잘라내도 진행 손실이 아니다(도감·인벤토리를 안 자르는 것과 다른 이유).
+        // 중복도 함께 떨군다: setKnownMove 의 contains 가드가 막는 값이라 마찬가지로 도달 불가 상태다.
+        var seen = Set<Int>()
+        m.knownMoves = m.knownMoves.filter { seen.insert($0).inserted }.prefix(MonState.maxKnownMoves).map { $0 }
         m.ivs = m.ivs.map { clampedSpread($0, to: 0...31) }
         m.evs = clampedSpread(m.evs, to: 0...Vitamin.evCapPerStat)
         return m
@@ -177,6 +184,10 @@ enum SaveTransfer {
         // 다음 구매 한 번이 오버플로 트랩으로 프로세스를 죽이고, 값이 이미 저장됐으므로 재기동해도
         // 같은 상태를 읽어 다시 죽는다 — 이 함수가 막으려던 바로 그 잠금 상태다.
         s.inventory = s.inventory.reduce(into: [:]) { result, entry in
+            result[entry.key] = clampToken(entry.value)
+        }
+        // ownedTMs (owned TM counts) — same trap as inventory (buyTM's `+= 1`, teachTM's `- 1`).
+        s.ownedTMs = s.ownedTMs.reduce(into: [:]) { result, entry in
             result[entry.key] = clampToken(entry.value)
         }
         // 알 보증은 "지금 품고 있는 알"에만 붙는 값이라 훈련 중인 개체와 공존할 수 없다. 손편집·구버전
@@ -235,6 +246,8 @@ enum SaveTransfer {
         state.language = current.language
         state.candyGrantTier = mergedGrantTier(imported.candyGrantTier, current.candyGrantTier)
         state.candyFeatureSeeded = imported.candyFeatureSeeded || current.candyFeatureSeeded
+        // Same class as candyFeatureSeeded — no need to redo the migration on one device if the other already did it.
+        state.movesFeatureSeeded = imported.movesFeatureSeeded || current.movesFeatureSeeded
         let hasCurrentProviderData = hasUsageData && !todayTokensByProvider.isEmpty
         if hasCurrentProviderData {
             // 신규 설치와 같은 규칙: 불러온 시점 이전의 이 기기 사용량은 소급 적립하지 않는다.

@@ -942,14 +942,23 @@ private struct PartyMemberCell: View {
 
     private static let thumb: CGFloat = 44
 
+    /// Progress toward this mon's next evolution/graduation — same calc as MonDetailView's header
+    /// progress bar, just computed straight off the individual (no need for a loaded EvoLine).
+    private var progress: Double {
+        let threshold = PokemonBalance.phaseThreshold(rarity: mon.rarity, totalForms: mon.totalForms, stageIndex: mon.stageIndex)
+        guard threshold > 0 else { return 0 }
+        return min(1, max(0, Double(mon.usedAtStage) / Double(threshold)))
+    }
+
     var body: some View {
         Button(action: onTap) {
             VStack(spacing: 1) {
                 SpriteView(speciesID: mon.currentID, size: Self.thumb, shiny: mon.isShiny)
                     .frame(width: Self.thumb, height: Self.thumb)
-                Text(store.l.pcLevel(mon.level))
-                    .font(.system(size: 9))
-                    .lineLimit(1).minimumScaleFactor(0.8)
+                Text(store.speciesName(mon.currentID))
+                    .font(.system(size: 9, weight: .semibold))
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                ProgressView(value: progress).controlSize(.mini).tint(.orange)
             }
             .frame(maxWidth: .infinity)
             .overlay(alignment: .topLeading) {
@@ -987,7 +996,7 @@ private struct PartyMemberCell: View {
     }
 
     private var tooltip: String {
-        var parts = [store.l.pcLevel(mon.level), store.l.rarityLabel(mon.rarity)]
+        var parts = [store.speciesName(mon.currentID), store.l.pcLevel(mon.level), store.l.rarityLabel(mon.rarity)]
         if mon.isShiny { parts.append(store.l.dexShinyLabel) }
         if isTraining { parts.append(store.l.dexRaising) }
         if mon.evolutionLocked { parts.append(store.l.evolutionLockedBadge) }
@@ -1008,6 +1017,10 @@ private struct MonDetailView: View {
     @State private var line: EvoLine?
     @State private var baseStats: BaseStats?
     @State private var abilityDisplayName: String?
+    @State private var learnset: [LearnableMove] = []
+    /// Set while picking a slot to replace, after tapping learn/teach with the moveset already full.
+    @State private var pendingLearn: PendingLearn?
+    struct PendingLearn: Equatable { let moveID: Int; let isTM: Bool }
 
     private var isTraining: Bool { mon.id == store.trainingMon?.id }
     /// 실제로 보여줄 특성 슬러그 — 진짜 롤이 있으면 그것, 없으면(특성 도입 전 개체) baseStats 가
@@ -1053,9 +1066,15 @@ private struct MonDetailView: View {
                 statsSection
                 ivEvRadarSection
                 vitaminsSection
+                movesSection
                 actions
             }
         }
+        // The learn/teach buttons and the slot picker's cancel button reach all the way to the
+        // trailing edge, and under "always show scroll bars" the thick legacy scroller sits right
+        // on top of them (same reason as EvoLineView — `.hidden` can't stop that thick scroller, it
+        // has to be `.never`).
+        .scrollIndicators(.never)
         .task(id: mon.baseID) { line = await store.line(baseID: mon.baseID) }
         // currentID(폼/진화 단계)로 키 — baseID 와 달리 진화하면 바뀌어 기준 스탯도 다시 받아야 한다.
         // 특성 표시명은 baseStats(특성 후보 목록)가 있어야 effectiveAbility 를 정할 수 있으므로 그
@@ -1064,6 +1083,11 @@ private struct MonDetailView: View {
         .task(id: "\(mon.currentID)-\(store.language.rawValue)") {
             baseStats = await store.baseStats(speciesID: mon.currentID)
             abilityDisplayName = await store.abilityName(effectiveAbility)
+        }
+        // The learnset doesn't depend on language (just id/level) — key on currentID alone.
+        .task(id: mon.currentID) {
+            learnset = await store.learnableMoves(speciesID: mon.currentID)
+            pendingLearn = nil   // Switching mons (re-selecting in the grid) drops any in-progress slot pick for the old one
         }
     }
 
@@ -1155,6 +1179,126 @@ private struct MonDetailView: View {
         .buttonStyle(.bordered).controlSize(.small)
         .disabled(!store.canUseVitamin(kind, on: mon.id))
         .help(store.l.itemName(kind))
+    }
+
+    // MARK: Moves — the 4 known slots + level-up moves learnable right now + teaching from owned TMs.
+    // Level-up moves auto-fill open slots (CompanionStore.autoFillKnownMoves); once all 4 are full,
+    // both level-up and TM both become the player's manual pick of what to replace (same principle
+    // as the evolution lock — the player controls this, not the app).
+
+    private var movesSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(store.l.pcMovesTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            knownMovesTable
+            learnableSection
+            teachTMSection
+        }
+    }
+
+    /// The 4 known slots — a 2×2 table like the real games' move summary screen (not a vertical list).
+    private var knownMovesTable: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 4) { moveSlotCell(0); moveSlotCell(1) }
+            HStack(spacing: 4) { moveSlotCell(2); moveSlotCell(3) }
+        }
+    }
+
+    private func moveSlotCell(_ slot: Int) -> some View {
+        KnownMoveCell(store: store, moveID: slot < mon.knownMoves.count ? mon.knownMoves[slot] : nil)
+    }
+
+    /// Level-up moves learnable at the current level that aren't known yet — lowest level first.
+    /// In practice this mostly only has entries once the 4 slots are already full (auto-fill already
+    /// grabs anything eligible while a slot is open), at which point tapping one opens the slot picker.
+    private var pendingLevelUpMoves: [LearnableMove] {
+        learnset
+            .filter { $0.method == .levelUp && $0.level <= mon.level && !mon.knownMoves.contains($0.moveID) }
+            .sorted { $0.level < $1.level }
+    }
+
+    /// Hides the whole section when there's nothing to learn (same rule as the vitamins section) —
+    /// level-up opportunities naturally come and go on their own.
+    @ViewBuilder
+    private var learnableSection: some View {
+        if !pendingLevelUpMoves.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.l.moveLearnableTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(pendingLevelUpMoves, id: \.moveID) { lm in
+                    learnRow(moveID: lm.moveID, isTM: false, subtitle: store.l.moveLearnAtLevel(lm.level))
+                }
+            }
+        }
+    }
+
+    /// Owned TMs this species can learn and doesn't already know.
+    private var teachableTMIDs: [Int] {
+        let machineIDs = Set(learnset.filter { $0.method == .machine }.map(\.moveID))
+        return store.ownedTMIDs.filter { machineIDs.contains($0) && !mon.knownMoves.contains($0) }
+    }
+
+    /// Unlike the level-up section, this one exists partly to surface that a TM shop exists, so it
+    /// stays visible with a hint even when no TMs are owned instead of hiding entirely.
+    private var teachTMSection: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(store.l.moveTeachTMTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            if teachableTMIDs.isEmpty {
+                Text(store.l.moveNoTMsOwned).font(.caption2).foregroundStyle(.tertiary)
+            } else {
+                ForEach(teachableTMIDs, id: \.self) { moveID in
+                    learnRow(moveID: moveID, isTM: true, subtitle: store.l.tmOwnedCount(store.tmCount(moveID)))
+                }
+            }
+        }
+    }
+
+    /// One learn/teach row — swaps the button for a slot picker once the 4 slots are already full
+    /// (the same inline-confirm pattern as the shop/bag, no `.sheet`).
+    @ViewBuilder
+    private func learnRow(moveID: Int, isTM: Bool, subtitle: String) -> some View {
+        if pendingLearn == PendingLearn(moveID: moveID, isTM: isTM) {
+            slotPicker(moveID: moveID, isTM: isTM)
+        } else {
+            HStack(spacing: 6) {
+                MoveRow(store: store, moveID: moveID)
+                Text(subtitle).font(.caption2).foregroundStyle(.tertiary)
+                Spacer(minLength: 4)
+                Button(isTM ? store.l.moveTeachButton : store.l.moveLearnButton) {
+                    if mon.knownMoves.count < MonState.maxKnownMoves {
+                        performLearn(moveID: moveID, isTM: isTM, slot: nil)
+                    } else {
+                        pendingLearn = PendingLearn(moveID: moveID, isTM: isTM)
+                    }
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+            }
+        }
+    }
+
+    private func slotPicker(moveID: Int, isTM: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(store.l.moveFullPickSlot).font(.caption2).foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                ForEach(0..<mon.knownMoves.count, id: \.self) { slot in
+                    Button {
+                        performLearn(moveID: moveID, isTM: isTM, slot: slot)
+                    } label: {
+                        MoveRow(store: store, moveID: mon.knownMoves[slot])
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                }
+                Button(store.l.cancel) { pendingLearn = nil }
+                    .buttonStyle(.borderless).controlSize(.small)
+            }
+        }
+    }
+
+    private func performLearn(moveID: Int, isTM: Bool, slot: Int?) {
+        if isTM {
+            store.teachTM(moveID, to: mon.id, learnset: learnset, replacingSlot: slot)
+        } else {
+            store.learnLevelUpMove(moveID, for: mon.id, learnset: learnset, replacingSlot: slot)
+        }
+        pendingLearn = nil
     }
 
     private var header: some View {
@@ -1277,6 +1421,81 @@ private struct MonDetailView: View {
             .labelStyle(.iconOnly)
             .foregroundStyle(mon.isFloating ? Color.accentColor : Color.primary)
             .help(mon.isFloating ? store.l.pcUnsetFloating : store.l.pcSetFloating)
+        }
+    }
+}
+
+/// One move line — name + type badge (reuses the typeColor palette). No power/PP here (too tight
+/// alongside the learn button) — the TM shop catalog (TMDetailView) shows the full detail.
+private struct MoveRow: View {
+    let store: CompanionStore
+    let moveID: Int
+    @State private var move: Move?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let move {
+                Text(move.localizedName(store.language)).font(.caption2).lineLimit(1)
+                Text(store.l.typeName(move.type).uppercased()).font(.system(size: 7, weight: .bold))
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(typeColor(move.type)).foregroundStyle(.white).clipShape(Capsule())
+            } else {
+                Text("···").font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .task(id: moveID) { move = await store.moveDetail(id: moveID) }
+    }
+}
+
+/// One cell in the 4-known-slots grid — a 2-row table (name⋯type / damage class⋯PP, edge-aligned).
+/// Neutral card background with standard adaptive text (readable in both themes) — the type shows as
+/// a colored outline + colored type label instead of a solid fill, since white-on-type-color reads
+/// poorly for lighter types (electric, ice, etc). An empty slot (moveID nil) gets a plain placeholder.
+private struct KnownMoveCell: View {
+    let store: CompanionStore
+    let moveID: Int?
+    @State private var move: Move?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if moveID == nil {
+                Text(store.l.moveEmptySlot).font(.system(size: 11)).foregroundStyle(.tertiary)
+            } else if let move {
+                // NAME ⋯ TYPE / damage class ⋯ PP — a 2-row table, edge-aligned left/right.
+                HStack {
+                    Text(move.localizedName(store.language))
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                    Spacer(minLength: 4)
+                    Text(store.l.typeName(move.type).uppercased())
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(typeColor(move.type))
+                }
+                HStack {
+                    Text(store.l.moveDamageClassName(move.damageClass))
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Text("\(store.l.movePPLabel) \(move.pp)")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("···").font(.system(size: 11)).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+        .padding(6)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            if let move {
+                RoundedRectangle(cornerRadius: 8).strokeBorder(typeColor(move.type), lineWidth: 1.5)
+            }
+        }
+        .task(id: moveID) {
+            guard let moveID else { return }
+            move = await store.moveDetail(id: moveID)
         }
     }
 }
@@ -1420,6 +1639,10 @@ private struct DexSpeciesDetailView: View {
     @State private var line: EvoLine?
     @State private var flavorText: String?
     @State private var genus: String?
+    /// The species' full possible learnset (every level-up/TM move it could ever learn) — unlike
+    /// MonDetailView's learnset use, this is never gated by an individual's level; it's a reference
+    /// list of everything the species can learn.
+    @State private var learnset: [LearnableMove] = []
 
     /// species.id 까지의 조상 경로를 트리에서 찾아 CompanionStore.lineItems 에 그대로 넘긴다 — 개체용
     /// pathIDs 가 없어도 같은 계산을 재사용할 수 있다(EvoNode.pathToNode 주석 참고: 종에 도달했다는
@@ -1445,6 +1668,8 @@ private struct DexSpeciesDetailView: View {
                 representativeRow
                 abilitiesSection
                 statsRangeSection
+                levelUpMovesSection
+                tmMovesSection
             }
         }
         .task(id: species.baseID) { line = await store.line(baseID: species.baseID) }
@@ -1456,6 +1681,45 @@ private struct DexSpeciesDetailView: View {
             abilityNames = names
             flavorText = await store.flavorText(speciesID: species.id)
             genus = await store.genus(speciesID: species.id)
+        }
+        // Learnset doesn't depend on language (just id/level) — key on species.id alone.
+        .task(id: species.id) { learnset = await store.learnableMoves(speciesID: species.id) }
+    }
+
+    /// Every level-up move this species can ever learn, lowest level first — a reference list, not
+    /// gated by any individual's current level (that gating lives in MonDetailView instead).
+    private var levelUpMoves: [LearnableMove] {
+        learnset.filter { $0.method == .levelUp }.sorted { $0.level < $1.level }
+    }
+    private var machineMoves: [LearnableMove] {
+        learnset.filter { $0.method == .machine }
+    }
+
+    @ViewBuilder
+    private var levelUpMovesSection: some View {
+        if !levelUpMoves.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.l.dexMovesLevelUpTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(levelUpMoves, id: \.moveID) { lm in
+                    HStack(spacing: 6) {
+                        MoveRow(store: store, moveID: lm.moveID)
+                        Spacer(minLength: 4)
+                        Text(store.l.moveLearnAtLevel(lm.level)).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tmMovesSection: some View {
+        if !machineMoves.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.l.dexMovesTMTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(machineMoves, id: \.moveID) { lm in
+                    MoveRow(store: store, moveID: lm.moveID)
+                }
+            }
         }
     }
 

@@ -523,6 +523,39 @@ struct L {
     var ivLabel: String { t("개체값", "IV", "個体値", "IV") }
     var evLabel: String { t("노력치", "EV", "努力値", "EV") }
 
+    // MARK: Moves (PC detail screen — known moves + level-up/TM learning)
+    var pcMovesTitle: String { t("기술", "Moves", "わざ", "Movimientos") }
+    var moveEmptySlot: String { t("— (미습득)", "— (none)", "— (未習得)", "— (ninguno)") }
+    var moveLearnableTitle: String { t("배울 수 있는 기술 (레벨업)", "Moves you can learn (level-up)", "覚えられるわざ（レベルアップ）", "Movimientos que puedes aprender (nivel)") }
+    func moveLearnAtLevel(_ level: Int) -> String {
+        t("Lv.\(level)에 배움", "Learned at Lv.\(level)", "Lv.\(level)で覚える", "Se aprende en Nv.\(level)")
+    }
+    var moveLearnButton: String { t("배우기", "Learn", "覚える", "Aprender") }
+    var moveTeachTMTitle: String { t("TM 가르치기", "Teach a TM", "わざマシンを教える", "Enseñar una MT") }
+    var moveTeachButton: String { t("가르치기", "Teach", "教える", "Enseñar") }
+    var moveNoTMsOwned: String { t("가르칠 수 있는 TM이 없어요", "No teachable TMs owned", "教えられるわざマシンがありません", "No tienes ninguna MT que pueda enseñar") }
+    var moveNoneLearnableNow: String { t("지금 배울 수 있는 기술이 없어요", "No moves to learn right now", "今覚えられるわざがありません", "No hay movimientos que aprender ahora") }
+    var moveFullPickSlot: String { t("이미 4개를 알아요 — 바꿀 기술을 골라주세요", "Already knows 4 — pick a move to replace", "すでに4つ覚えています。入れ替えるわざを選んでください", "Ya conoce 4 — elige cuál reemplazar") }
+    var movePowerLabel: String { t("위력", "Power", "威力", "Potencia") }
+    var moveAccuracyLabel: String { t("명중률", "Accuracy", "命中率", "Precisión") }
+    var movePPLabel: String { t("PP", "PP", "PP", "PP") }
+    func moveDamageClassName(_ c: MoveDamageClass) -> String {
+        switch c {
+        case .physical: return t("물리", "Physical", "物理", "Físico")
+        case .special:  return t("특수", "Special", "特殊", "Especial")
+        case .status:   return t("변화", "Status", "変化", "Estado")
+        }
+    }
+    var moveNoPower: String { t("—", "—", "—", "—") }
+
+    // MARK: TM shop
+    var shopGroupTMs: String { t("TM", "TMs", "わざマシン", "MTs") }
+    var shopGroupTMsHint: String { t("기술머신으로 새 기술을 가르쳐요", "Teach new moves with TMs", "わざマシンで新しいわざを教えます", "Enseña movimientos nuevos con MTs") }
+    var tmCatalogTitle: String { t("TM 목록", "TM Catalog", "わざマシン一覧", "Catálogo de MTs") }
+    func tmOwnedCount(_ n: Int) -> String { t("보유 ×\(n)", "Owned ×\(n)", "所持 ×\(n)", "×\(n) en posesión") }
+    var tmCompatibleTitle: String { t("배울 수 있는 내 포켓몬", "Your Pokémon that can learn this", "覚えられる手持ちのポケモン", "Tus Pokémon que pueden aprenderlo") }
+    var tmNoCompatiblePC: String { t("PC에 배울 수 있는 포켓몬이 없어요", "None of your Pokémon can learn this", "PCに覚えられるポケモンがいません", "Ninguno de tus Pokémon puede aprenderlo") }
+
     // MARK: 거래
     var tradeTitle: String { t("거래", "Trade", "交換", "Intercambio") }
     var tradePickOffer: String { t("보낼 포켓몬을 골라주세요", "Pick a Pokémon to offer", "送るポケモンを選んでください", "Elige un Pokémon para ofrecer") }
@@ -635,6 +668,8 @@ struct L {
     var dexShinyLocked: String { t("이 종의 이로치를 아직 못 잡았어요", "Haven't caught this species' shiny yet", "この種の色違いはまだ捕まえていません", "Aún no has capturado la variante variocolor de esta especie") }
     var dexStatRangeTitle: String { t("능력치 범위 (Lv.100 기준)", "Stat range (at Lv.100)", "ステータス範囲（Lv.100基準）", "Rango de estadísticas (a Nv.100)") }
     var dexAbilitiesTitle: String { t("가능한 특성", "Possible abilities", "とくせいの可能性", "Habilidades posibles") }
+    var dexMovesLevelUpTitle: String { t("레벨업 기술", "Level-up moves", "レベルアップわざ", "Movimientos por nivel") }
+    var dexMovesTMTitle: String { t("TM 기술", "TM moves", "わざマシンのわざ", "Movimientos por MT") }
     func rarityLabel(_ r: Rarity) -> String {
         switch r {
         case .common:    return rarityCommon
@@ -814,6 +849,7 @@ struct L {
         case .rareCandy: return t("이상한 사탕", "Rare Candy", "ふしぎなアメ", "Caramelo Raro")
         case .mint:      return t("민트", "Mint", "ミント", "Menta")
         case .shinyCharm: return t("이로치 부적", "Shiny Charm", "ひかるおまもり", "Amuleto Iris")
+        case .moveReroll: return t("기술 리롤러", "Move Reroller", "わざリローラー", "Recambiador de Movimientos")
         // 본가 공식 번역 명칭(PokéAPI /item/{name} names 기준) — species/move 처럼 하드코딩 없이 런타임
         // 조회하고 싶지만, 상점/가방 텍스트는 이 앱에서 상수 6종뿐이라 다른 아이템과 같은 방식을 따른다.
         case .hpUp:    return t("맥스업", "HP Up", "マックスアップ", "Más PS")
@@ -842,6 +878,11 @@ struct L {
                      "While owned, raises the chance of hatching a shiny.",
                      "持っていると色違いが生まれる確率が上がります。",
                      "Mientras lo tengas, aumenta la probabilidad de que nazca un Pokémon variocolor.")
+        case .moveReroll:
+            return t("현재 포켓몬의 4기술을 지금 배울 수 있는 기술 중에서 랜덤으로 다시 뽑아요.",
+                     "Rerolls your Pokémon's 4 moves from the moves it can currently learn.",
+                     "ポケモンの4つのわざを、今覚えられるわざの中からランダムに選び直します。",
+                     "Vuelve a sortear los 4 movimientos de tu Pokémon entre los que puede aprender ahora.")
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos:
             let ev = Vitamin.evGain
             let stat = vitaminStatName(kind)
@@ -865,6 +906,7 @@ struct L {
     }
     /// 가방 사용 컨트롤의 효과 힌트 — 민트("성격 랜덤 변경", 사탕의 "+XP" 자리).
     var mintEffectHint: String { t("성격 랜덤 변경", "Random nature", "せいかくランダム変更", "Naturaleza aleatoria", "Nature aléatoire", "Natureza aleatória") }
+    var moveRerollEffectHint: String { t("기술 랜덤 재추첨", "Random moveset reroll", "わざをランダムに再抽選", "Sorteo aleatorio de movimientos") }
 
     // MARK: 상점 (재화 = 사용한 토큰)
     var shop: String { t("상점", "Shop", "ショップ", "Tienda", "Boutique", "Loja") }

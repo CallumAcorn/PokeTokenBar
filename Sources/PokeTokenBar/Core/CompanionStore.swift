@@ -247,6 +247,13 @@ final class CompanionStore {
         }
     }
 
+    /// Display name for a species — reads the same dex-unlock name cache as dexSpecies, so it's free
+    /// (no network): anything owned has already unlocked its species and cached names there. Falls
+    /// back to "#id" only for the placeholder case (shouldn't happen for anything actually owned).
+    func speciesName(_ speciesID: Int) -> String {
+        state.dexUnlocked[speciesID]?.names.flatMap { state.language.resolveName($0) } ?? "#\(speciesID)"
+    }
+
     /// 이름이 없는 구버전 졸업 항목의 체인 이름을 채운다(도감 격자 진입 시 1회).
     ///
     /// 격자는 저장된 이름만 읽으므로 백필이 없으면 칸이 종 번호(`#41`)로 남는다. 포획 로그는 행이
@@ -445,6 +452,10 @@ final class CompanionStore {
            a.usedAtStage >= PokemonBalance.phaseThreshold(rarity: a.rarity, totalForms: a.totalForms, stageIndex: 0) {
             Task { await revealDitto() }
         }
+        // Auto-learn migration — fills the party of a pre-feature save once. Retries until it succeeds.
+        if !state.movesFeatureSeeded, !movesFeatureMigrationInFlight {
+            Task { await migrateAutoLearnMovesIfNeeded() }
+        }
         displayState = computeState(burnTier: burnTier, limitWarning: limitWarning,
                                     hasUsageData: hasUsageData, today: todayTokens)
         save()
@@ -456,6 +467,7 @@ final class CompanionStore {
     func applyUsage(_ delta: Int) {
         guard let firstIdx = trainingIndex else { return }
         state.party[firstIdx].usedAtStage += delta
+        maybeAutoLearnTrainingMon()   // level is derived from usedAtStage alone, so it can change independent of line loading
         guard let line = currentLine else { save(); return }
         var guardCount = 0
         while let idx = trainingIndex, guardCount < 50 {
@@ -515,6 +527,7 @@ final class CompanionStore {
                 notifyCompanionEvent(l.notifEvolveTitle, l.notifEvolveBody(newName))
             }
         }
+        maybeAutoLearnTrainingMon()   // Retry auto-learn if leveling/evolving changed the (species, level) pair
         save()
     }
 
@@ -923,8 +936,195 @@ final class CompanionStore {
         justEvolvedTo = nil; justGraduated = nil; eventUntil = nil; celebration = nil
         candyFeedbackAmount = 0; mintFeedbackNature = nil
         displayState = .idle
+        maybeAutoLearnTrainingMon()   // The mon switched to may predate this feature and still have empty slots
         save()
         Task { await loadCurrentLine(catchUp: false) }
+        return true
+    }
+
+    // MARK: Move data (read-only — failures resolve to empty quietly, the screen just looks pre-load)
+
+    /// This species' learnset (level-up/TM). The PC detail screen and the learn-a-move screen use
+    /// this to decide eligibility.
+    func learnableMoves(speciesID: Int) async -> [LearnableMove] {
+        (try? await provider.learnableMoves(speciesID: speciesID)) ?? []
+    }
+    /// Detail for a single move (type/power/PP etc.) — for displaying known-move and learnset rows.
+    func moveDetail(id: Int) async -> Move? {
+        try? await provider.moveDetail(id: id)
+    }
+    /// TM shop catalog (the whole version group) — for ShopView's TM grid.
+    func tmCatalog() async -> [Move] {
+        (try? await provider.tmCatalog()) ?? []
+    }
+
+    // MARK: TM (technical machine) — stock (ownedTMs) comes only from the shop (doc: shop purchase only for now)
+
+    func tmCount(_ moveID: Int) -> Int { state.ownedTMs[moveID] ?? 0 }
+    /// Move ids of currently owned TMs (stock > 0). Candidate list for "teach a TM" on the PC detail screen.
+    var ownedTMIDs: [Int] { state.ownedTMs.filter { $0.value > 0 }.map(\.key) }
+
+    func canBuyTM(_ moveID: Int) -> Bool { availableTokens >= TM.price }
+
+    /// Buy one TM — deducts price from the wallet, +1 to that move id's stock. Same shape as buying
+    /// an ItemKind (buy(_:)), but a separate function since the target collection differs (ownedTMs
+    /// is keyed by move id, inventory by ItemKind rawValue).
+    @discardableResult
+    func buyTM(_ moveID: Int) -> Bool {
+        guard canBuyTM(moveID) else { return false }
+        state.spentTokens += TM.price
+        state.ownedTMs[moveID, default: 0] += 1
+        save()
+        return true
+    }
+
+    // MARK: Learning a move — the shared path for level-up (free) and TM (consumes stock).
+    // **Level-up learning while under 4 slots is auto-filled by autoFillKnownMoves** — the two
+    // functions below (learnLevelUpMove/teachTM) are the manual path for "what to replace" once the
+    // 4 slots are already full (TMs consume stock, so they were never automated to begin with).
+    // Once full, a slot (0..3) is required and that slot gets replaced.
+
+    func canLearnLevelUpMove(_ moveID: Int, for monID: MonState.ID, learnset: [LearnableMove]) -> Bool {
+        guard let mon = state.party.first(where: { $0.id == monID }), !mon.knownMoves.contains(moveID) else { return false }
+        return learnset.contains { $0.moveID == moveID && $0.method == .levelUp && $0.level <= mon.level }
+    }
+
+    func canTeachTM(_ moveID: Int, to monID: MonState.ID, learnset: [LearnableMove]) -> Bool {
+        guard tmCount(moveID) > 0,
+              let mon = state.party.first(where: { $0.id == monID }), !mon.knownMoves.contains(moveID) else { return false }
+        return learnset.contains { $0.moveID == moveID && $0.method == .machine }
+    }
+
+    /// The actual knownMoves update — appends if under 4, requires a slot if at 4 (fails without
+    /// one). Assumes the caller (canLearnLevelUpMove/canTeachTM) already checked eligibility.
+    @discardableResult
+    private func setKnownMove(_ moveID: Int, on monID: MonState.ID, replacingSlot slot: Int?) -> Bool {
+        guard let idx = state.party.firstIndex(where: { $0.id == monID }) else { return false }
+        var moves = state.party[idx].knownMoves
+        if moves.count < MonState.maxKnownMoves {
+            moves.append(moveID)
+        } else if let slot, moves.indices.contains(slot) {
+            moves[slot] = moveID
+        } else {
+            return false
+        }
+        state.party[idx].knownMoves = moves
+        return true
+    }
+
+    @discardableResult
+    func learnLevelUpMove(_ moveID: Int, for monID: MonState.ID, learnset: [LearnableMove], replacingSlot slot: Int? = nil) -> Bool {
+        guard canLearnLevelUpMove(moveID, for: monID, learnset: learnset),
+              setKnownMove(moveID, on: monID, replacingSlot: slot) else { return false }
+        save()
+        return true
+    }
+
+    @discardableResult
+    func teachTM(_ moveID: Int, to monID: MonState.ID, learnset: [LearnableMove], replacingSlot slot: Int? = nil) -> Bool {
+        guard canTeachTM(moveID, to: monID, learnset: learnset),
+              setKnownMove(moveID, on: monID, replacingSlot: slot) else { return false }
+        state.ownedTMs[moveID] = tmCount(moveID) - 1
+        save()
+        return true
+    }
+
+    // MARK: Auto-learn moves — fills level-up moves with no player involvement until 4 slots are
+    // full. Once full, it hands off to learnLevelUpMove/teachTM above (manual replace). TMs consume
+    // stock, so they're never automated.
+
+    /// Fills the given mon's level-up moves it can currently learn, lowest level first, up to 4.
+    /// Leaves it untouched if already at 4 (the player picks a replacement from then on).
+    /// learnsetCache is a species-keyed shared cache — lets the caller (e.g. the migration) iterate
+    /// multiple party members of the same species with only one lookup per species.
+    /// Returns false on failure (e.g. offline) — the caller decides whether to retry.
+    @discardableResult
+    private func autoFillKnownMoves(for monID: MonState.ID, learnsetCache: inout [Int: [LearnableMove]]) async -> Bool {
+        guard let mon = state.party.first(where: { $0.id == monID }), mon.knownMoves.count < MonState.maxKnownMoves else { return true }
+        let learnset: [LearnableMove]
+        if let cached = learnsetCache[mon.currentID] {
+            learnset = cached
+        } else if let fetched = try? await provider.learnableMoves(speciesID: mon.currentID) {
+            learnset = fetched
+            learnsetCache[mon.currentID] = fetched
+        } else {
+            return false
+        }
+        // The mon may have disappeared during the await (e.g. traded away) — look it up again.
+        guard let idx = state.party.firstIndex(where: { $0.id == monID }) else { return true }
+        let current = state.party[idx]
+        let eligible = learnset
+            .filter { $0.method == .levelUp && $0.level <= current.level && !current.knownMoves.contains($0.moveID) }
+            .sorted { $0.level < $1.level }
+        guard !eligible.isEmpty else { return true }
+        var moves = current.knownMoves
+        for lm in eligible where moves.count < MonState.maxKnownMoves { moves.append(lm.moveID) }
+        guard moves != current.knownMoves else { return true }
+        state.party[idx].knownMoves = moves
+        save()
+        return true
+    }
+
+    /// Single-mon convenience wrapper (its own cache) — used by hatchCore and the training-mon level-change hook.
+    @discardableResult
+    private func autoFillKnownMoves(for monID: MonState.ID) async -> Bool {
+        var cache: [Int: [LearnableMove]] = [:]
+        return await autoFillKnownMoves(for: monID, learnsetCache: &cache)
+    }
+
+    /// Retries auto-learn only when the training mon's (species, level) pair actually changed
+    /// (level-up/evolution) — an in-session dedup so we don't hit the network on every usage tick.
+    /// Doesn't need to persist (worst case a restart retries once more, harmlessly).
+    private var autoLearnCheckedKey: [String: String] = [:]
+
+    private func maybeAutoLearnTrainingMon() {
+        guard let mon = trainingMon else { return }
+        let key = "\(mon.currentID)-\(mon.level)"
+        guard autoLearnCheckedKey[mon.id] != key else { return }
+        autoLearnCheckedKey[mon.id] = key
+        guard mon.knownMoves.count < MonState.maxKnownMoves else { return }
+        Task { await self.autoFillKnownMoves(for: mon.id) }
+    }
+
+    /// One-time save migration — fills empty slots for the whole party of a save that predates this
+    /// feature (or a fresh install). `update()` retries every tick while movesFeatureSeeded is
+    /// false (picks up where it left off if offline). If even one species fails to fetch, the seed
+    /// flag isn't set — that species gets filled on the next attempt.
+    private var movesFeatureMigrationInFlight = false
+    private func migrateAutoLearnMovesIfNeeded() async {
+        guard !state.movesFeatureSeeded, !movesFeatureMigrationInFlight else { return }
+        movesFeatureMigrationInFlight = true
+        defer { movesFeatureMigrationInFlight = false }
+        var learnsetCache: [Int: [LearnableMove]] = [:]
+        var anyFailed = false
+        for mon in state.party where mon.knownMoves.count < MonState.maxKnownMoves {
+            let ok = await autoFillKnownMoves(for: mon.id, learnsetCache: &learnsetCache)
+            if !ok { anyFailed = true }
+        }
+        guard !anyFailed else { return }
+        state.movesFeatureSeeded = true
+        save()
+    }
+
+    // MARK: Move reroll (moveReroll item) — targets the training mon, same targeting rule as Mint (nature reroll).
+
+    var canUseMoveReroll: Bool { hasActive && itemCount(.moveReroll) > 0 }
+
+    /// Redraws the current mon's 4 moves at random from its learnset at that moment (level-up moves
+    /// learned up to its current level + everything machine-teachable). Fewer than 4 candidates?
+    /// It just uses however many there are — no forcing it up to 4.
+    @discardableResult
+    func useMoveReroll() async -> Bool {
+        guard canUseMoveReroll, let mon = trainingMon else { return false }
+        let learnset = await learnableMoves(speciesID: mon.currentID)
+        let pool = Set(learnset
+            .filter { $0.method == .machine || ($0.method == .levelUp && $0.level <= mon.level) }
+            .map(\.moveID))
+        guard !pool.isEmpty, trainingMon?.id == mon.id else { return false }   // still the same mon after the await?
+        let picked = Array(Array(pool).shuffled(using: &rng).prefix(MonState.maxKnownMoves))
+        mutateTraining { $0.knownMoves = picked }
+        state.inventory[ItemKind.moveReroll.rawValue] = itemCount(.moveReroll) - 1
+        save()
         return true
     }
 
@@ -1236,6 +1436,8 @@ final class CompanionStore {
         // 연출은 이월 진화 뒤에 발화 — 이월 evolve 가 shiny 부화 버스트를 덮지 않도록
         // 마지막 이벤트를 hatch 로 유지한다. 이월로 즉시 졸업한 극단 케이스면 생략(이미 훈련 슬롯이 풀림).
         if state.trainingSlotID != nil { fireCelebration(.hatch(shiny: showShiny)) }
+        // Starting moveset for a freshly hatched mon — fill it right away, don't wait for the next usage tick.
+        if overflow == 0 { await autoFillKnownMoves(for: newMon.id) }
         save()
     }
 

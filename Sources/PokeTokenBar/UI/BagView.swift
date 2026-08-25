@@ -76,6 +76,7 @@ private struct ItemCard: View {
         switch kind {
         case .rareCandy: return store.canUseRareCandy
         case .mint:      return store.canUseMint
+        case .moveReroll: return store.canUseMoveReroll
         case .shinyCharm: return false   // 보유형 — 사용 개념 없음(상시 효과)
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return false
         }
@@ -85,6 +86,7 @@ private struct ItemCard: View {
         switch kind {
         case .rareCandy: return "+\(TokenFormatter.compact(RareCandy.xp)) XP"
         case .mint:      return l.mintEffectHint
+        case .moveReroll: return l.moveRerollEffectHint
         case .shinyCharm: return l.shinyCharmEffectHint
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return ""
         }
@@ -93,6 +95,7 @@ private struct ItemCard: View {
         switch kind {
         case .rareCandy: _ = store.useRareCandy()
         case .mint:      _ = store.useMint()
+        case .moveReroll: Task { await store.useMoveReroll() }
         case .shinyCharm: break   // 보유형 — 사용 동작 없음
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: break   // PC 상세 화면에서만 사용
         }
