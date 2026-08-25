@@ -737,6 +737,9 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     /// User-set — this individual gets its own floating desktop pet window (PC detail screen).
     /// Multiple party members can be floating at once, independent of who's training.
     var isFloating = false
+    /// 기술 슬롯 상한. 쓰기 경로(setKnownMove/리롤)와 신뢰경계 클램프가 같은 값을 봐야 하므로
+    /// 리터럴 4 를 흩뿌리지 않고 여기 하나만 둔다.
+    static let maxKnownMoves = 4
     /// Currently known moves (move ids), slot order = order learned. Capped at 4 like the real games
     /// (CompanionStore enforces it). Empty right after hatching — level-up moves auto-fill up to 4
     /// slots as the mon grows (CompanionStore.autoFillKnownMoves); past that, only a manual TM teach

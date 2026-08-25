@@ -629,6 +629,29 @@ final class SaveTransferTests: XCTestCase {
         XCTAssertTrue((0...Vitamin.evCapPerStat).contains(roundTripped?.evs.attack ?? -1))
     }
 
+    /// [PR #20 후속] knownMoves 의 4개 상한은 teach/learn 경로마다 `count < 4` 가드로만 걸려 있다.
+    /// 거래·세이브 임포트로 들어온 개체는 그 가드를 한 번도 통과하지 않으므로 상한을 넘긴 채 자리잡고,
+    /// 넘긴 값이 그대로 저장된 뒤 PC 상세가 `ForEach(0..<count)` 로 전부 그린다. 재기동해도 같은 값을
+    /// 다시 읽으니, sanitized 가 막으려는 그 잠금 상태와 같은 부류다.
+    func testTradedMonCannotExceedTheFourMoveLimit() throws {
+        var evilMon = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1],
+                               stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        evilMon.knownMoves = Array(1...64) + [1, 1, 1]
+
+        let cleaned = SaveTransfer.sanitizedMon(evilMon)
+
+        XCTAssertLessThanOrEqual(cleaned.knownMoves.count, 4, "상한을 넘은 기술이 남았다")
+        XCTAssertEqual(Set(cleaned.knownMoves).count, cleaned.knownMoves.count, "중복 기술이 남았다")
+
+        // 세이브 파일 전체 왕복(encode→decode)에서도 같은 상한이 걸리는지 확인.
+        var evil = CompanionState()
+        evil.party = [evilMon]
+        let data = try SaveTransfer.encode(state: evil, appVersion: "2.5.0", deviceName: "Corrupt", now: transferNow)
+        let roundTripped = try XCTUnwrap(SaveTransfer.decode(data).state.party.first)
+        XCTAssertLessThanOrEqual(roundTripped.knownMoves.count, 4)
+    }
+
+
     // MARK: 필드 부류 (딥리뷰 M-c·M-e·M-g)
 
     /// [딥리뷰 M-g] 이전 시 필드 분류가 산문 규약뿐이라, 새 필드가 추가되면 아무 판단 없이 "진행"으로

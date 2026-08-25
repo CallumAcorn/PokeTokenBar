@@ -1001,7 +1001,7 @@ final class CompanionStore {
     private func setKnownMove(_ moveID: Int, on monID: MonState.ID, replacingSlot slot: Int?) -> Bool {
         guard let idx = state.party.firstIndex(where: { $0.id == monID }) else { return false }
         var moves = state.party[idx].knownMoves
-        if moves.count < 4 {
+        if moves.count < MonState.maxKnownMoves {
             moves.append(moveID)
         } else if let slot, moves.indices.contains(slot) {
             moves[slot] = moveID
@@ -1040,7 +1040,7 @@ final class CompanionStore {
     /// Returns false on failure (e.g. offline) — the caller decides whether to retry.
     @discardableResult
     private func autoFillKnownMoves(for monID: MonState.ID, learnsetCache: inout [Int: [LearnableMove]]) async -> Bool {
-        guard let mon = state.party.first(where: { $0.id == monID }), mon.knownMoves.count < 4 else { return true }
+        guard let mon = state.party.first(where: { $0.id == monID }), mon.knownMoves.count < MonState.maxKnownMoves else { return true }
         let learnset: [LearnableMove]
         if let cached = learnsetCache[mon.currentID] {
             learnset = cached
@@ -1058,7 +1058,7 @@ final class CompanionStore {
             .sorted { $0.level < $1.level }
         guard !eligible.isEmpty else { return true }
         var moves = current.knownMoves
-        for lm in eligible where moves.count < 4 { moves.append(lm.moveID) }
+        for lm in eligible where moves.count < MonState.maxKnownMoves { moves.append(lm.moveID) }
         guard moves != current.knownMoves else { return true }
         state.party[idx].knownMoves = moves
         save()
@@ -1082,7 +1082,7 @@ final class CompanionStore {
         let key = "\(mon.currentID)-\(mon.level)"
         guard autoLearnCheckedKey[mon.id] != key else { return }
         autoLearnCheckedKey[mon.id] = key
-        guard mon.knownMoves.count < 4 else { return }
+        guard mon.knownMoves.count < MonState.maxKnownMoves else { return }
         Task { await self.autoFillKnownMoves(for: mon.id) }
     }
 
@@ -1097,7 +1097,7 @@ final class CompanionStore {
         defer { movesFeatureMigrationInFlight = false }
         var learnsetCache: [Int: [LearnableMove]] = [:]
         var anyFailed = false
-        for mon in state.party where mon.knownMoves.count < 4 {
+        for mon in state.party where mon.knownMoves.count < MonState.maxKnownMoves {
             let ok = await autoFillKnownMoves(for: mon.id, learnsetCache: &learnsetCache)
             if !ok { anyFailed = true }
         }
@@ -1121,7 +1121,7 @@ final class CompanionStore {
             .filter { $0.method == .machine || ($0.method == .levelUp && $0.level <= mon.level) }
             .map(\.moveID))
         guard !pool.isEmpty, trainingMon?.id == mon.id else { return false }   // still the same mon after the await?
-        let picked = Array(Array(pool).shuffled(using: &rng).prefix(4))
+        let picked = Array(Array(pool).shuffled(using: &rng).prefix(MonState.maxKnownMoves))
         mutateTraining { $0.knownMoves = picked }
         state.inventory[ItemKind.moveReroll.rawValue] = itemCount(.moveReroll) - 1
         save()

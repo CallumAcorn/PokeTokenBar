@@ -1263,7 +1263,7 @@ private struct MonDetailView: View {
                 Text(subtitle).font(.caption2).foregroundStyle(.tertiary)
                 Spacer(minLength: 4)
                 Button(isTM ? store.l.moveTeachButton : store.l.moveLearnButton) {
-                    if mon.knownMoves.count < 4 {
+                    if mon.knownMoves.count < MonState.maxKnownMoves {
                         performLearn(moveID: moveID, isTM: isTM, slot: nil)
                     } else {
                         pendingLearn = PendingLearn(moveID: moveID, isTM: isTM)
