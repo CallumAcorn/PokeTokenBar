@@ -110,6 +110,7 @@ Antigravity 2.0 と IDE が推定値ではなく実際のクォータを返し�
 
 ## そのほかにも
 
+- **技とわざマシン（TM）**: レベルアップで技を最大4つまで習得し、ショップのTMでさらに学習。4つ埋まっていれば入れ替える技を選択。習得リストとTMカタログはPokéAPIから。
 - **インタラクティブなフローティングペット** — ホバーで今日の使用量、クリックでメイン画面、右クリックでメニュー、上限アラートは吹き出しで表示。
 - **サービス別タブ** — Claude Code・Codex・Gemini CLI・Antigravity・OpenCode・Hermes Agent・Cursor・Grok CLI・Copilot CLI・Kiro CLI・Pi Agent のうち2つ以上が検出されると、小さなタブでサービス別の詳細を切替（今日の合計は合算のまま）。
 - **公式の上限** — Claude・Codex・Antigravity の5時間／週間使用率とリセットのカウントダウンを、今日の数字のすぐ下に。
@@ -191,7 +192,7 @@ swift test                   # ユニットテスト
 | `~/.pi/agent/sessions/**/*.jsonl` | Pi Agent daily/blocks/weekly/monthly | 全プロジェクトの保存済み usage を直接集計；`$PI_CODING_AGENT_DIR`・`$PI_CODING_AGENT_SESSION_DIR` override 対応；output には reasoning がすでに含まれるため二重計上しない；fork のコピーは entry ID で重複排除；コストは表示しない |
 | Keychain / `~/.claude/.credentials.json` → `api.anthropic.com` | Claude 公式 5h/週間 % | 非公式 endpoint；Keychain は**更新ボタンを押した時のみ**読み取り — 自動更新では読みません |
 | `codex app-server` | Codex 公式 5h/週間 % | ローカル子プロセス；アカウント snapshot のみ、モデル turn なし |
-| [PokéAPI](https://pokeapi.co/) — `pokeapi.co`, `graphql.pokeapi.co` | ポケモンの種・進化 | ランタイム取得；ローカルキャッシュ、バンドルしない |
+| [PokéAPI](https://pokeapi.co/): `pokeapi.co`, `graphql.pokeapi.co` | ポケモンの種・進化・技 | ランタイム取得；ローカルキャッシュ、バンドルしない |
 | `raw.githubusercontent.com/PokeAPI/sprites` | ポケモン・アイテムのスプライト | ランタイム取得；Application Support にキャッシュ、バンドルしない |
 | `status.claude.com`, `status.openai.com` | プロバイダ障害バナー | statuspage の要約；表示専用 — 設定でオフにできます |
 | `api.github.com` | アップデート確認 | 最新リリースのタグ；起動時とポップオーバーを開いた時 |

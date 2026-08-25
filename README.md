@@ -110,6 +110,7 @@ If a tool keeps its sessions outside the built-in paths, add your own roots unde
 
 ## Also in the box
 
+- **Moves and TMs**: companions learn up to four moves as they level, and TMs from the shop teach more. With all four slots full, you pick one to replace. Learnsets and the TM catalog come from PokéAPI.
 - **Interactive floating pet** — hover for today's usage, click to open the main window, right-click for a menu, and show limit alerts as speech bubbles.
 - **Per-service tabs** — when two or more of Claude Code, Codex, Gemini CLI, Antigravity, OpenCode, Hermes Agent, Cursor, Grok CLI, Copilot CLI, Kiro CLI, and Pi Agent are detected, compact tabs switch between them; today's total stays combined.
 - **Official limits** — Claude, Codex & Antigravity 5-hour / weekly utilization with reset countdowns, right under today's numbers.
@@ -192,7 +193,7 @@ swift test                   # unit tests
 | `~/.pi/agent/sessions/**/*.jsonl` | Pi Agent daily/blocks/weekly/monthly | Direct persisted usage from all projects; `$PI_CODING_AGENT_DIR` and `$PI_CODING_AGENT_SESSION_DIR` overrides supported; output already includes reasoning (not counted twice); forked history deduplicated by entry ID; no cost is reported |
 | Keychain / `~/.claude/.credentials.json` → `api.anthropic.com` | Claude official 5h/weekly % | unofficial endpoint; the Keychain is read **only when you press refresh** — auto-polling never reads it |
 | `codex app-server` | Codex official 5h/weekly % | local child process; account snapshot only, no model turn |
-| [PokéAPI](https://pokeapi.co/) — `pokeapi.co`, `graphql.pokeapi.co` | Pokémon species &amp; evolution | runtime fetch; cached locally, never bundled |
+| [PokéAPI](https://pokeapi.co/): `pokeapi.co`, `graphql.pokeapi.co` | Pokémon species, evolution &amp; moves | runtime fetch; cached locally, never bundled |
 | `raw.githubusercontent.com/PokeAPI/sprites` | Pokémon &amp; item sprites | runtime fetch; cached under Application Support, never bundled |
 | `status.claude.com`, `status.openai.com` | provider incident banner | statuspage summary; display only — turn it off in Settings |
 | `api.github.com` | update check | latest release tag; on launch and when the popover opens |
