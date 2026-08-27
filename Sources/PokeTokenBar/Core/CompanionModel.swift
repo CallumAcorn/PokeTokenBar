@@ -493,6 +493,10 @@ enum MoveDamageClass: String, Codable, Sendable {
 /// catalog and a mon's known-move list.
 struct Move: Sendable, Codable, Equatable {
     let id: Int
+    /// PokéAPI's own slug (e.g. `"quick-attack"`) — distinct from `names`' localized *display* names
+    /// (e.g. "Quick Attack"). Needed to submit a battle roster: the server's `@pkmn/dex` lookup wants
+    /// this exact slug, not the numeric id or a display string. See `BattleClient.primitive(for:...)`.
+    let name: String
     let type: PokemonType
     let power: Int?       // nil for status moves
     let accuracy: Int?    // nil for moves that never miss

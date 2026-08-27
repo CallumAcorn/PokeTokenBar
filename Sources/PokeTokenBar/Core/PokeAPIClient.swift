@@ -186,7 +186,7 @@ actor PokeAPIClient: PokeProviding {
         let dto: MoveDTO = try await get(base.appendingPathComponent("move/\(id)"))
         var byLang: [String: String] = [:]
         for n in dto.names where langCodes.contains(n.language.name) { byLang[n.language.name] = n.name }
-        let move = Move(id: id, type: PokemonType(rawValue: dto.type.name) ?? .normal,
+        let move = Move(id: id, name: dto.name, type: PokemonType(rawValue: dto.type.name) ?? .normal,
                         power: dto.power, accuracy: dto.accuracy, pp: dto.pp,
                         damageClass: MoveDamageClass(rawValue: dto.damage_class.name) ?? .status,
                         names: byLang)
@@ -239,6 +239,7 @@ actor PokeAPIClient: PokeProviding {
         struct Row: Decodable { let move: MoveRow }
         struct MoveRow: Decodable {
             let id: Int
+            let name: String
             let power: Int?
             let accuracy: Int?
             let pp: Int
@@ -260,7 +261,7 @@ actor PokeAPIClient: PokeProviding {
         let langList = langCodes.map { "\"\($0)\"" }.joined(separator: ", ")
         let query = """
         { machine(where: {versiongroup: {name: {_eq: "\(MoveDataVersion.versionGroup)"}}}, order_by: {machine_number: asc}) \
-        { move { id power accuracy pp type { name } movedamageclass { name } \
+        { move { id name power accuracy pp type { name } movedamageclass { name } \
         movenames(where: {language: {name: {_in: [\(langList)]}}}) { name language { name } } } } }
         """
         req.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
@@ -271,7 +272,7 @@ actor PokeAPIClient: PokeProviding {
         return decoded.data.machine.map { row in
             var byLang: [String: String] = [:]
             for n in row.move.movenames { byLang[n.language.name] = n.name }
-            return Move(id: row.move.id, type: PokemonType(rawValue: row.move.type.name) ?? .normal,
+            return Move(id: row.move.id, name: row.move.name, type: PokemonType(rawValue: row.move.type.name) ?? .normal,
                        power: row.move.power, accuracy: row.move.accuracy, pp: row.move.pp,
                        damageClass: MoveDamageClass(rawValue: row.move.movedamageclass.name) ?? .status,
                        names: byLang)
@@ -508,6 +509,7 @@ struct VersionGroupDetailDTO: Decodable, Sendable {
     let version_group: NamedRef
 }
 struct MoveDTO: Decodable, Sendable {
+    let name: String
     let power: Int?
     let accuracy: Int?
     let pp: Int
