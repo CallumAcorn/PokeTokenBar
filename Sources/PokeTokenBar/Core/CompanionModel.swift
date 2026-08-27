@@ -1092,16 +1092,21 @@ struct CompanionState: Codable, Sendable {
     /// 로그 행이 파티의 어떤 개체도 가리키지 않으면 그 행으로 개체를 복원한다. 되살린 개체는 최종
     /// 단계에 서 있고 `usedAtStage` 는 0 이다 — 그때의 진행도는 기록에 없고, 지어내면 레벨이 거짓말을
     /// 한다. 훈련 슬롯은 건드리지 않는다(복원이 지금 키우는 개체를 바꾸면 안 된다).
-    static func restoredPartyFromCatchLog(party: [MonState], dex: [DexEntry]) -> [MonState] {
+    /// 복원된 개체의 id 를 그 로그 행(`monID`)에 **되쓴 결과까지** 돌려준다. 되쓰지 않으면 행이
+    /// 영원히 nil 로 남고, `sanitized()` 가 매 로드마다 도는 탓에 같은 행이 로드마다 개체를 하나씩
+    /// 더 만든다(실측: 씨몬 라인이 PC 에 3마리). 링크가 곧 '이 행은 이미 복원했다'는 영구 표식이다.
+    static func restoredPartyFromCatchLog(party: [MonState], dex: [DexEntry]) -> (party: [MonState], dex: [DexEntry]) {
         let liveIDs = Set(party.map(\.id))
         var out = party
-        for entry in dex {
+        var rows = dex
+        for i in rows.indices {
+            let entry = rows[i]
             // 이 행이 살아 있는 개체를 가리키면 건너뛴다.
             if let monID = entry.monID, liveIDs.contains(monID) { continue }
             // monID 가 있는데 파티에 없다 = 거래로 떠난 개체. 되살리면 안 된다.
             if entry.monID != nil { continue }
             guard !entry.chainOrder.isEmpty else { continue }   // 빈 pathIDs 는 디코드 불가 상태
-            out.append(MonState(
+            let restored = MonState(
                 baseID: entry.baseID,
                 pathIDs: entry.chainOrder,
                 stageIndex: entry.chainOrder.count - 1,
@@ -1111,9 +1116,40 @@ struct CompanionState: Codable, Sendable {
                 isShiny: entry.isShiny,
                 nature: entry.nature,
                 acquiredAt: entry.caughtAt ?? Date(),
-                acquiredVia: entry.source))
+                acquiredVia: entry.source)
+            out.append(restored)
+            // 이 되쓰기가 멱등성을 만든다. 다음 로드는 위 `liveIDs` 가드에서 이 행을 걸러낸다.
+            rows[i].monID = restored.id
         }
-        return out
+        return (out, rows)
+    }
+
+    /// 멱등성 결함이 **이미 만들어 둔** 중복을 접는다. 고친 코드는 더 만들지 않지만, 이미 저장된
+    /// 클론은 그대로 남아 있다(사용자 PC 에 씨몬 3마리).
+    ///
+    /// 안전 규칙: 삭제는 **같은 그룹 안에 로그 행이 실제로 가리키는 개체가 있을 때만** 한다. 그 링크가
+    /// "이 그룹은 한 번의 포획이고 나머지는 그 복사본"이라는 증거다. 링크된 개체가 하나도 없으면
+    /// 아무것도 지우지 않는다 — `acquiredAt` 만 보고 지우면 구버전 마이그레이션 세이브(여러 개체가
+    /// 마이그레이션 시각을 공유한다)에서 멀쩡한 개체를 지울 수 있다.
+    ///
+    /// 그룹 키에 `acquiredAt` 이 들어가는 이유: 클론은 행의 `caughtAt` 을 그대로 복사하므로 서로
+    /// 마이크로초까지 같다. 정상 부화는 그때그때 `clock()` 이라 이 값이 겹치지 않는다.
+    static func collapsedRestoreClones(party: [MonState], dex: [DexEntry]) -> [MonState] {
+        struct Key: Hashable {
+            let base: Int; let path: [Int]; let at: Date; let shiny: Bool
+        }
+        let linked = Set(dex.compactMap(\.monID))
+        var groups: [Key: [Int]] = [:]
+        for (i, m) in party.enumerated() {
+            groups[Key(base: m.baseID, path: m.pathIDs, at: m.acquiredAt, shiny: m.isShiny), default: []].append(i)
+        }
+        var drop = Set<Int>()
+        for (_, idxs) in groups where idxs.count > 1 {
+            guard idxs.contains(where: { linked.contains(party[$0].id) }) else { continue }
+            for i in idxs where !linked.contains(party[i].id) { drop.insert(i) }
+        }
+        guard !drop.isEmpty else { return party }
+        return party.enumerated().filter { !drop.contains($0.offset) }.map(\.element)
     }
 
     /// `dexUnlocked` 를 `dex`(포획 로그)·`party` 에서 다시 접어 **빠진 항목만** 채운다(있는 항목은
