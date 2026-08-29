@@ -8,6 +8,10 @@ enum BattleWindowMetrics {
     static let width: CGFloat = 520
     static let height: CGFloat = 460
     static let padding: CGFloat = 14
+    /// Shared by actionBox/battleOverHoldingBox (their own minHeight) and battleScene (how much
+    /// bottom clearance the info boxes need to stay above the action-box overlay) — one number,
+    /// not two literals that could quietly drift apart.
+    static let actionBoxHeight: CGFloat = 132
 }
 
 /// Battle screen — same full-content-swap pattern as Trade/Settings for the picker/waiting/result
@@ -288,7 +292,12 @@ struct BattleView: View {
         if view.status == "completed" && revealResult {
             resultView(view)
         } else if let you = view.you, let opponent = view.opponent {
-            VStack(spacing: 0) {
+            // ZStack, not VStack: the action box is a real overlay painted in front of the scene,
+            // not a separate panel below it. That's what lets your own (large, foreground) sprite
+            // stand *behind* it — its lower body tucked out of sight where they overlap, the same
+            // way the real games' message box sits in front of your Pokémon, never the opponent's
+            // (theirs is small and far enough up-screen that the two never meet).
+            ZStack(alignment: .bottom) {
                 // Rendered even once completed — this is what lets the finishing blow's HP-drop
                 // (and the fainted side's tip-over) actually play before resultView takes over.
                 battleScene(opponent: opponent, you: you)
@@ -318,7 +327,7 @@ struct BattleView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(BattleWindowMetrics.padding)
-        .frame(maxWidth: .infinity, minHeight: 132, alignment: .top)
+        .frame(maxWidth: .infinity, minHeight: BattleWindowMetrics.actionBoxHeight, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.secondary.opacity(0.3)), alignment: .top)
     }
@@ -330,17 +339,24 @@ struct BattleView: View {
             pokemonInfoBox(name: opponent.displayName, active: opponent.active, benchCount: opponent.rosterSize)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(14)
+            // Kept clear of the action-box overlay below (extra bottom padding) — unlike the plain
+            // sprite artwork, this card is information (name/HP) and must never be the thing that's
+            // partly hidden.
             pokemonInfoBox(name: you.displayName, active: yourActive, benchCount: you.roster.count)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .padding(14)
-            battleSprite(speciesID: opponent.active?.speciesID, fainted: opponent.active?.fainted ?? false, size: 84, facing: .front, hitTrigger: opponentHitTrigger)
+                .padding(.horizontal, 14).padding(.top, 14)
+                .padding(.bottom, BattleWindowMetrics.actionBoxHeight + 10)
+            battleSprite(speciesID: opponent.active?.speciesID, fainted: opponent.active?.fainted ?? false, size: 130, facing: .front, hitTrigger: opponentHitTrigger)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                .padding(.top, 24).padding(.trailing, 48)
-            // .back — the real games' own convention: you see your own mon from behind, the
-            // opponent's face-on. The opponent's own client renders the mirror image of this.
-            battleSprite(speciesID: yourActive?.speciesID, fainted: yourActive?.fainted ?? false, size: 96, facing: .back, hitTrigger: yourHitTrigger)
+                .padding(.top, 16).padding(.trailing, 28)
+            // .back (the real games' own convention: you see your own mon from behind, the
+            // opponent's face-on) and deliberately shallow bottom padding — its lower body is meant
+            // to sit behind the action-box overlay the caller (battlingContent) draws in front of
+            // this whole scene, the same way the real games' own message box covers the very bottom
+            // of your Pokémon but never reaches the opponent's (too far up-screen to ever meet it).
+            battleSprite(speciesID: yourActive?.speciesID, fainted: yourActive?.fainted ?? false, size: 170, facing: .back, hitTrigger: yourHitTrigger)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                .padding(.bottom, 4).padding(.leading, 44)
+                .padding(.bottom, 96).padding(.leading, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
@@ -435,7 +451,7 @@ struct BattleView: View {
             }
         }
         .padding(BattleWindowMetrics.padding)
-        .frame(maxWidth: .infinity, minHeight: 132, alignment: .top)
+        .frame(maxWidth: .infinity, minHeight: BattleWindowMetrics.actionBoxHeight, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.secondary.opacity(0.3)), alignment: .top)
     }
