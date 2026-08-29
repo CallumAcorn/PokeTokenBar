@@ -1,8 +1,20 @@
 import SwiftUI
 
-/// Battle screen — same full-content-swap pattern as Trade/Settings (see PopoverView's reasoning
-/// for avoiding .sheet; the same reasoning rules out .sheet for the in-battle voluntary-switch
-/// picker below too, not just top-level screens).
+/// Fixed content size for the standalone battle window (BattleWindowController) — this screen lives
+/// in a real window now, not the 360pt popover strip, so it gets real screen real estate instead of
+/// PopoverMetrics. Not resizable (styleMask omits `.resizable`) — keeps the battle-scene layout math
+/// (below) simple; revisit if that ever feels cramped.
+enum BattleWindowMetrics {
+    static let width: CGFloat = 520
+    static let height: CGFloat = 460
+    static let padding: CGFloat = 14
+}
+
+/// Battle screen — same full-content-swap pattern as Trade/Settings for the picker/waiting/result
+/// screens (see PopoverView's reasoning for avoiding .sheet; the same reasoning rules out .sheet for
+/// the in-battle voluntary-switch picker below too). Hosted in its own window (BattleWindowController)
+/// rather than the popover — the window's own title bar/close button replace what used to be an
+/// in-content back button here.
 struct BattleView: View {
     @Environment(CompanionStore.self) private var companion
     @Environment(BattleStore.self) private var battle
@@ -28,23 +40,19 @@ struct BattleView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            content
-        }
-        .padding(PopoverMetrics.padding)
-        .frame(width: PopoverMetrics.width)
-        .task { checkPendingInvite() }
-        .onChange(of: battle.pendingInvite) { checkPendingInvite() }
-        .alert(l.battleJoinButton, isPresented: Binding(get: { confirmingLink != nil }, set: { if !$0 { declineInvite() } }),
-               presenting: confirmingLink) { link in
-            Button(l.battleJoinButton) { online.serverURL = link.server; confirmingLink = nil }
-            Button(l.tradeCancelButton, role: .cancel) { declineInvite() }
-        } message: { link in
-            Text(online.serverURL.isEmpty
-                 ? l.battleConnectServerConfirm(link.server)
-                 : l.battleDifferentServerConfirm(link.server))
-        }
+        content
+            .frame(width: BattleWindowMetrics.width, height: BattleWindowMetrics.height, alignment: .top)
+            .task { checkPendingInvite() }
+            .onChange(of: battle.pendingInvite) { checkPendingInvite() }
+            .alert(l.battleJoinButton, isPresented: Binding(get: { confirmingLink != nil }, set: { if !$0 { declineInvite() } }),
+                   presenting: confirmingLink) { link in
+                Button(l.battleJoinButton) { online.serverURL = link.server; confirmingLink = nil }
+                Button(l.tradeCancelButton, role: .cancel) { declineInvite() }
+            } message: { link in
+                Text(online.serverURL.isEmpty
+                     ? l.battleConnectServerConfirm(link.server)
+                     : l.battleDifferentServerConfirm(link.server))
+            }
     }
 
     /// Same reasoning as TradeView.checkPendingInvite: a `poketokenbar://` link is attacker-
@@ -79,28 +87,23 @@ struct BattleView: View {
         }
     }
 
-    private var header: some View {
-        HStack {
-            Button { onClose() } label: { Image(systemName: "chevron.left") }
-                .buttonStyle(.borderless)
-            Text(l.battleTitle).font(.callout.weight(.semibold))
-            Spacer()
-        }
-    }
-
     @ViewBuilder
     private var content: some View {
         switch battle.phase {
         case .idle:
-            rosterPicker
+            rosterPicker.padding(BattleWindowMetrics.padding)
         case .waitingForOpponent(_, let shareURL):
-            waitingForOpponent(shareURL: shareURL)
+            waitingForOpponent(shareURL: shareURL).padding(BattleWindowMetrics.padding)
         case .battling(_, let view):
+            // Deliberately no padding — a battle scene reads as a real game screen only if the
+            // background actually fills the window edge to edge, not sitting in a padded card.
             battlingContent(view)
         case .failed(let error):
             statusView(message: friendlyMessage(for: error), showsSpinner: false, showsRetry: true)
+                .padding(BattleWindowMetrics.padding)
         case .expired:
             statusView(message: l.battleExpiredTitle, showsSpinner: false, showsRetry: true)
+                .padding(BattleWindowMetrics.padding)
         }
     }
 
@@ -263,52 +266,121 @@ struct BattleView: View {
         }
     }
 
-    // MARK: In battle
+    // MARK: In battle — laid out like the handheld games' own battle screen: sky-to-grass field,
+    // opponent's info box upper-left / sprite upper-right, your info box lower-right / sprite
+    // lower-left, a bordered message/action box along the bottom. Front-facing sprites for both
+    // sides (no back-view artwork available here, unlike the real games) is the one deliberate
+    // simplification — everything else follows the classic diagonal.
 
     @ViewBuilder
     private func battlingContent(_ view: BattleClient.BattleView) -> some View {
         if view.status == "completed" {
             resultView(view)
         } else if let you = view.you, let opponent = view.opponent {
-            VStack(alignment: .leading, spacing: 10) {
-                sideHeader(displayName: opponent.displayName, active: opponent.active, benchCount: opponent.rosterSize)
-                Divider()
-                sideHeader(displayName: you.displayName, active: you.roster[safeIndex: you.activeIndex], benchCount: you.roster.count)
-                if voluntarySwitchOpen {
-                    switchStrip(you.roster, activeIndex: you.activeIndex, forced: false)
-                } else if view.pendingChoice == "switch" {
-                    Text(l.battleForcedSwitchPrompt).font(.caption2).foregroundStyle(.orange)
-                    switchStrip(you.roster, activeIndex: you.activeIndex, forced: true)
-                } else if view.pendingChoice == "move" {
-                    moveGrid(you: you)
-                } else {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text(l.battleWaitingForYourMove).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
+            VStack(spacing: 0) {
+                battleScene(opponent: opponent, you: you)
+                actionBox(view, you: you)
             }
         } else {
             statusView(message: l.battleWaitingForOpponent, showsSpinner: true)
+                .padding(BattleWindowMetrics.padding)
         }
     }
 
-    private func sideHeader(displayName: String, active: BattleClient.PublicMon?, benchCount: Int) -> some View {
-        HStack(spacing: 8) {
-            SpriteView(speciesID: active?.speciesID, size: 44)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(displayName).font(.caption.weight(.semibold))
-                if let active {
-                    HPBar(fraction: active.hpFraction)
-                        .frame(width: 100, height: 6)
-                    Text(active.name).font(.system(size: 9)).foregroundStyle(.secondary)
-                } else {
-                    Text("—").font(.caption2).foregroundStyle(.tertiary)
-                }
-            }
-            Spacer()
-            Text("\(benchCount)").font(.caption2).foregroundStyle(.secondary)
+    private func battleScene(opponent: BattleClient.Opponent, you: BattleClient.You) -> some View {
+        let yourActive = you.roster[safeIndex: you.activeIndex]
+        return ZStack {
+            battleFieldBackground
+            pokemonInfoBox(name: opponent.displayName, active: opponent.active, benchCount: opponent.rosterSize)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(14)
+            pokemonInfoBox(name: you.displayName, active: yourActive, benchCount: you.roster.count)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(14)
+            battleSprite(speciesID: opponent.active?.speciesID, fainted: opponent.active?.fainted ?? false, size: 84)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(.top, 24).padding(.trailing, 48)
+            battleSprite(speciesID: yourActive?.speciesID, fainted: yourActive?.fainted ?? false, size: 96)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                .padding(.bottom, 4).padding(.leading, 44)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+    }
+
+    private var battleFieldBackground: some View {
+        LinearGradient(
+            stops: [
+                .init(color: Color(red: 0.68, green: 0.85, blue: 0.95), location: 0.0),
+                .init(color: Color(red: 0.80, green: 0.91, blue: 0.97), location: 0.42),
+                .init(color: Color(red: 0.56, green: 0.76, blue: 0.42), location: 0.44),
+                .init(color: Color(red: 0.44, green: 0.66, blue: 0.36), location: 1.0),
+            ],
+            startPoint: .top, endPoint: .bottom)
+    }
+
+    /// A soft ground shadow under the sprite (real games ground their sprites on a battle platform)
+    /// plus a fainted cue — real games have the sprite slide/drop off-screen; a 90° tilt is the
+    /// cheapest approximation that still reads as "down" without an actual animation timeline.
+    private func battleSprite(speciesID: Int?, fainted: Bool, size: CGFloat) -> some View {
+        ZStack {
+            Ellipse()
+                .fill(Color.black.opacity(0.16))
+                .frame(width: size * 0.85, height: size * 0.24)
+                .offset(y: size * 0.44)
+            SpriteView(speciesID: speciesID, size: size)
+                .opacity(fainted ? 0.35 : 1)
+                .rotationEffect(.degrees(fainted ? 90 : 0))
+        }
+        .animation(.easeInOut(duration: 0.35), value: fainted)
+    }
+
+    private func pokemonInfoBox(name: String, active: BattleClient.PublicMon?, benchCount: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(name).font(.system(size: 12, weight: .bold)).lineLimit(1)
+                Spacer(minLength: 4)
+                Text("×\(benchCount)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            if let active {
+                HStack(spacing: 5) {
+                    Text("HP").font(.system(size: 8, weight: .heavy)).italic().foregroundStyle(.orange)
+                    HPBar(fraction: active.hpFraction).frame(width: 92, height: 7)
+                }
+            } else {
+                Text("—").font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(.regularMaterial)
+                .shadow(color: .black.opacity(0.22), radius: 3, y: 2))
+    }
+
+    private func actionBox(_ view: BattleClient.BattleView, you: BattleClient.You) -> some View {
+        Group {
+            if voluntarySwitchOpen {
+                switchStrip(you.roster, activeIndex: you.activeIndex, forced: false)
+            } else if view.pendingChoice == "switch" {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(l.battleForcedSwitchPrompt).font(.system(size: 12, weight: .semibold)).foregroundStyle(.orange)
+                    switchStrip(you.roster, activeIndex: you.activeIndex, forced: true)
+                }
+            } else if view.pendingChoice == "move" {
+                moveGrid(you: you)
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(l.battleWaitingForYourMove).font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(BattleWindowMetrics.padding)
+        .frame(maxWidth: .infinity, minHeight: 132, alignment: .top)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.secondary.opacity(0.3)), alignment: .top)
     }
 
     private func moveGrid(you: BattleClient.You) -> some View {
@@ -358,10 +430,14 @@ struct BattleView: View {
         case "loss": l.battleResultLoss
         default: l.battleResultDraw
         }
-        return VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.title3.weight(.bold))
+        return VStack(spacing: 14) {
+            Spacer()
+            Text(title).font(.system(size: 22, weight: .bold))
             Button(l.battleDoneButton) { battle.cancel(); onClose() }.buttonStyle(.borderedProminent)
+            Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(battleFieldBackground)
     }
 
     // MARK: Status messages
@@ -428,16 +504,32 @@ private struct BattleMoveGrid: View {
     @State private var moves: [Move?] = []
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
             ForEach(Array(mon.knownMoves.enumerated()), id: \.offset) { index, moveID in
+                let move = moves[safeIndex: index] ?? nil
                 Button {
                     onChoose(index + 1)
                 } label: {
-                    Text(moves[safeIndex: index].flatMap { $0?.localizedName(store.language) } ?? "#\(moveID)")
-                        .font(.caption)
-                        .frame(maxWidth: .infinity)
+                    HStack(spacing: 6) {
+                        Text(move?.localizedName(store.language) ?? "#\(moveID)")
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                        Spacer(minLength: 2)
+                        if let move {
+                            // Same type-badge convention CompanionView's MoveRow already uses —
+                            // reused directly, not reinvented.
+                            Text(store.l.typeName(move.type).uppercased())
+                                .font(.system(size: 8, weight: .bold))
+                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                .background(typeColor(move.type)).foregroundStyle(.white)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 4)
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.large)
             }
         }
         .task(id: mon.id) {

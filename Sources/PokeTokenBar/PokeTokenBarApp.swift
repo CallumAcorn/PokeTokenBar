@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var online: OnlineStore!
     private var trade: TradeStore!
     private var battle: BattleStore!
+    private var battleWindow: BattleWindowController!
     private var floatingPet: FloatingPetController!
     private let navigation = PopoverNavigation()
 
@@ -61,9 +62,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         store = UsageStore()
         companion = CompanionStore()
         updater = UpdateChecker()
-        online = OnlineStore()
+        // Dev-only isolation for running a second local instance side by side with the real app —
+        // same spirit as CompanionStore's own PTB_STATE_DIR (see its defaultURL()). Without this,
+        // a second raw-binary instance would still share the real app's UserDefaults.standard domain
+        // (serverURL/displayName/clientUUID), which is exactly the identity two sides of a battle/
+        // trade test need to NOT share. Unset in every normal run — only ever set by hand for this.
+        let defaults: UserDefaults
+        if let suite = ProcessInfo.processInfo.environment["PTB_USERDEFAULTS_SUITE"], !suite.isEmpty,
+           let isolated = UserDefaults(suiteName: suite) {
+            defaults = isolated
+        } else {
+            defaults = .standard
+        }
+        online = OnlineStore(defaults: defaults)
         trade = TradeStore(companion: companion, online: online)
         battle = BattleStore(companion: companion, online: online)
+        battleWindow = BattleWindowController(companion: companion, battle: battle, online: online)
+        navigation.onOpenBattleWindow = { [weak self] in self?.battleWindow.show() }
         store.localizationLanguage = companion.language   // 알림 현지화용 미러 시드
         store.onRefresh = { [weak self] in self?.onStoreRefreshed() }   // 한도 로드 후 companion·사탕 지급
         floatingPet = FloatingPetController(
@@ -390,8 +405,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             navigation.showTrade = true
         } else if let link = BattleDeepLink(url: url) {
             battle.handleIncomingLink(link)
-            openPopover()
-            navigation.showBattle = true
+            battleWindow.show()
         }
     }
 

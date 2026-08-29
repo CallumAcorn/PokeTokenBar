@@ -133,6 +133,7 @@ final class UsageEnvironmentTests: XCTestCase {
             "CompanionStore.swift",
             "TradeStore.swift",
             "OAuthLimitsProvider.swift",
+            "PokeTokenBarApp.swift",   // PTB_USERDEFAULTS_SUITE — dev-only, same non-usage-location shape as CompanionStore's PTB_STATE_DIR
         ]
         let sources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()    // PokeTokenBarTests
