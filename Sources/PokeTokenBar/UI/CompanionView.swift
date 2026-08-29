@@ -112,9 +112,8 @@ struct SpriteView: View {
     var bob: Bool = false
     var animated: Bool = false
     var shiny: Bool = false
-    /// .back is fixed for the lifetime of a given call site in practice (the battle screen's own
-    /// mon, never toggled at runtime) — deliberately left out of needsReload/the .task identity
-    /// below, which only ever need to react to species/shiny changing, same as before this existed.
+    /// Front (everywhere) or back (battle screen's own mon; also user-toggleable per-mon on the
+    /// floating pet). Part of needsReload/the .task identity below, same axis as shiny.
     var facing: SpriteFacing = .front
     /// GIF 프레임 지속의 하한(초). 0=원본 delay 그대로. >0 이면 fps 상한 + wakeup 코얼레싱을 적용해
     /// idle 배터리를 통제한다 — 항상 떠 있는 플로팅 펫(0.4s≈2.5fps)이 메뉴바 GIF 규율과 동치가 되게.
@@ -125,6 +124,8 @@ struct SpriteView: View {
     @State private var loadedID: Int?   // img 가 어느 speciesID 것인지(id 변경 시 갱신 판단)
     /// img 가 이로치 스프라이트인지 — 재로드 판정의 두 번째 축(근거는 needsReload).
     @State private var loadedShiny = false
+    /// img 가 어느 facing 인지 — 재로드 판정의 세 번째 축(근거는 needsReload).
+    @State private var loadedFacing: SpriteFacing = .front
     @State private var frames: [(image: NSImage, delay: TimeInterval)] = []
     @State private var frameIndex = 0
 
@@ -143,6 +144,7 @@ struct SpriteView: View {
         _img = State(initialValue: cached)
         _loadedID = State(initialValue: (speciesID != nil && cached != nil) ? speciesID : nil)
         _loadedShiny = State(initialValue: shiny)
+        _loadedFacing = State(initialValue: facing)
     }
 
     /// 프레임 지속(초) = max(원본 delay, 하한). 순수·테스트용 — fps 상한 회귀 가드.
@@ -166,11 +168,13 @@ struct SpriteView: View {
         img = next.image
         loadedID = next.loadedID
     }
-    /// 정적 스프라이트를 다시 불러야 하는가 — 종이 바뀌었거나 **이로치 여부가 뒤집혔을 때**.
+    /// 정적 스프라이트를 다시 불러야 하는가 — 종이 바뀌었거나 **이로치 여부**나 **facing 이 뒤집혔을 때**.
     /// 순수·테스트용(frameDelay 와 같은 이유). 종만 비교하던 과거 판정은 도감의 이로치 토글에서
-    /// .task 가 다시 돌아도 "이미 그 종을 로드했다"로 판정해 색이 안 바뀌는 회귀를 낳았다.
-    static func needsReload(loadedID: Int?, loadedShiny: Bool, id: Int, shiny: Bool) -> Bool {
-        loadedID != id || loadedShiny != shiny
+    /// .task 가 다시 돌아도 "이미 그 종을 로드했다"로 판정해 색이 안 바뀌는 회귀를 낳았다 — facing 도
+    /// 같은 함정(플로팅 펫 앞/뒤 토글이 같은 종·이로치인 채 안 바뀌는 것처럼 보이는 회귀)이라 같이 본다.
+    static func needsReload(loadedID: Int?, loadedShiny: Bool, id: Int, shiny: Bool,
+                             loadedFacing: SpriteFacing = .front, facing: SpriteFacing = .front) -> Bool {
+        loadedID != id || loadedShiny != shiny || loadedFacing != facing
     }
 
     /// size×size 슬롯 안에서 이 이미지가 실제로 차지할 크기 — 원본 비율 유지(SpriteFit).
@@ -204,8 +208,8 @@ struct SpriteView: View {
         }
         // GIF 재생 중엔 bob 정지(프레임 자체가 움직임) — 폴백/정적일 때만 상하 움직임
         .offset(y: bob && frames.isEmpty && up ? -3 : 0)
-        .task(id: "\(speciesID.map(String.init) ?? "nil")-\(shiny)") {
-            // animated 프레임은 id/shiny 변경 시 항상 초기화(이전 개체 프레임 잔상 방지)
+        .task(id: "\(speciesID.map(String.init) ?? "nil")-\(shiny)-\(facing)") {
+            // animated 프레임은 id/shiny/facing 변경 시 항상 초기화(이전 개체 프레임 잔상 방지)
             frames = []
             frameIndex = 0
             guard let id = speciesID else {
@@ -220,14 +224,16 @@ struct SpriteView: View {
                 return
             }
             // 정적 스프라이트 먼저(즉시 표시 + 폴백 보장).
-            // 캐시 시드로 이미 같은 종·같은 이로치 여부면 재요청 생략(플래시 방지)
-            if Self.needsReload(loadedID: loadedID, loadedShiny: loadedShiny, id: id, shiny: shiny) {
+            // 캐시 시드로 이미 같은 종·같은 이로치 여부·같은 facing이면 재요청 생략(플래시 방지)
+            if Self.needsReload(loadedID: loadedID, loadedShiny: loadedShiny, id: id, shiny: shiny,
+                                 loadedFacing: loadedFacing, facing: facing) {
                 let loaded = await SpriteLoader.image(speciesID: id, animated: false, shiny: shiny, facing: facing)
-                // 취소된 로드는 반영하지 않는다(#138). 이로치 축은 **반영될 때만** 기록해
-                // subject(종)와 loadedShiny 가 어긋나 다음 판정이 틀어지는 것을 막는다.
+                // 취소된 로드는 반영하지 않는다(#138). 이로치·facing 축은 **반영될 때만** 기록해
+                // subject(종)와 loadedShiny/loadedFacing 이 어긋나 다음 판정이 틀어지는 것을 막는다.
                 if let next = subject.applyingLoad(loaded, for: id, cancelled: Task.isCancelled) {
                     apply(next)
                     loadedShiny = shiny
+                    loadedFacing = facing
                 }
             }
             guard animated else { return }

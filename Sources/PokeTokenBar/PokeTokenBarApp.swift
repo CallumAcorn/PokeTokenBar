@@ -409,6 +409,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    /// Best-effort leave-on-quit: if a battle is still live (waiting for an opponent, or mid-battle)
+    /// when the app quits, tell the server before the process actually dies — otherwise the session
+    /// just idles out its TTL, leaving a stale open lobby entry or a stuck opponent for however long
+    /// that takes. `.terminateLater` defers the actual quit until whichever finishes first: the leave
+    /// request, or a timeout — so a dead network can't block quitting forever.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard battle.phase != .idle else { return .terminateNow }
+        Task { @MainActor in
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await self.battle.cancel() }
+                group.addTask { try? await Task.sleep(nanoseconds: 3_000_000_000) }
+                await group.next()
+                group.cancelAll()
+            }
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     @objc private func togglePopover() {
         guard let button = statusItem.button else { return }
         if popover.isShown {

@@ -160,6 +160,15 @@ struct L {
         t("이 플로팅 펫 고정 해제", "Unpin this floating pet", "このフローティングペットのピン留めを解除",
           "Dejar de fijar esta mascota flotante")
     }
+    var floatingPetMenuShowBack: String {
+        t("뒷모습 보기", "Show back sprite", "後ろ姿を表示", "Mostrar sprite trasero")
+    }
+    var floatingPetMenuShowFront: String {
+        t("앞모습 보기", "Show front sprite", "前姿を表示", "Mostrar sprite frontal")
+    }
+    var floatingPetMenuFlip: String {
+        t("좌우 반전", "Flip horizontally", "左右反転", "Voltear horizontalmente")
+    }
     func floatingPetHoverTokensOnly(_ tokens: String) -> String {
         t("오늘 \(tokens) 토큰", "Today: \(tokens) tokens", "今日: \(tokens) トークン", "Hoy: \(tokens) tokens", "Aujourd'hui : \(tokens) tokens", "Hoje: \(tokens) tokens")
     }
@@ -495,6 +504,11 @@ struct L {
     var statSpecialAttack: String { t("특공", "SpA", "とくこう", "AtEsp") }
     var statSpecialDefense: String { t("특방", "SpD", "とくぼう", "DefEsp") }
     var statSpeed: String { t("스피드", "Spe", "すばやさ", "Vel") }
+    /// Battle-only stat-stage moves (Sand Attack, Double Team…) can target these two — not part of
+    /// the base six shown on the stats screen, so they weren't needed until the battle boost/unboost
+    /// effect chips did.
+    var statAccuracy: String { t("명중률", "Acc", "命中率", "Prec") }
+    var statEvasion: String { t("회피율", "Eva", "回避率", "Eva") }
     /// 타입 표시명 — 본가 공식 번역(PokéAPI /type/{name} names 기준).
     func typeName(_ type: PokemonType) -> String {
         switch type {
@@ -640,7 +654,13 @@ struct L {
     /// are always available side by side (see the server's own `/docs` page for the same framing).
     var battleBrowseOpen: String { t("열린 배틀 찾아보기", "Browse open battles", "参加募集中のバトルを見る", "Buscar batallas abiertas") }
     var battleNoOpenBattles: String { t("지금 열려 있는 배틀이 없어요", "No open battles right now", "現在参加募集中のバトルはありません", "No hay batallas abiertas ahora mismo") }
+    /// Roster size in the open-lobby list — helps tell apart two lobbies with the same display name
+    /// (e.g. two local test instances both named "Test P2").
+    func battleOpenRosterSize(_ n: Int) -> String { t("포켓몬 ×\(n)", "×\(n) Pokémon", "ポケモン ×\(n)", "×\(n) Pokémon") }
     var battleWaitingForOpponent: String { t("상대를 기다리는 중…", "Waiting for an opponent…", "対戦相手を待っています…", "Esperando a un oponente…") }
+    /// The instant gap between tapping Create/Join and there being anything real to show yet — see
+    /// `BattleStore.Phase.starting`'s doc comment.
+    var battleStartingTitle: String { t("배틀 시작 중…", "Starting battle…", "バトルを開始しています…", "Iniciando batalla…") }
     /// Explicit about *who* the battle screen is waiting on, each turn — not a generic spinner.
     /// Shown even when it's your own turn (above the move grid), not just while waiting on them.
     var battleWaitingOnYouToChooseMove: String { t("당신이 기술을 고를 차례예요", "Waiting on you to choose a move", "あなたが技を選ぶ番です", "Esperando a que elijas un movimiento") }
@@ -694,9 +714,29 @@ struct L {
     func battleUsedMove(_ name: String) -> String {
         t("\(name) 사용!", "Used \(name)!", "\(name) を使った！", "¡Usó \(name)!")
     }
+    /// Same move-name caveat as `battleUsedMove` — `pokemon` is a real species name (`PublicMon.name`,
+    /// server-resolved), `move` is still raw/unlocalized English. Korean/Japanese use an invariant
+    /// possessive particle (의/の) rather than 이/가 or は, which would need to agree with whichever
+    /// syllable the (often-English) name happens to end in.
+    func battleUsedMoveByPokemon(_ pokemon: String, _ move: String) -> String {
+        t("\(pokemon)의 \(move) 사용!", "\(pokemon) used \(move)!", "\(pokemon)の\(move)！", "¡\(pokemon) usó \(move)!")
+    }
     var battlePP: String { t("PP", "PP", "PP", "PP") }
+    // MARK: Battle effect chips — short floating labels next to a sprite (parseEffectChips), shown
+    // alongside the hit-flash for whatever a move (or an end-of-turn tick like Leech Seed's drain)
+    // actually did: a stat stage, a status, a cure, an HP swing, a faint.
+    var battleStatusBurned: String { t("화상!", "Burned!", "やけど！", "¡Quemado!") }
+    var battleStatusParalyzed: String { t("마비!", "Paralyzed!", "まひ！", "¡Paralizado!") }
+    var battleStatusPoisoned: String { t("독!", "Poisoned!", "どく！", "¡Envenenado!") }
+    var battleStatusAsleep: String { t("잠듦!", "Asleep!", "ねむり！", "¡Dormido!") }
+    var battleStatusFrozen: String { t("얼음!", "Frozen!", "こおり！", "¡Congelado!") }
+    var battleStatusCured: String { t("회복!", "Cured!", "回復！", "¡Curado!") }
+    var battleFainted: String { t("쓰러졌다!", "Fainted!", "ひんし！", "¡Debilitado!") }
     var battleYourTeam: String { t("내 팀", "Your team", "自分のチーム", "Tu equipo") }
     var battleOpponentTeam: String { t("상대 팀", "Opponent's team", "相手のチーム", "Equipo del oponente") }
+    /// Header over the roster picker's full-party grid — distinguishes it from `battleYourTeam`
+    /// (the up-to-6 picked slots above it, a different section of that same screen).
+    var battleYourParty: String { t("내 파티", "Your party", "自分のパーティ", "Tu equipo completo") }
     var battleLogTitle: String { t("배틀 기록", "Battle log", "バトルログ", "Registro de batalla") }
     var battleResultWin: String { t("승리!", "You won!", "勝利！", "¡Ganaste!") }
     var battleResultLoss: String { t("패배", "You lost", "敗北", "Perdiste") }
@@ -706,7 +746,19 @@ struct L {
     /// the battle scene, so its HP-drop/faint animation gets to play) and the result screen — see
     /// BattleView.battlingContent's revealResult delay.
     var battleOver: String { t("배틀 종료!", "Battle over!", "バトル終了！", "¡Batalla terminada!") }
-    var battleShareTab: String { t("링크 공유", "Share a link", "リンクを共有", "Compartir enlace") }
+    /// Mode-chooser step (rosterPicker's first screen) — "how do you want to start", before any
+    /// roster/link/browse detail is shown. Kept separate from `battlePickRoster` (that step's own
+    /// caption comes later, once a mode is picked) so only one prompt is ever on screen at once.
+    var battleStartPrompt: String { t("어떻게 시작할까요?", "How do you want to start?", "どうやって始めますか？", "¿Cómo quieres empezar?") }
+    var battleJoinViaLinkButton: String { t("링크로 참가", "Join via link", "リンクで参加", "Unirse con un enlace") }
+    // MARK: Mode-chooser subtitles — one line of context under each big start-flow button.
+    var battleCreateSubtitle: String { t("팀을 고르고 초대 링크를 공유하세요", "Pick a team and share an invite link", "チームを選んで招待リンクを共有", "Elige un equipo y comparte un enlace") }
+    var battleJoinViaLinkSubtitle: String { t("친구가 보낸 초대 링크를 붙여넣으세요", "Paste a link a friend sent you", "友達から届いたリンクを貼り付け", "Pega un enlace que te haya enviado un amigo") }
+    var battleBrowseSubtitle: String { t("상대를 기다리고 있는 배틀 찾기", "Find a battle waiting for an opponent", "対戦相手を待っているバトルを探す", "Busca una batalla que espera oponente") }
+    var battlePasteLinkPrompt: String { t("배틀 링크를 붙여넣으세요", "Paste the battle link below", "下にバトルリンクを貼り付けてください", "Pega el enlace de la batalla abajo") }
+    var battleBrowsePrompt: String { t("참가할 배틀을 골라주세요", "Pick a battle to join", "参加するバトルを選んでください", "Elige una batalla para unirte") }
+    var battleForfeitButton: String { t("기권", "Forfeit", "降参", "Rendirse") }
+    var battleForfeitConfirmTitle: String { t("이 배틀을 기권할까요?", "Forfeit this battle?", "このバトルを降参しますか？", "¿Rendirte en esta batalla?") }
 
     // MARK: Evolution lock
     var evolutionLockedHelp: String { t("진화 잠김 — 탭하면 해제(경험치는 계속 쌓여요)", "Evolution locked — tap to unlock (still earns XP)", "進化ロック中 — タップで解除（経験値は引き続き貯まります）", "Evolución bloqueada — toca para desbloquear (sigue ganando XP)") }

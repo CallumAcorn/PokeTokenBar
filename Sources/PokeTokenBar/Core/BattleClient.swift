@@ -78,6 +78,7 @@ enum BattleClient {
         let party: [Primitive]
     }
     private struct ChoicePayload: Encodable { let uuid: String; let choice: String }
+    private struct UUIDPayload: Encodable { let uuid: String }
     private struct CreateResponse: Decodable { let sessionId: String }
     private struct OpenListResponse: Decodable { let battles: [OpenBattle] }
 
@@ -146,6 +147,19 @@ enum BattleClient {
         let data = try await send(req, session: session)
         guard let decoded = try? JSONDecoder().decode(BattleView.self, from: data) else { throw .decoding }
         return decoded
+    }
+
+    /// Tells the server this side is abandoning the session — pre-join this hard-deletes it (so it
+    /// drops off `/battles/open` immediately instead of idling out its TTL); mid-battle it forfeits,
+    /// so the other side's next poll reports a real win rather than a stalled session. Best-effort:
+    /// callers fire-and-forget this (app quit, window close-while-waiting) as well as await it.
+    static func leave(serverURL: String, sessionId: String, uuid: String,
+                       session: URLSession = .shared) async throws(BattleError) {
+        guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/\(sessionId)/leave") else {
+            throw .invalidServerURL
+        }
+        let req = try request(url, method: "POST", body: UUIDPayload(uuid: uuid))
+        _ = try await send(req, session: session)
     }
 
     static func openBattles(serverURL: String, session: URLSession = .shared) async throws(BattleError) -> [OpenBattle] {

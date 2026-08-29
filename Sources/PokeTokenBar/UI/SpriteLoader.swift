@@ -2,7 +2,7 @@ import AppKit
 
 /// Front (every existing screen) or back (the local player's own active mon on the battle screen —
 /// the real games' own convention: you see your own mon from behind, the opponent's face-on).
-enum SpriteFacing {
+enum SpriteFacing: Equatable {
     case front, back
 }
 

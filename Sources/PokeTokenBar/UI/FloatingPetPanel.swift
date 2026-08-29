@@ -224,6 +224,14 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
                 FloatingPetView(monID: mon.id, animated: wantAnimated).environment(store).environment(companion)))
             hosting.onOpenPopover = onOpenPopover
             hosting.onHide = { [weak self] in self?.companion.setFloating(false, for: mon.id) }
+            hosting.onToggleFacing = { [weak self] in self?.companion.toggleBackFacing(for: mon.id) }
+            hosting.onToggleFlip = { [weak self] in self?.companion.toggleMirrored(for: mon.id) }
+            hosting.isBackFacingProvider = { [weak self] in
+                self?.companion.party.first { $0.id == mon.id }?.isBackFacing ?? false
+            }
+            hosting.isMirroredProvider = { [weak self] in
+                self?.companion.party.first { $0.id == mon.id }?.isMirrored ?? false
+            }
             hosting.languageProvider = { [weak self] in self?.companion.language ?? .systemDefault }
             hosting.onHoverChange = { [weak self] hovering in
                 if hovering { self?.showHoverCallout(for: p) } else { self?.hideHoverCallout() }
@@ -385,8 +393,16 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
 final class PetHostingView: NSHostingView<AnyView> {
     var onOpenPopover: (() -> Void)?
     var onHide: (() -> Void)?
+    var onToggleFacing: (() -> Void)?
+    var onToggleFlip: (() -> Void)?
     var onHoverChange: ((Bool) -> Void)?
     var languageProvider: () -> AppLanguage = { .systemDefault }
+    /// Read live by showContextMenu when building the menu — set by FloatingPetController each
+    /// time it refreshes wiring, same shape as languageProvider (a closure, not a stored snapshot,
+    /// so the checkmark reflects the current per-mon state even though this view isn't rebuilt
+    /// every time those fields change — see FloatingPetView, which re-reads `mon` live instead).
+    var isMirroredProvider: () -> Bool = { false }
+    var isBackFacingProvider: () -> Bool = { false }
 
     private var mouseDownScreen: NSPoint?
     private var originAtDown: NSPoint?
@@ -460,11 +476,23 @@ final class PetHostingView: NSHostingView<AnyView> {
                                 action: #selector(handleHide(_:)), keyEquivalent: "")
         hide.target = self
         hide.isEnabled = true
+        let facingTitle = isBackFacingProvider() ? l.floatingPetMenuShowFront : l.floatingPetMenuShowBack
+        let facing = menu.addItem(withTitle: facingTitle,
+                                  action: #selector(handleToggleFacing(_:)), keyEquivalent: "")
+        facing.target = self
+        facing.isEnabled = true
+        let flip = menu.addItem(withTitle: l.floatingPetMenuFlip,
+                                action: #selector(handleToggleFlip(_:)), keyEquivalent: "")
+        flip.target = self
+        flip.isEnabled = true
+        flip.state = isMirroredProvider() ? .on : .off
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
     @objc func handleOpen(_ sender: Any?) { onOpenPopover?() }
     @objc func handleHide(_ sender: Any?) { onHide?() }
+    @objc func handleToggleFacing(_ sender: Any?) { onToggleFacing?() }
+    @objc func handleToggleFlip(_ sender: Any?) { onToggleFlip?() }
 }
 
 struct FloatingPetView: View {
@@ -488,8 +516,11 @@ struct FloatingPetView: View {
             }
 
             SpriteView(speciesID: mon?.currentID, size: size, animated: animated,
-                       shiny: mon?.isShiny ?? false, minFrameDelay: Self.frameFloor)
+                       shiny: mon?.isShiny ?? false,
+                       facing: (mon?.isBackFacing ?? false) ? .back : .front,
+                       minFrameDelay: Self.frameFloor)
                 .frame(width: size, height: size)
+                .scaleEffect(x: (mon?.isMirrored ?? false) ? -1 : 1, y: 1)
                 .zIndex(0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)

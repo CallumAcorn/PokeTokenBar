@@ -42,6 +42,14 @@ final class BattleStore {
 
     enum Phase: Equatable {
         case idle
+        /// Set the instant Create/Join is tapped, before the roster-build (PokéAPI calls per mon) and
+        /// the create/join POST even start — covers both until there's something real to show:
+        /// `.waitingForOpponent` once a create succeeds, `.battling` once a join's first poll confirms
+        /// `"active"`, or `.failed`/`.expired` on error. Without this, `phase` stayed `.idle` through
+        /// that whole round trip, so the roster picker just sat there looking unresponsive after a tap
+        /// — createBattle at least landed on `.waitingForOpponent` once it finished; joinBattle had no
+        /// equivalent at all, since a join has no "share link" moment of its own to land on.
+        case starting
         case waitingForOpponent(sessionId: String, shareURL: URL?)
         case battling(sessionId: String, view: BattleClient.BattleView)
         case failed(StoreError)
@@ -65,6 +73,11 @@ final class BattleStore {
     private let session: URLSession
     private let pollIntervalNanoseconds: UInt64
     private var pollTask: Task<Void, Never>?
+    /// The server a joined battle actually lives on — distinct from `online.serverURL` when the
+    /// session was joined via a deep link/browse entry pointing at someone else's server (see
+    /// `joinBattle`). Needed by `cancel()`'s `/leave` call, which must hit the same server the
+    /// polling itself has been talking to, not necessarily this side's own configured server.
+    private var activeServerURL: String?
 
     init(companion: CompanionStore, online: OnlineStore, session: URLSession = .shared, pollIntervalNanoseconds: UInt64 = 2_000_000_000) {
         self.companion = companion
@@ -109,7 +122,8 @@ final class BattleStore {
     // MARK: Starting — create / join / browse
 
     func createBattle(roster: [MonState]) async {
-        cancel()
+        await cancel()
+        phase = .starting
         let party: [BattleClient.Primitive]
         switch await buildParty(roster) {
         case .success(let p): party = p
@@ -127,8 +141,9 @@ final class BattleStore {
     }
 
     func joinBattle(sessionId: String, server: String, roster: [MonState]) async {
-        cancel()
+        await cancel()
         pendingInvite = nil
+        phase = .starting
         let party: [BattleClient.Primitive]
         switch await buildParty(roster) {
         case .success(let p): party = p
@@ -168,6 +183,7 @@ final class BattleStore {
 
     private func startPolling(sessionId: String, server: String? = nil) {
         let serverURL = server ?? online.serverURL
+        activeServerURL = serverURL
         pollTask?.cancel()
         pollTask = Task { [weak self] in
             guard let self else { return }
@@ -243,14 +259,35 @@ final class BattleStore {
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_500_000_000)
             guard let self, case .failed = self.phase else { return }
-            self.cancel()
+            await self.cancel()
         }
     }
 
-    func cancel() {
+    /// Abandons whatever session is currently active — best-effort tells the server first (pre-join
+    /// this deletes the session outright; mid-battle it forfeits, so the opponent's next poll reports
+    /// a real win instead of a stalled session) so `/battles/open` and the other side's view both stay
+    /// honest. A `.failed`/`.expired`/already-`"completed"` phase has nothing left to tell the server
+    /// (the session's already gone, or already resolved) so leaveIfNeeded is a no-op there.
+    func cancel() async {
+        await leaveIfNeeded()
         pollTask?.cancel()
         pollTask = nil
+        activeServerURL = nil
         phase = .idle
         myRoster = []
+    }
+
+    private func leaveIfNeeded() async {
+        let sessionId: String
+        switch phase {
+        case .waitingForOpponent(let id, _):
+            sessionId = id
+        case .battling(let id, let view) where view.status != "completed":
+            sessionId = id
+        default:
+            return
+        }
+        try? await BattleClient.leave(serverURL: activeServerURL ?? online.serverURL, sessionId: sessionId,
+                                       uuid: online.clientUUID, session: session)
     }
 }
