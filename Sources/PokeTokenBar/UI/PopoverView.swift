@@ -20,6 +20,7 @@ enum PopoverMetrics {
 final class PopoverNavigation {
     var showSettings = false
     var showTrade = false
+    var showBattle = false
     var tab: PopoverTab = .home
     /// 프로바이더 탭 선택 — reset() 대상이 아님(팝오버를 다시 열어도 보던 서비스 유지).
     var providerID: String?
@@ -27,6 +28,7 @@ final class PopoverNavigation {
     func reset() {
         showSettings = false
         showTrade = false
+        showBattle = false
         tab = .home
     }
 }
@@ -37,6 +39,7 @@ struct PopoverView: View {
     @Environment(UpdateChecker.self) private var updater
     @Environment(OnlineStore.self) private var online
     @Environment(TradeStore.self) private var trade
+    @Environment(BattleStore.self) private var battle
     @Environment(PopoverNavigation.self) private var nav
 
     /// Shown from the update banner. The app cannot install an update, so the button opens
@@ -54,6 +57,11 @@ struct PopoverView: View {
                 TradeView(onClose: { nav.showTrade = false })
                     .environment(companion)
                     .environment(trade)
+                    .environment(online)
+            } else if nav.showBattle {
+                BattleView(onClose: { nav.showBattle = false })
+                    .environment(companion)
+                    .environment(battle)
                     .environment(online)
             } else if nav.showSettings {
                 SettingsView(onClose: { nav.showSettings = false })
@@ -717,6 +725,13 @@ struct PopoverView: View {
             }
             .buttonStyle(.borderless)
             .help(l.tradeEntryPointHelp)
+            Button {
+                nav.showBattle = true
+            } label: {
+                Image(systemName: "bolt.fill")
+            }
+            .buttonStyle(.borderless)
+            .help(l.battleEntryPointHelp)
             Button {
                 nav.showSettings = true
             } label: {

@@ -53,6 +53,12 @@ final class BattleStore {
     /// polled continuously (unlike an in-progress battle, a lobby list going a few seconds stale is
     /// harmless — worst case you tap a session that just got taken and get a plain join error).
     private(set) var openBattles: [BattleClient.OpenBattle] = []
+    /// The roster this side submitted — kept client-side because the server's `BattleView` never
+    /// echoes back which moves a mon knows (`PublicMon` is just species/name/fainted/HP; `choose`
+    /// only ever takes a 1-indexed slot number). The move grid renders this side's active mon's real
+    /// moves from here, matched to `you.roster`/`activeIndex` by array position (both are built from
+    /// this same roster, in this same order, so the positions always agree).
+    private(set) var myRoster: [MonState] = []
 
     private let companion: CompanionStore
     private let online: OnlineStore
@@ -112,6 +118,7 @@ final class BattleStore {
         do {
             let sessionId = try await BattleClient.create(serverURL: online.serverURL, uuid: online.clientUUID,
                                                            displayName: online.displayName, party: party, session: session)
+            myRoster = roster
             phase = .waitingForOpponent(sessionId: sessionId, shareURL: shareURL(sessionId: sessionId, server: online.serverURL))
             startPolling(sessionId: sessionId)
         } catch {
@@ -130,6 +137,7 @@ final class BattleStore {
         do {
             try await BattleClient.join(serverURL: server, sessionId: sessionId, uuid: online.clientUUID,
                                         displayName: online.displayName, party: party, session: session)
+            myRoster = roster
             startPolling(sessionId: sessionId, server: server)
         } catch {
             fail(.client(error))
@@ -243,5 +251,6 @@ final class BattleStore {
         pollTask?.cancel()
         pollTask = nil
         phase = .idle
+        myRoster = []
     }
 }

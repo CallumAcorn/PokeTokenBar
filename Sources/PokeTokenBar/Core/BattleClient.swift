@@ -5,6 +5,12 @@ import Foundation
 /// instead of just relaying opaque JSON), so this file also owns turning a `MonState` into the wire
 /// primitive — see `primitive(for:companion:)`.
 enum BattleClient {
+    /// A roster is 1–6 mons — mirrors `isRoster`'s bound in `pkmnAdapter.ts`, which rejects the whole
+    /// create/join request with `400` if violated. Enforced here too so the roster picker's own
+    /// selection cap matches what the server will actually accept, instead of letting someone select
+    /// a 7th mon only to have the entire request bounce.
+    static let maxRosterSize = 6
+
     /// Species id/level/nature/ability/IVs/EVs/moves — verifiable primitives, never a precomputed
     /// stat block. Mirrors `PokeTokenBarOnline`'s `MonPrimitive` (`src/pkmnAdapter.ts`) field-for-
     /// field; keep both in sync. See battles.md's "Trust model" section for why the split exists.

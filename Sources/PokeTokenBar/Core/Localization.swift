@@ -629,6 +629,65 @@ struct L {
           "この交換はすでに進行しています — 新しく始めてください。", "Este intercambio ya avanzó — intenta empezar uno nuevo.")
     }
 
+    // MARK: 배틀
+    var battleTitle: String { t("배틀", "Battle", "バトル", "Batalla") }
+    var battleEntryPointHelp: String { t("포켓몬 배틀", "Battle a friend", "ポケモンバトル", "Batallar con un amigo") }
+    var battlePickRoster: String { t("배틀에 데려갈 포켓몬을 최대 6마리 골라주세요", "Pick up to 6 Pokémon for your team", "バトルに連れて行くポケモンを最大6匹選んでください", "Elige hasta 6 Pokémon para tu equipo") }
+    var battleNoBenchedMons: String { t("PC에 포켓몬이 없어요.\n먼저 알을 부화시켜 보세요.", "You don't have any Pokémon in your PC yet.\nHatch an egg first.", "PCにポケモンがいません。\nまず卵を孵化させてください。", "Aún no tienes ningún Pokémon en tu PC.\nEclosiona un huevo primero.") }
+    var battleCreateButton: String { t("배틀 만들기", "Create battle", "バトルを作成", "Crear batalla") }
+    var battleJoinButton: String { t("참가", "Join", "参加", "Unirse") }
+    /// Tab label — a lobby list is the alternative to sharing a link, not a replacement for it; both
+    /// are always available side by side (see the server's own `/docs` page for the same framing).
+    var battleBrowseOpen: String { t("열린 배틀 찾아보기", "Browse open battles", "参加募集中のバトルを見る", "Buscar batallas abiertas") }
+    var battleNoOpenBattles: String { t("지금 열려 있는 배틀이 없어요", "No open battles right now", "現在参加募集中のバトルはありません", "No hay batallas abiertas ahora mismo") }
+    var battleWaitingForOpponent: String { t("상대를 기다리는 중…", "Waiting for an opponent…", "対戦相手を待っています…", "Esperando a un oponente…") }
+    var battleWaitingForYourMove: String { t("상대의 선택을 기다리는 중…", "Waiting for your opponent's move…", "相手の選択を待っています…", "Esperando la jugada de tu oponente…") }
+    var battlePasteInviteLinkPlaceholder: String {
+        t("배틀 링크 붙여넣기", "Paste battle link", "バトルリンクを貼り付け", "Pegar enlace de batalla")
+    }
+    var battleInvalidInviteLink: String {
+        t("유효한 배틀 링크가 아니에요", "That's not a valid battle link", "有効なバトルリンクではありません", "Ese no es un enlace de batalla válido")
+    }
+    func battleJoinPrompt(_ server: String) -> String {
+        t("\(server)에서 온 배틀 초대예요. 참가할까요?", "You've been invited to a battle on \(server). Join?", "\(server) からのバトルの招待です。参加しますか？", "Te han invitado a una batalla en \(server). ¿Quieres unirte?")
+    }
+    func battleDifferentServerConfirm(_ server: String) -> String {
+        t("지금은 다른 서버에 연결돼 있어요. \(server)(으)로 바꾸고 배틀에 참가할까요?",
+          "You're currently connected to a different server. Switch to \(server) and join this battle?",
+          "現在別のサーバーに接続されています。\(server) に切り替えてバトルに参加しますか？",
+          "Actualmente estás conectado a otro servidor. ¿Cambiar a \(server) y unirte a esta batalla?")
+    }
+    func battleConnectServerConfirm(_ server: String) -> String {
+        t("이 초대 링크는 \(server) 서버를 사용합니다. 연결하고 배틀에 참가할까요?",
+          "This invite link uses the server \(server). Connect to it and join this battle?",
+          "この招待リンクはサーバー \(server) を使用します。接続してバトルに参加しますか？",
+          "Este enlace de invitación usa el servidor \(server). ¿Conectar y unirte a esta batalla?")
+    }
+    var battleExpiredTitle: String { t("이 배틀 링크는 만료됐어요", "This battle link has expired", "このバトルリンクは期限切れです", "Este enlace de batalla ha caducado") }
+    var battleFailedTitle: String { t("배틀에 실패했어요", "Battle failed", "バトルに失敗しました", "La batalla falló") }
+    var battleNoKnownMovesMessage: String {
+        t("아직 기술을 배우지 않은 포켓몬이 있어요 — 레벨을 올리거나 TM을 가르쳐주세요.",
+          "One of your Pokémon hasn't learned any moves yet — level it up or teach it a TM.",
+          "まだ技を覚えていないポケモンがいます — レベルを上げるかTMを教えてください。",
+          "Uno de tus Pokémon aún no ha aprendido ningún movimiento — súbele de nivel o enséñale una MT.")
+    }
+    var battleMissingDataMessage: String {
+        t("포켓몬 데이터를 불러올 수 없어요 — 인터넷 연결을 확인해주세요.",
+          "Couldn't load Pokémon data — check your internet connection.",
+          "ポケモンデータを読み込めませんでした — インターネット接続を確認してください。",
+          "No se pudieron cargar los datos del Pokémon — comprueba tu conexión a internet.")
+    }
+    var battleForcedSwitchPrompt: String { t("포켓몬이 쓰러졌어요 — 교체할 포켓몬을 골라주세요", "Your Pokémon fainted — choose a replacement", "ポケモンがひんしになりました — 交代するポケモンを選んでください", "Tu Pokémon se debilitó — elige un reemplazo") }
+    var battleSwitchButton: String { t("교체", "Switch", "交代", "Cambiar") }
+    var battleYourTeam: String { t("내 팀", "Your team", "自分のチーム", "Tu equipo") }
+    var battleOpponentTeam: String { t("상대 팀", "Opponent's team", "相手のチーム", "Equipo del oponente") }
+    var battleLogTitle: String { t("배틀 기록", "Battle log", "バトルログ", "Registro de batalla") }
+    var battleResultWin: String { t("승리!", "You won!", "勝利！", "¡Ganaste!") }
+    var battleResultLoss: String { t("패배", "You lost", "敗北", "Perdiste") }
+    var battleResultDraw: String { t("무승부", "It's a draw", "引き分け", "Empate") }
+    var battleDoneButton: String { t("완료", "Done", "完了", "Listo") }
+    var battleShareTab: String { t("링크 공유", "Share a link", "リンクを共有", "Compartir enlace") }
+
     // MARK: Evolution lock
     var evolutionLockedHelp: String { t("진화 잠김 — 탭하면 해제(경험치는 계속 쌓여요)", "Evolution locked — tap to unlock (still earns XP)", "進化ロック中 — タップで解除（経験値は引き続き貯まります）", "Evolución bloqueada — toca para desbloquear (sigue ganando XP)") }
     var evolutionUnlockedHelp: String { t("탭하면 이 포켓몬의 진화를 막아요", "Tap to lock this Pokémon's evolution", "タップでこのポケモンの進化をロックします", "Toca para bloquear la evolución de este Pokémon") }
