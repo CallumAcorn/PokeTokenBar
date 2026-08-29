@@ -31,6 +31,12 @@ struct BattleView: View {
     /// (a deep link). Both converge on the same roster picker → `joinBattle` call.
     @State private var browseTarget: (sessionId: String, server: String)?
     @State private var voluntarySwitchOpen = false
+    /// Bumped whenever that side's active mon's HP fraction drops between two consecutive polls —
+    /// the trigger for battleSprite's hit flash/shake (see battleScene's .onChange below). Any
+    /// distinct Int change re-plays the phase sequence, so a plain incrementing counter is enough;
+    /// the actual value never gets read for anything but its identity.
+    @State private var opponentHitTrigger = 0
+    @State private var yourHitTrigger = 0
 
     private var l: L { companion.l }
 
@@ -297,15 +303,28 @@ struct BattleView: View {
             pokemonInfoBox(name: you.displayName, active: yourActive, benchCount: you.roster.count)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(14)
-            battleSprite(speciesID: opponent.active?.speciesID, fainted: opponent.active?.fainted ?? false, size: 84)
+            battleSprite(speciesID: opponent.active?.speciesID, fainted: opponent.active?.fainted ?? false, size: 84, facing: .front, hitTrigger: opponentHitTrigger)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .padding(.top, 24).padding(.trailing, 48)
-            battleSprite(speciesID: yourActive?.speciesID, fainted: yourActive?.fainted ?? false, size: 96)
+            // .back — the real games' own convention: you see your own mon from behind, the
+            // opponent's face-on. The opponent's own client renders the mirror image of this.
+            battleSprite(speciesID: yourActive?.speciesID, fainted: yourActive?.fainted ?? false, size: 96, facing: .back, hitTrigger: yourHitTrigger)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 .padding(.bottom, 4).padding(.leading, 44)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
+        // A move landing has no explicit event from the server — only the HP fraction to compare
+        // turn over turn — so "it went down since last time we looked" is the hit signal. Detects
+        // damage, not status/support moves (Growl etc. never move this number); a fuller effect
+        // system would need to parse @pkmn/sim's own log lines, which is a lot more machinery for
+        // a cosmetic touch — this covers the actual common case (something got hit).
+        .onChange(of: opponent.active?.hpFraction) { old, new in
+            if let old, let new, new < old { opponentHitTrigger += 1 }
+        }
+        .onChange(of: yourActive?.hpFraction) { old, new in
+            if let old, let new, new < old { yourHitTrigger += 1 }
+        }
     }
 
     private var battleFieldBackground: some View {
@@ -322,15 +341,23 @@ struct BattleView: View {
     /// A soft ground shadow under the sprite (real games ground their sprites on a battle platform)
     /// plus a fainted cue — real games have the sprite slide/drop off-screen; a 90° tilt is the
     /// cheapest approximation that still reads as "down" without an actual animation timeline.
-    private func battleSprite(speciesID: Int?, fainted: Bool, size: CGFloat) -> some View {
+    private func battleSprite(speciesID: Int?, fainted: Bool, size: CGFloat, facing: SpriteFacing, hitTrigger: Int) -> some View {
         ZStack {
             Ellipse()
                 .fill(Color.black.opacity(0.16))
                 .frame(width: size * 0.85, height: size * 0.24)
                 .offset(y: size * 0.44)
-            SpriteView(speciesID: speciesID, size: size)
+            SpriteView(speciesID: speciesID, size: size, facing: facing)
                 .opacity(fainted ? 0.35 : 1)
                 .rotationEffect(.degrees(fainted ? 90 : 0))
+                // Hit flash/shake — a quick left-right jitter + brightness pop, replayed once per
+                // hitTrigger bump (see battleScene's .onChange). No move-type tinting (would need the
+                // opponent's move name resolved to a type we usually don't have data for locally).
+                .phaseAnimator([0, 1, 2, 0], trigger: hitTrigger) { content, phase in
+                    content
+                        .offset(x: phase == 1 ? -7 : (phase == 2 ? 7 : 0))
+                        .brightness(phase == 1 || phase == 2 ? 0.6 : 0)
+                } animation: { _ in .easeInOut(duration: 0.07) }
         }
         .animation(.easeInOut(duration: 0.35), value: fainted)
     }
@@ -372,7 +399,7 @@ struct BattleView: View {
             } else {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text(l.battleWaitingForYourMove).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(l.battleWaitingOnOpponentToChooseMove(view.opponent?.displayName ?? "")).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -387,6 +414,7 @@ struct BattleView: View {
         Group {
             if let mon = battle.myRoster[safeIndex: you.activeIndex] {
                 VStack(alignment: .leading, spacing: 8) {
+                    Text(l.battleWaitingOnYouToChooseMove).font(.system(size: 12, weight: .semibold))
                     BattleMoveGrid(store: companion, mon: mon) { slot in
                         Task { await battle.choose(BattleStore.moveChoice(slot)) }
                     }

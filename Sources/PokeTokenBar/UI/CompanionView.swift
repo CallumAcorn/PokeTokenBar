@@ -112,6 +112,10 @@ struct SpriteView: View {
     var bob: Bool = false
     var animated: Bool = false
     var shiny: Bool = false
+    /// .back is fixed for the lifetime of a given call site in practice (the battle screen's own
+    /// mon, never toggled at runtime) — deliberately left out of needsReload/the .task identity
+    /// below, which only ever need to react to species/shiny changing, same as before this existed.
+    var facing: SpriteFacing = .front
     /// GIF 프레임 지속의 하한(초). 0=원본 delay 그대로. >0 이면 fps 상한 + wakeup 코얼레싱을 적용해
     /// idle 배터리를 통제한다 — 항상 떠 있는 플로팅 펫(0.4s≈2.5fps)이 메뉴바 GIF 규율과 동치가 되게.
     /// 팝오버 등 일시적 표시는 0(기본)으로 두어 네이티브 fps 유지.
@@ -125,16 +129,17 @@ struct SpriteView: View {
     @State private var frameIndex = 0
 
     init(speciesID: Int?, size: CGFloat = 84, bob: Bool = false, animated: Bool = false,
-         shiny: Bool = false, minFrameDelay: TimeInterval = 0) {
+         shiny: Bool = false, facing: SpriteFacing = .front, minFrameDelay: TimeInterval = 0) {
         self.speciesID = speciesID
         self.size = size
         self.bob = bob
         self.animated = animated
         self.shiny = shiny
+        self.facing = facing
         self.minFrameDelay = minFrameDelay
         // 캐시에 있으면 즉시(동기) 표시 — 재렌더 플래시 방지 + 정적 스냅샷에서도 보임.
         // speciesID==nil(알 상태)이면 알 스프라이트를 시드(없으면 body 가 🥚 폴백).
-        let cached = speciesID.map { SpriteLoader.cachedImage(speciesID: $0, shiny: shiny) } ?? SpriteLoader.cachedEggImage()
+        let cached = speciesID.map { SpriteLoader.cachedImage(speciesID: $0, shiny: shiny, facing: facing) } ?? SpriteLoader.cachedEggImage()
         _img = State(initialValue: cached)
         _loadedID = State(initialValue: (speciesID != nil && cached != nil) ? speciesID : nil)
         _loadedShiny = State(initialValue: shiny)
@@ -217,7 +222,7 @@ struct SpriteView: View {
             // 정적 스프라이트 먼저(즉시 표시 + 폴백 보장).
             // 캐시 시드로 이미 같은 종·같은 이로치 여부면 재요청 생략(플래시 방지)
             if Self.needsReload(loadedID: loadedID, loadedShiny: loadedShiny, id: id, shiny: shiny) {
-                let loaded = await SpriteLoader.image(speciesID: id, animated: false, shiny: shiny)
+                let loaded = await SpriteLoader.image(speciesID: id, animated: false, shiny: shiny, facing: facing)
                 // 취소된 로드는 반영하지 않는다(#138). 이로치 축은 **반영될 때만** 기록해
                 // subject(종)와 loadedShiny 가 어긋나 다음 판정이 틀어지는 것을 막는다.
                 if let next = subject.applyingLoad(loaded, for: id, cancelled: Task.isCancelled) {
@@ -227,9 +232,9 @@ struct SpriteView: View {
             }
             guard animated else { return }
             // animated GIF 시도(shiny 미제공 종은 일반 GIF 폴백) → 프레임 2개 이상이면 순환 루프
-            var gifData = await SpriteStore.shared.data(speciesID: id, animated: true, shiny: shiny)
+            var gifData = await SpriteStore.shared.data(speciesID: id, animated: true, shiny: shiny, facing: facing)
             if gifData == nil, shiny {
-                gifData = await SpriteStore.shared.data(speciesID: id, animated: true, shiny: false)
+                gifData = await SpriteStore.shared.data(speciesID: id, animated: true, shiny: false, facing: facing)
             }
             guard let data = gifData else { return }
             // 단일 프레임/디코드 실패 → 정적 폴백. 취소됐으면 아예 반영하지 않는다(빈 배열이라 아래서 종료).

@@ -641,7 +641,13 @@ struct L {
     var battleBrowseOpen: String { t("열린 배틀 찾아보기", "Browse open battles", "参加募集中のバトルを見る", "Buscar batallas abiertas") }
     var battleNoOpenBattles: String { t("지금 열려 있는 배틀이 없어요", "No open battles right now", "現在参加募集中のバトルはありません", "No hay batallas abiertas ahora mismo") }
     var battleWaitingForOpponent: String { t("상대를 기다리는 중…", "Waiting for an opponent…", "対戦相手を待っています…", "Esperando a un oponente…") }
-    var battleWaitingForYourMove: String { t("상대의 선택을 기다리는 중…", "Waiting for your opponent's move…", "相手の選択を待っています…", "Esperando la jugada de tu oponente…") }
+    /// Explicit about *who* the battle screen is waiting on, each turn — not a generic spinner.
+    /// Shown even when it's your own turn (above the move grid), not just while waiting on them.
+    var battleWaitingOnYouToChooseMove: String { t("당신이 기술을 고를 차례예요", "Waiting on you to choose a move", "あなたが技を選ぶ番です", "Esperando a que elijas un movimiento") }
+    func battleWaitingOnOpponentToChooseMove(_ name: String) -> String {
+        t("\(name)의 선택을 기다리는 중…", "Waiting on \(name) to choose a move",
+          "\(name) の選択を待っています…", "Esperando a que \(name) elija un movimiento")
+    }
     var battlePasteInviteLinkPlaceholder: String {
         t("배틀 링크 붙여넣기", "Paste battle link", "バトルリンクを貼り付け", "Pegar enlace de batalla")
     }

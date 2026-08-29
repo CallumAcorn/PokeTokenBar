@@ -1,5 +1,11 @@
 import AppKit
 
+/// Front (every existing screen) or back (the local player's own active mon on the battle screen —
+/// the real games' own convention: you see your own mon from behind, the opponent's face-on).
+enum SpriteFacing {
+    case front, back
+}
+
 /// 포켓몬 스프라이트를 런타임에 받아 로컬(Application Support)에 캐시. 레포/번들에 미포함.
 actor SpriteStore {
     static let shared = SpriteStore()
@@ -19,8 +25,9 @@ actor SpriteStore {
     }()
 
     /// 캐시 파일명 키 — 기존 "\(id)-a"/"\(id)-s" 유지, shiny 는 "sh" 접두(구캐시 그대로 유효).
-    static func cacheKey(speciesID: Int, animated: Bool, shiny: Bool) -> String {
-        "\(speciesID)-\(shiny ? "sh" : "")\(animated ? "a" : "s")"
+    /// facing=.back 은 "bk" 접두 — 기존(.front) 캐시 파일명과 절대 겹치지 않아야 앞뒤가 안 섞인다.
+    static func cacheKey(speciesID: Int, animated: Bool, shiny: Bool, facing: SpriteFacing = .front) -> String {
+        "\(speciesID)-\(facing == .back ? "bk" : "")\(shiny ? "sh" : "")\(animated ? "a" : "s")"
     }
 
     /// Sprites are the one remote payload the app writes to disk, so the response is checked
@@ -57,19 +64,22 @@ actor SpriteStore {
         return data
     }
 
-    func data(speciesID: Int, animated: Bool, shiny: Bool = false) async -> Data? {
+    func data(speciesID: Int, animated: Bool, shiny: Bool = false, facing: SpriteFacing = .front) async -> Data? {
         if animated, !PokemonAssets.hasAnimatedSprite(speciesID: speciesID) { return nil }
-        let key = Self.cacheKey(speciesID: speciesID, animated: animated, shiny: shiny)
+        let key = Self.cacheKey(speciesID: speciesID, animated: animated, shiny: shiny, facing: facing)
         if let d = mem[key] { touch(key); return d }
         let ext = animated ? "gif" : "png"
         let file = dir.appendingPathComponent("\(key).\(ext)")
         if let d = try? Data(contentsOf: file) { remember(key, d); return d }
+        // "back/" is a path *prefix*, ahead of "shiny/" when both apply — matches the sprites repo's
+        // own directory layout (sprites/pokemon/back/shiny/{id}.png, not shiny/back/{id}.png).
+        let backSegment = facing == .back ? "back/" : ""
         let urlStr: String
         switch (animated, shiny) {
-        case (true, false):  urlStr = "\(base)/versions/generation-v/black-white/animated/\(speciesID).gif"
-        case (true, true):   urlStr = "\(base)/versions/generation-v/black-white/animated/shiny/\(speciesID).gif"
-        case (false, false): urlStr = "\(base)/\(speciesID).png"
-        case (false, true):  urlStr = "\(base)/shiny/\(speciesID).png"
+        case (true, false):  urlStr = "\(base)/versions/generation-v/black-white/animated/\(backSegment)\(speciesID).gif"
+        case (true, true):   urlStr = "\(base)/versions/generation-v/black-white/animated/\(backSegment)shiny/\(speciesID).gif"
+        case (false, false): urlStr = "\(base)/\(backSegment)\(speciesID).png"
+        case (false, true):  urlStr = "\(base)/\(backSegment)shiny/\(speciesID).png"
         }
         guard let url = URL(string: urlStr), let d = await Self.fetchImageData(url) else { return nil }
         try? d.write(to: file, options: .atomic)   // torn write 방지 — 크래시/강제종료 시 손상 캐시가 남지 않게
@@ -129,29 +139,29 @@ enum SpriteLoader {
 
     /// 디스크 캐시에 이미 있으면 동기 반환(네트워크 없음). 없으면 nil.
     /// shiny 캐시 미스는 일반 캐시로 폴백 — 오프라인에서 live mon 이 알 글리프로 보이는 것 방지.
-    static func cachedImage(speciesID: Int, animated: Bool = false, shiny: Bool = false) -> NSImage? {
+    static func cachedImage(speciesID: Int, animated: Bool = false, shiny: Bool = false, facing: SpriteFacing = .front) -> NSImage? {
         let ext = animated ? "gif" : "png"
-        let key = SpriteStore.cacheKey(speciesID: speciesID, animated: animated, shiny: shiny)
+        let key = SpriteStore.cacheKey(speciesID: speciesID, animated: animated, shiny: shiny, facing: facing)
         let f = cacheDir.appendingPathComponent("\(key).\(ext)")
         if let d = try? Data(contentsOf: f), let img = NSImage(data: d) { return img }
         guard shiny else { return nil }
-        return cachedImage(speciesID: speciesID, animated: animated, shiny: false)
+        return cachedImage(speciesID: speciesID, animated: animated, shiny: false, facing: facing)
     }
 
     /// 정적 스프라이트. animated=true 면 Gen-V 움직이는 스프라이트(없으면 정적으로 폴백).
     /// shiny=true 는 색이 다른 스프라이트 — 미제공 종이면 일반으로 폴백.
-    static func image(speciesID: Int, animated: Bool = false, shiny: Bool = false) async -> NSImage? {
-        if animated, let d = await SpriteStore.shared.data(speciesID: speciesID, animated: true, shiny: shiny),
+    static func image(speciesID: Int, animated: Bool = false, shiny: Bool = false, facing: SpriteFacing = .front) async -> NSImage? {
+        if animated, let d = await SpriteStore.shared.data(speciesID: speciesID, animated: true, shiny: shiny, facing: facing),
            let img = NSImage(data: d) {
             return img
         }
-        if let d = await SpriteStore.shared.data(speciesID: speciesID, animated: false, shiny: shiny),
+        if let d = await SpriteStore.shared.data(speciesID: speciesID, animated: false, shiny: shiny, facing: facing),
            let img = NSImage(data: d) {
             return img
         }
         // shiny 미제공 → 일반 폴백
         guard shiny else { return nil }
-        return await image(speciesID: speciesID, animated: animated, shiny: false)
+        return await image(speciesID: speciesID, animated: animated, shiny: false, facing: facing)
     }
 
     /// 아이템 스프라이트 — 디스크 캐시 동기 조회(없으면 nil). 아이콘 즉시 표시용(재렌더 플래시 방지).
