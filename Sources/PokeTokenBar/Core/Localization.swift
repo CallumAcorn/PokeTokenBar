@@ -685,6 +685,16 @@ struct L {
     }
     var battleForcedSwitchPrompt: String { t("포켓몬이 쓰러졌어요 — 교체할 포켓몬을 골라주세요", "Your Pokémon fainted — choose a replacement", "ポケモンがひんしになりました — 交代するポケモンを選んでください", "Tu Pokémon se debilitó — elige un reemplazo") }
     var battleSwitchButton: String { t("교체", "Switch", "交代", "Cambiar") }
+    /// `name` is the raw move name straight off the battle log (@pkmn/sim's own English display
+    /// name, e.g. "Tail Whip") — not run through this app's own localization, since the server
+    /// never sends a move id back, only the name it already resolved. Only the surrounding template
+    /// is localized; a status move whose name reads in English is still a real improvement over the
+    /// no-feedback-at-all gap this fixes (a stat-lowering move never moves HP, so without this
+    /// there's nothing on screen telling you it did anything).
+    func battleUsedMove(_ name: String) -> String {
+        t("\(name) 사용!", "Used \(name)!", "\(name) を使った！", "¡Usó \(name)!")
+    }
+    var battlePP: String { t("PP", "PP", "PP", "PP") }
     var battleYourTeam: String { t("내 팀", "Your team", "自分のチーム", "Tu equipo") }
     var battleOpponentTeam: String { t("상대 팀", "Opponent's team", "相手のチーム", "Equipo del oponente") }
     var battleLogTitle: String { t("배틀 기록", "Battle log", "バトルログ", "Registro de batalla") }

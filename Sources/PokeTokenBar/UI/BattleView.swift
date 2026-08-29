@@ -46,6 +46,11 @@ struct BattleView: View {
     /// `status == "completed"` arrives, which is the same response that carries the finishing
     /// blow's HP drop, so its hit-flash/faint animation would never get a chance to render at all.
     @State private var revealResult = false
+    /// Move names used since the log was last looked at (see extractNewMoveNames) — shown in the
+    /// action box so a status move (Growl, Tail Whip…) that never moves an HP bar still gets some
+    /// visible confirmation it actually did something, not just damaging moves.
+    @State private var recentMoveNames: [String] = []
+    @State private var lastSeenLogCount = 0
 
     private var l: L { companion.l }
 
@@ -89,6 +94,24 @@ struct BattleView: View {
     }
     private var hasValidDisplayName: Bool {
         (1...60).contains(online.displayName.trimmingCharacters(in: .whitespacesAndNewlines).count)
+    }
+
+    /// Pulls move names out of whatever's new in the raw @pkmn/sim log since the last time this was
+    /// called (`previouslySeenCount`) — a `|move|{side}: {mon}|{MoveName}|{target}` line, split on
+    /// "|", puts the move name at index 3. `log.count < previouslySeenCount` means a new battle's
+    /// log (shorter than the last one this window showed) replaced the old one; reset to 0 rather
+    /// than crash on a negative range — the cost is that battle's opening moves get treated as "new"
+    /// in one lump on the next call, a harmless one-time cosmetic quirk at the boundary between two
+    /// battles in the same reused window.
+    static func extractNewMoveNames(from log: [String], previouslySeenCount: Int) -> (moveNames: [String], seenCount: Int) {
+        let seenCount = log.count < previouslySeenCount ? 0 : previouslySeenCount
+        guard log.count > seenCount else { return ([], log.count) }
+        let names = log[seenCount...].compactMap { line -> String? in
+            let parts = line.components(separatedBy: "|")
+            guard parts.count >= 4, parts[1] == "move" else { return nil }
+            return parts[3]
+        }
+        return (names, log.count)
     }
 
     private func friendlyMessage(for error: BattleStore.StoreError) -> String {
@@ -314,6 +337,12 @@ struct BattleView: View {
                 try? await Task.sleep(nanoseconds: 900_000_000)
                 if !Task.isCancelled { revealResult = true }
             }
+            .onChange(of: view.log) { _, newLog in
+                guard let newLog else { return }
+                let result = Self.extractNewMoveNames(from: newLog, previouslySeenCount: lastSeenLogCount)
+                lastSeenLogCount = result.seenCount
+                if !result.moveNames.isEmpty { recentMoveNames = result.moveNames }
+            }
         } else {
             statusView(message: l.battleWaitingForOpponent, showsSpinner: true)
                 .padding(BattleWindowMetrics.padding)
@@ -432,7 +461,14 @@ struct BattleView: View {
     }
 
     private func actionBox(_ view: BattleClient.BattleView, you: BattleClient.You) -> some View {
-        Group {
+        VStack(alignment: .leading, spacing: 6) {
+            // Confirms a status move actually did something — without this, Growl/Tail Whip/String
+            // Shot (never move an HP bar, so no hit-flash either) look completely unresponsive even
+            // though the server already applied them.
+            if !recentMoveNames.isEmpty {
+                Text(recentMoveNames.map(l.battleUsedMove).joined(separator: "   "))
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
             if voluntarySwitchOpen {
                 switchStrip(you.roster, activeIndex: you.activeIndex, forced: false)
             } else if view.pendingChoice == "switch" {
@@ -441,7 +477,7 @@ struct BattleView: View {
                     switchStrip(you.roster, activeIndex: you.activeIndex, forced: true)
                 }
             } else if view.pendingChoice == "move" {
-                moveGrid(you: you)
+                moveGrid(you: you, turn: view.turn)
             } else {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -456,12 +492,12 @@ struct BattleView: View {
         .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.secondary.opacity(0.3)), alignment: .top)
     }
 
-    private func moveGrid(you: BattleClient.You) -> some View {
+    private func moveGrid(you: BattleClient.You, turn: Int) -> some View {
         Group {
             if let mon = battle.myRoster[safeIndex: you.activeIndex] {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(l.battleWaitingOnYouToChooseMove).font(.system(size: 12, weight: .semibold))
-                    BattleMoveGrid(store: companion, mon: mon) { slot in
+                    BattleMoveGrid(store: companion, mon: mon, turn: turn) { slot in
                         Task { await battle.choose(BattleStore.moveChoice(slot)) }
                     }
                     Button(l.battleSwitchButton) { voluntarySwitchOpen = true }
@@ -573,16 +609,25 @@ private struct BattleRosterRow: View {
 private struct BattleMoveGrid: View {
     let store: CompanionStore
     let mon: MonState
+    /// Only used to reset `selectedSlot` between turns (see .onChange below) — the active mon
+    /// usually stays the same across several turns in a row, so keying the reset on `mon.id` alone
+    /// would leave the previous turn's highlight stuck showing on a move you already used.
+    let turn: Int
     let onChoose: (Int) -> Void
 
     @State private var moves: [Move?] = []
+    /// Set the instant a move is tapped — immediate feedback while the request round-trips, rather
+    /// than the button looking completely inert until the next poll shows something changed.
+    @State private var selectedSlot: Int?
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
             ForEach(Array(mon.knownMoves.enumerated()), id: \.offset) { index, moveID in
                 let move = moves[safeIndex: index] ?? nil
+                let slot = index + 1
                 Button {
-                    onChoose(index + 1)
+                    selectedSlot = slot
+                    onChoose(slot)
                 } label: {
                     HStack(spacing: 6) {
                         Text(move?.localizedName(store.language) ?? "#\(moveID)")
@@ -590,6 +635,9 @@ private struct BattleMoveGrid: View {
                             .lineLimit(1)
                         Spacer(minLength: 2)
                         if let move {
+                            Text("\(store.l.battlePP) \(move.pp)")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(.secondary)
                             // Same type-badge convention CompanionView's MoveRow already uses —
                             // reused directly, not reinvented.
                             Text(store.l.typeName(move.type).uppercased())
@@ -602,8 +650,14 @@ private struct BattleMoveGrid: View {
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 4)
                 }
-                .buttonStyle(.bordered)
+                // .borderedProminent throughout (not switching to .bordered when unselected) so
+                // tapping doesn't change the button's *type* mid-interaction — only its tint, so the
+                // chosen move stays vivid while its siblings dim, instead of every button changing
+                // shape at once.
+                .buttonStyle(.borderedProminent)
+                .tint(selectedSlot == nil || selectedSlot == slot ? Color.accentColor : Color.secondary.opacity(0.35))
                 .controlSize(.large)
+                .disabled(selectedSlot != nil && selectedSlot != slot)
             }
         }
         .task(id: mon.id) {
@@ -611,6 +665,7 @@ private struct BattleMoveGrid: View {
             for id in mon.knownMoves { loaded.append(await store.moveDetail(id: id)) }
             moves = loaded
         }
+        .onChange(of: turn) { selectedSlot = nil }
     }
 }
 
