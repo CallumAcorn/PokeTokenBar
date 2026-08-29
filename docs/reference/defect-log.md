@@ -439,8 +439,16 @@ read_when:
   검증 함정: bare/`open -n` 보조 인스턴스는 애니메이션이 안 돌아 14%를 **재현 못 함** → 실측은 설치된
   primary 앱 교체로만. **배터리(idle wakeup) 차원:** CPU% 낮아도 button.image 대입마다 레이어 dirty →
   CA 커밋 → WindowServer 디스플레이 사이클 왕복이 wakeup을 증폭한다(실측 ~47 wakeup/s). `setStatusImage`
-  diff-gate(동일 프레임 객체 재대입 스킵 — 애니 프레임은 서로 다른 객체라 정상 통과) + GIF fps 하한 0.4s(≈2.5fps)
-  + `Timer.tolerance` 0.5(코얼레싱)로 ~5 wakeup/s(−89%), 애니메이션 유지. 배터리-vs-AC/thermal 적응·CADisplayLink
+  diff-gate(동일 프레임 객체 재대입 스킵 — 애니 프레임은 서로 다른 객체라 정상 통과) + GIF fps 하한
+  (`AppDelegate.menuFrameFloor`, 당시 0.4s≈2.5fps) + `Timer.tolerance` 0.5(코얼레싱)로 ~5 wakeup/s(−89%),
+  애니메이션 유지. **캡 값 자체는 튜닝 가능하고 0 만 금지**다 — 세 대책 중 CPU 14%의 주범은 CA 전환·팝오버
+  상주였고 fps 캡의 몫은 wakeup 을 프레임 수에 비례해 줄이는 것뿐이다(22px 에서도 2.5fps 는 느리다는
+  지적이 있어 값을 사용자 선택으로 열었다 — `UsageStore.AnimationQuality` 의 0.4/0.2/0.1. CA 전환이
+  제거된 뒤라 14% 당시와 같은 조건이 아니다. 단 **fps 를 올리면 CPU 는 실제로 오른다**: 실측 idle
+  0.2s/tol 0.5 = 1.8% → 0.1s/tol 0.1 = 5.1%(2.8배). "CA 전환이 주범이었으니 fps 는 공짜"가 아니라,
+  주범이 사라진 만큼의 여유가 생긴 것뿐이다. 그래서 **기본값은 이 설정 이전과 같은 0.4s(powerSaver)**
+  이고, 더 부드러운 쪽은 opt-in 이다).
+  배터리-vs-AC/thermal 적응·CADisplayLink
   전환은 1인 로컬 노트북 기준 수확체감으로 판정, 미도입(필요 시 Agent Team 계획 참조). (Agent Team 조사 + 실측, 2026-07-22.)
 - **프레임 교체는 `button.image` 대입이 아니라 `spriteLayer.contents` 로 한다 — 전환 억제와 다른 축이다.**
   `setDisableActions` 는 NSStatusItemScene *전환 애니메이션* 을 없앨 뿐, 대입 자체가 유발하는 **버튼
@@ -486,12 +494,20 @@ read_when:
   원인). 상시 애니메이션 표면에서 이 배수를 정할 땐 **wakeup 절약과 재생 지연을 같이 적어라** — 현재 0.1
   (지연 ≤10%). 가드: `testToleranceDoesNotVisiblyStretchPlayback`(>0 로 코얼레싱 유지 + 최악 지연 ≤15%).
 - **항상 뜬 애니메이션 표면은 메뉴바와 같은 idle 규율을 공유한다.** 플로팅 펫(`FloatingPetPanel`)처럼 상시
-  표시되는 두 번째 GIF 표면을 더할 땐 메뉴바 규율을 그대로 상속해야 회귀(#102 후속)를 안 만든다: ① GIF fps
-  하한(`SpriteView(minFrameDelay:)` — 펫은 `FloatingPetView.frameFloor` 0.4s≈2.5fps, 팝오버 등 *일시적* 표시는
-  0=네이티브) + `Task.sleep(for:tolerance:)` 코얼레싱, ② 저전력 모드 정적화(`FloatingPetController.shouldAnimate(lowPower:)`
+  표시되는 두 번째 GIF 표면을 더할 땐 메뉴바 규율을 그대로 상속해야 회귀(#102 후속)를 안 만든다. **규율 =
+  "캡이 존재한다(>0)"이며 값의 일치가 아니다** — 표면이 크면 같은 fps 에서도 끊김이 더 보여 값은 갈릴 수
+  있다(현재는 두 표면이 사용자 설정 `UsageStore.AnimationQuality` 하나를 공유한다 — 표면별로 값을
+  갈라야 할 근거가 생기면 그때 프리셋에서 표면별 값을 뽑아라): ① GIF fps 하한
+  (`SpriteView(minFrameDelay:)` — 펫은 `store.animationQuality.frameFloor`, 메뉴바는
+  `AppDelegate.menuFrameFloor`, 팝오버 등 *일시적* 표시는 0=네이티브) + `Task.sleep(for:tolerance:)` 코얼레싱, ② 저전력 모드 정적화(`FloatingPetController.shouldAnimate(lowPower:)`
   — `NSProcessInfoPowerStateDidChange` 관찰 후 콘텐츠 재구성), ③ 숨김/슬립 시 `contentView=nil` 로 프레임 루프 정지
   (팝오버 `popoverDidClose` 패턴). 회귀 가드: `FloatingPetEnergyTests`(fps 하한 clamp·`frameFloor>0`·팝오버 불변·
-  low-power 정적화 순수 판정 — SwiftUI `.task` 타이밍 자체는 호스트 없이 xctest 불가라 순수 경로만 잠금). occlusion 게이팅은
+  low-power 정적화 순수 판정 — SwiftUI `.task` 타이밍 자체는 호스트 없이 xctest 불가라 순수 경로만 잠금).
+  **가드 비대칭 주의:** 펫 캡만 상수로 잠겨 있었고 메뉴바 캡은 인라인 리터럴 `max(0.4, delay)` 여서
+  *캡이 통째로 사라져도 테스트가 못 잡았다*. 지금은 두 표면이 같은 프리셋 값을 읽어 비대칭 자체가
+  구조적으로 불가능하고, 가드는 프리셋 계약에 걸린다(`testNoAnimationQualityPresetDisablesTheCap`,
+  `testTransientSurfaceIsTheOnlyUncappedOne` — 캡=0 주입으로 실패 확인). 상시 표시 표면을 더할 땐
+  캡을 반드시 **이름 있는 값**으로 두고 `>0` 를 단정한다. occlusion 게이팅은
   all-spaces/`.floating` 펫이 실제로 거의 안 가려져 메뉴바와 동일 수확체감으로 미도입. (#102 리뷰 지적 반영, 2026-07-22.)
 
 ## 알림

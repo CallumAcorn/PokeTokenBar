@@ -112,6 +112,7 @@ If a tool keeps its sessions outside the built-in paths, add your own roots unde
 
 - **1v1 online battles**: create or join a battle from a shared link or the open lobby, field up to six of your party, and play a turn-based match in its own window. The server resolves turn order, so both players see the same fight in the same order.
 - **Moves and TMs**: companions learn up to four moves as they level, and TMs from the shop teach more. With all four slots full, you pick one to replace. Learnsets and the TM catalog come from PokéAPI.
+- **Animation quality** — pick how smoothly the menu bar sprite and the floating pet animate (Power saver / Balanced / Smooth). Both always-visible surfaces share the setting. Power saver is the default and keeps the frame rate the app used before this setting existed; Balanced and Smooth trade battery for smoothness (measured idle CPU ~1.8% and ~5.1%).
 - **Interactive floating pet** — hover for today's usage, click to open the main window, right-click for a menu, and show limit alerts as speech bubbles.
 - **Per-service tabs** — when two or more of Claude Code, Codex, Gemini CLI, Antigravity, OpenCode, Hermes Agent, Cursor, Grok CLI, Copilot CLI, Kiro CLI, and Pi Agent are detected, compact tabs switch between them; today's total stays combined.
 - **Official limits** — Claude, Codex & Antigravity 5-hour / weekly utilization with reset countdowns, right under today's numbers.

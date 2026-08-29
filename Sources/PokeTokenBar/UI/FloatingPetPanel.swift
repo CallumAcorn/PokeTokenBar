@@ -528,7 +528,6 @@ final class PetHostingView: NSHostingView<AnyView> {
 }
 
 struct FloatingPetView: View {
-    static let frameFloor: TimeInterval = 0.4
     /// Which party member this window shows — looked up live from `companion` each render (via
     /// environment, like the rest of this file) so it stays current if that mon evolves.
     let monID: MonState.ID
@@ -550,7 +549,7 @@ struct FloatingPetView: View {
             SpriteView(speciesID: mon?.currentID, size: size, animated: animated,
                        shiny: mon?.isShiny ?? false,
                        facing: (mon?.isBackFacing ?? false) ? .back : .front,
-                       minFrameDelay: Self.frameFloor)
+                       minFrameDelay: store.animationQuality.frameFloor)
                 .frame(width: size, height: size)
                 .scaleEffect(x: (mon?.isMirrored ?? false) ? -1 : 1, y: 1)
                 .zIndex(0)
