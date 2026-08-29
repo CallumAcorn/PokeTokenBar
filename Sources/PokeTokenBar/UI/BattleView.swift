@@ -37,6 +37,11 @@ struct BattleView: View {
     /// the actual value never gets read for anything but its identity.
     @State private var opponentHitTrigger = 0
     @State private var yourHitTrigger = 0
+    /// Gates the win/loss screen behind a short hold once the server reports the battle as
+    /// completed — without it, battlingContent would swap straight to resultView the instant
+    /// `status == "completed"` arrives, which is the same response that carries the finishing
+    /// blow's HP drop, so its hit-flash/faint animation would never get a chance to render at all.
+    @State private var revealResult = false
 
     private var l: L { companion.l }
 
@@ -280,17 +285,42 @@ struct BattleView: View {
 
     @ViewBuilder
     private func battlingContent(_ view: BattleClient.BattleView) -> some View {
-        if view.status == "completed" {
+        if view.status == "completed" && revealResult {
             resultView(view)
         } else if let you = view.you, let opponent = view.opponent {
             VStack(spacing: 0) {
+                // Rendered even once completed — this is what lets the finishing blow's HP-drop
+                // (and the fainted side's tip-over) actually play before resultView takes over.
                 battleScene(opponent: opponent, you: you)
-                actionBox(view, you: you)
+                if view.status == "completed" {
+                    battleOverHoldingBox
+                } else {
+                    actionBox(view, you: you)
+                }
+            }
+            .task(id: view.status) {
+                guard view.status == "completed" else { revealResult = false; return }
+                // Long enough for battleSprite's hit-flash (~0.28s) and the faint fade/tilt (0.35s)
+                // to finish — see their .phaseAnimator/.animation durations.
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                if !Task.isCancelled { revealResult = true }
             }
         } else {
             statusView(message: l.battleWaitingForOpponent, showsSpinner: true)
                 .padding(BattleWindowMetrics.padding)
         }
+    }
+
+    private var battleOverHoldingBox: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(l.battleOver).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(BattleWindowMetrics.padding)
+        .frame(maxWidth: .infinity, minHeight: 132, alignment: .top)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.secondary.opacity(0.3)), alignment: .top)
     }
 
     private func battleScene(opponent: BattleClient.Opponent, you: BattleClient.You) -> some View {

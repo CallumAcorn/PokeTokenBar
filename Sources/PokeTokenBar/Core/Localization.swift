@@ -692,6 +692,10 @@ struct L {
     var battleResultLoss: String { t("패배", "You lost", "敗北", "Perdiste") }
     var battleResultDraw: String { t("무승부", "It's a draw", "引き分け", "Empate") }
     var battleDoneButton: String { t("완료", "Done", "完了", "Listo") }
+    /// Shown in the action-box slot for the brief hold between the finishing blow landing (still on
+    /// the battle scene, so its HP-drop/faint animation gets to play) and the result screen — see
+    /// BattleView.battlingContent's revealResult delay.
+    var battleOver: String { t("배틀 종료!", "Battle over!", "バトル終了！", "¡Batalla terminada!") }
     var battleShareTab: String { t("링크 공유", "Share a link", "リンクを共有", "Compartir enlace") }
 
     // MARK: Evolution lock
