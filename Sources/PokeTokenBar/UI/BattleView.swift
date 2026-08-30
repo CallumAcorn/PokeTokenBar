@@ -51,7 +51,9 @@ struct BattleView: View {
     /// .onChange and triggerMoveEffect. `color` comes from the move's real type (typeColor, the
     /// same palette move buttons already use); `isDamaging` (damageClass != .status) switches
     /// battleSprite between a shake+flash and a gentler pulse+glow.
-    private struct SpriteEffect: Equatable {
+    // `fileprivate`, not `private` — shared with `BattleSpriteFlash` below, a sibling top-level
+    // type in this same file (a nested `private` type is only visible inside BattleView itself).
+    fileprivate struct SpriteEffect: Equatable {
         var trigger = 0
         var color = Color.white
         var isDamaging = true
@@ -84,6 +86,10 @@ struct BattleView: View {
     /// `status == "completed"` arrives, which is the same response that carries the finishing
     /// blow's HP drop, so its hit-flash/faint animation would never get a chance to render at all.
     @State private var revealResult = false
+    /// Resolved once per battle from `view.hostLeadSpeciesID` (see `battlingContent`'s `.task`) —
+    /// `nil` until that resolves (or if it never does), during which `battleFieldBackground` falls
+    /// back to the plain gradient it replaced.
+    @State private var battleBackgroundImage: NSImage?
     /// The fully-formatted "Pikachu used Thunder Shock!" text for whatever move is currently being
     /// played back (see `play(_:)`/`showMoveUsedText`) — shown so a status move (Growl, Tail Whip…)
     /// that never moves an HP bar still gets some visible confirmation it did something, not just
@@ -728,6 +734,14 @@ struct BattleView: View {
                 try? await Task.sleep(nanoseconds: 900_000_000)
                 if !Task.isCancelled { revealResult = true }
             }
+            // hostLeadSpeciesID is fixed for the whole battle (see its doc comment) — keyed on it
+            // rather than something like view.turn so this only ever resolves once, not every poll.
+            .task(id: view.hostLeadSpeciesID) {
+                guard let speciesID = view.hostLeadSpeciesID else { return }
+                let type = await companion.baseStats(speciesID: speciesID)?.types.first ?? .normal
+                let terrain = Self.backgroundTerrain(for: type)
+                battleBackgroundImage = Self.loadBackgroundImage(terrain: terrain)
+            }
             // Log overlay first, buttons last — overlays stack in call order, and the toggle button
             // has to stay clickable on TOP of the log panel once it's open, or there's no way to
             // close it again.
@@ -864,7 +878,7 @@ struct BattleView: View {
             // of your Pokémon but never reaches the opponent's (too far up-screen to ever meet it).
             battleSprite(speciesID: yourActive?.speciesID, fainted: yourActive?.fainted ?? false, size: 170, facing: .back, effect: yourEffect)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                .padding(.bottom, 96).padding(.leading, 8)
+                .padding(.bottom, 130).padding(.leading, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
@@ -1001,15 +1015,69 @@ struct BattleView: View {
         }
     }
 
+    /// Real pixel-art terrain (see `Resources/BattleBackgrounds`) once `battleBackgroundTask` has
+    /// resolved one; the flat gradient this replaced is kept as the fallback for the gap before that
+    /// resolves (or if it never does — offline, an unrecognized species). `.interpolation(.none)`
+    /// keeps the art crisp when scaled — the default smooth interpolation blurs pixel art badly.
+    @ViewBuilder
     private var battleFieldBackground: some View {
-        LinearGradient(
-            stops: [
-                .init(color: Color(red: 0.68, green: 0.85, blue: 0.95), location: 0.0),
-                .init(color: Color(red: 0.80, green: 0.91, blue: 0.97), location: 0.42),
-                .init(color: Color(red: 0.56, green: 0.76, blue: 0.42), location: 0.44),
-                .init(color: Color(red: 0.44, green: 0.66, blue: 0.36), location: 1.0),
-            ],
-            startPoint: .top, endPoint: .bottom)
+        if let battleBackgroundImage {
+            // GeometryReader, not `.frame(maxWidth: .infinity, maxHeight: .infinity)` (tried first,
+            // didn't fix it) — `aspectRatio(contentMode: .fill)` has to resolve its scale factor
+            // against a *concrete* size. Handed `.infinity`, SwiftUI falls back to the image's own
+            // native pixel size as its "ideal" size instead of the space it was actually given,
+            // which is what stretched it and let it paint over everything else in the ZStack rather
+            // than being correctly bounded to its slot. `geo.size` is always a real, finite number.
+            GeometryReader { geo in
+                Image(nsImage: battleBackgroundImage)
+                    .resizable()
+                    .interpolation(.none)
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+            }
+        } else {
+            LinearGradient(
+                stops: [
+                    .init(color: Color(red: 0.68, green: 0.85, blue: 0.95), location: 0.0),
+                    .init(color: Color(red: 0.80, green: 0.91, blue: 0.97), location: 0.42),
+                    .init(color: Color(red: 0.56, green: 0.76, blue: 0.42), location: 0.44),
+                    .init(color: Color(red: 0.44, green: 0.66, blue: 0.36), location: 1.0),
+                ],
+                startPoint: .top, endPoint: .bottom)
+        }
+    }
+
+    /// One terrain per type, not a 1:1 asset-per-type mapping — several types share a terrain
+    /// (fighting/flying/rock/steel all read as "mountain", say) rather than force a thematic fit
+    /// that isn't there. Dual-type mons use their primary type only (`BaseStats.types.first`) — a
+    /// background is flavor, not worth blending two terrains over.
+    static let backgroundTerrainByType: [PokemonType: String] = [
+        .normal: "path", .electric: "path",
+        .fighting: "mountain", .flying: "mountain", .rock: "mountain", .steel: "mountain",
+        .poison: "cave", .ghost: "cave", .dragon: "cave", .dark: "cave",
+        .ground: "desert", .fire: "desert",
+        .psychic: "lake",
+        .bug: "tall-grass", .grass: "tall-grass",
+        .ice: "snow",
+        .water: "ocean",
+        .fairy: "beach",
+    ]
+
+    static func backgroundTerrain(for type: PokemonType) -> String {
+        backgroundTerrainByType[type] ?? "path"
+    }
+
+    /// Loads a bundled battle background by terrain name (see `Package.swift`'s
+    /// `.copy("Resources/BattleBackgrounds")` — `Bundle.module` is SwiftPM's generated accessor for
+    /// it, working identically in the debug binary and the packaged release .app, unlike the
+    /// `assets/` folder these were first dropped into, which only `AppIcon.icns` ever gets copied
+    /// out of into a release build). A local bundled file, so this reads synchronously — no need for
+    /// the async/cache machinery `SpriteLoader` needs for runtime-fetched sprites.
+    static func loadBackgroundImage(terrain: String) -> NSImage? {
+        guard let url = Bundle.module.url(forResource: terrain, withExtension: "png", subdirectory: "BattleBackgrounds")
+        else { return nil }
+        return NSImage(contentsOf: url)
     }
 
     /// A soft ground shadow under the sprite (real games ground their sprites on a battle platform)
@@ -1022,21 +1090,16 @@ struct BattleView: View {
     /// pre-offset bounds, not its actual on-screen position. A VStack ties them together for real —
     /// wherever this whole unit gets positioned, both move as one.
     private func battleSprite(speciesID: Int?, fainted: Bool, size: CGFloat, facing: SpriteFacing, effect: SpriteEffect) -> some View {
-        VStack(spacing: -size * 0.14) {
-            SpriteView(speciesID: speciesID, size: size, facing: facing)
+        VStack(spacing: -size * 0.16) {
+            BattleSpriteFlash(speciesID: speciesID, size: size, facing: facing, effect: effect)
                 .opacity(fainted ? 0.35 : 1)
                 .rotationEffect(.degrees(fainted ? 90 : 0))
-                // Every move gets some effect, not just damaging ones — a shake+color-flash for
-                // physical/special moves (an impact), a gentler pulse+glow, no shake, for status
-                // moves (Growl etc. — nothing to visually "hit"). Replayed once per effect.trigger
-                // bump; color comes from the move's real type (see triggerMoveEffect).
-                .phaseAnimator([0, 1, 2, 0], trigger: effect.trigger) { content, phase in
-                    let active = phase == 1 || phase == 2
-                    content
-                        .offset(x: effect.isDamaging && active ? (phase == 1 ? -7 : 7) : 0)
-                        .scaleEffect(!effect.isDamaging && active ? 1.07 : 1.0)
-                        .colorMultiply(active ? effect.color : .white)
-                } animation: { _ in .easeInOut(duration: 0.09) }
+                // VStack paints children in declaration order just like ZStack does (later = front)
+                // — with negative spacing pulling the two into overlap, the ellipse declared below
+                // would otherwise paint on top of the sprite's overlapping lower portion. zIndex wins
+                // paint order without touching layout (which still needs the sprite listed first, so
+                // it's the one positioned on top).
+                .zIndex(1)
             Ellipse()
                 .fill(Color.black.opacity(0.16))
                 .frame(width: size * 0.85, height: size * 0.24)
@@ -1212,6 +1275,56 @@ private extension Array {
     }
 }
 
+/// The hit-flash (shake+color for a damaging move, a gentler pulse+glow for a status move) as its
+/// own view with its own `@State`, driven by an explicit `.onChange(of: effect.trigger)` + a timed
+/// reset — not a `.phaseAnimator` wrapping `SpriteView` directly.
+///
+/// [Regression] `.phaseAnimator` was the original approach here, and it worked until animated (GIF)
+/// sprites were turned on — after that, the flash would reliably get stuck on its "active" phase for
+/// one side (reported as "the darkening effect... stays dark" and never clears). `SpriteView`'s own
+/// animated-GIF path re-renders its content on its own timer (a new frame, independent of anything
+/// this view does); `.phaseAnimator` expects to own the content identity it's driving through phases,
+/// so a wrapped view that's *also* mutating itself on its own schedule can desync the phase sequence
+/// from its content, and it can get stuck on whichever phase was active when that happened instead of
+/// completing back to the neutral one. Driving `isFlashing` by hand — set on trigger, always cleared
+/// by an awaited sleep on the same Task, no dependency on an animation "finishing" — can't get stuck
+/// this way: the reset always runs regardless of what the wrapped content does in between.
+private struct BattleSpriteFlash: View {
+    let speciesID: Int?
+    let size: CGFloat
+    let facing: SpriteFacing
+    let effect: BattleView.SpriteEffect
+
+    @State private var isFlashing = false
+    @State private var shakeOffset: CGFloat = 0
+
+    var body: some View {
+        SpriteView(speciesID: speciesID, size: size, animated: true, facing: facing)
+            .offset(x: shakeOffset)
+            .scaleEffect(isFlashing && !effect.isDamaging ? 1.07 : 1.0)
+            .colorMultiply(isFlashing ? effect.color : .white)
+            .animation(.easeInOut(duration: 0.09), value: isFlashing)
+            .animation(.easeInOut(duration: 0.09), value: shakeOffset)
+            .onChange(of: effect.trigger) { _, _ in
+                Task { await runFlash() }
+            }
+    }
+
+    private func runFlash() async {
+        isFlashing = true
+        if effect.isDamaging {
+            shakeOffset = -7
+            try? await Task.sleep(nanoseconds: 90_000_000)
+            shakeOffset = 7
+            try? await Task.sleep(nanoseconds: 90_000_000)
+            shakeOffset = 0
+        } else {
+            try? await Task.sleep(nanoseconds: 180_000_000)
+        }
+        isFlashing = false
+    }
+}
+
 /// A mon's up-to-4 known moves as tappable buttons — loaded from `CompanionStore.moveDetail`, the
 /// same source the PC detail screen's known-move list already uses. Local data only (see
 /// `BattleStore.myRoster`'s doc comment for why the server's own response can't supply this).
@@ -1259,17 +1372,19 @@ private struct BattleMoveGrid: View {
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 6)
-                    // Plain .bordered by default for every button — an explicit accent fill only
-                    // for the one actually tapped, layered on top rather than switching button
-                    // *style* (a tint on .borderedProminent painted all four buttons green before
-                    // any selection existed, not just the chosen one).
-                    .background(selectedSlot == slot ? Color.accentColor.opacity(0.85) : Color.clear)
-                    .foregroundStyle(selectedSlot == slot ? Color.white : Color.primary)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(selectedSlot != nil && selectedSlot != slot)
+                // On the button itself, not nested inside the label content — that inner rectangle
+                // never actually lined up with the real button chrome `.buttonStyle(.bordered)`
+                // draws (different padding/corner radius), so it read as an outline on some random
+                // inner box, not on the move button itself. A green outline on the chosen move, not a
+                // filled background — a solid fill reads as heavy/blocky at this size and swallows
+                // the PP/type-badge text's own color underneath it.
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(selectedSlot == slot ? Color.green : Color.clear, lineWidth: 2))
             }
         }
         .task(id: mon.id) {

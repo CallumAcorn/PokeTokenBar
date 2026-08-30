@@ -62,19 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         store = UsageStore()
         companion = CompanionStore()
         updater = UpdateChecker()
-        // Dev-only isolation for running a second local instance side by side with the real app —
-        // same spirit as CompanionStore's own PTB_STATE_DIR (see its defaultURL()). Without this,
-        // a second raw-binary instance would still share the real app's UserDefaults.standard domain
-        // (serverURL/displayName/clientUUID), which is exactly the identity two sides of a battle/
-        // trade test need to NOT share. Unset in every normal run — only ever set by hand for this.
-        let defaults: UserDefaults
-        if let suite = ProcessInfo.processInfo.environment["PTB_USERDEFAULTS_SUITE"], !suite.isEmpty,
-           let isolated = UserDefaults(suiteName: suite) {
-            defaults = isolated
-        } else {
-            defaults = .standard
-        }
-        online = OnlineStore(defaults: defaults)
+        online = OnlineStore()
         trade = TradeStore(companion: companion, online: online)
         battle = BattleStore(companion: companion, online: online)
         battleWindow = BattleWindowController(companion: companion, battle: battle, online: online)

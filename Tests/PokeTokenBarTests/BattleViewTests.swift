@@ -206,3 +206,39 @@ final class BattleViewEffectChipParsingTests: XCTestCase {
                        "should diff against a fresh 1.0 baseline, not the stale 0.2")
     }
 }
+
+/// Battle backgrounds — see `assets/battle-backgrounds`'s move into `Sources/PokeTokenBar/Resources/
+/// BattleBackgrounds` (the `assets/` folder isn't wired into the SwiftPM build; only `AppIcon.icns`
+/// ever gets copied out of it into a release .app, and never for the debug binary at all — these
+/// wouldn't have loaded at runtime left where they were dropped).
+@MainActor
+final class BattleViewBackgroundTests: XCTestCase {
+    /// Every `PokemonType` case must resolve to an explicit terrain — a missing case would silently
+    /// fall back to "path" via `backgroundTerrain(for:)`'s `??`, which this test can't see through if
+    /// it only exercises the function; checking the table's own key count catches an omission the
+    /// fallback would otherwise mask.
+    func testEveryPokemonTypeHasAnExplicitTerrainMapping() {
+        XCTAssertEqual(Set(BattleView.backgroundTerrainByType.keys), Set(PokemonType.allCases))
+    }
+
+    func testBackgroundTerrainSpotChecks() {
+        XCTAssertEqual(BattleView.backgroundTerrain(for: .water), "ocean")
+        XCTAssertEqual(BattleView.backgroundTerrain(for: .fire), "desert")
+        XCTAssertEqual(BattleView.backgroundTerrain(for: .grass), "tall-grass")
+        XCTAssertEqual(BattleView.backgroundTerrain(for: .ice), "snow")
+    }
+
+    /// Confirms the renamed, moved files are actually reachable through `Bundle.module` at the paths
+    /// `backgroundTerrain(for:)` can produce — every value in the table, not just one spot check,
+    /// since a single typo'd filename would otherwise only surface as a silently-blank background in
+    /// the running app (no visual harness here to catch that any other way).
+    func testEveryMappedTerrainFileLoads() {
+        for terrain in Set(BattleView.backgroundTerrainByType.values) {
+            XCTAssertNotNil(BattleView.loadBackgroundImage(terrain: terrain), "missing asset for terrain \"\(terrain)\"")
+        }
+    }
+
+    func testUnmappedTerrainNameReturnsNil() {
+        XCTAssertNil(BattleView.loadBackgroundImage(terrain: "not-a-real-terrain"))
+    }
+}

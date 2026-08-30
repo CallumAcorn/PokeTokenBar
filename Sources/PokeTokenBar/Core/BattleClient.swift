@@ -52,6 +52,12 @@ enum BattleClient {
         let pendingChoice: String?
         let you: You?
         let opponent: Opponent?
+        /// The session creator's first roster slot — the same value for both sides' polls
+        /// regardless of who's asking (read server-side off `meta` directly, not "you"/"opponent",
+        /// which flip per-viewer). Used to pick a battle background by type deterministically, so
+        /// both players land on the same terrain without either client needing to know who's the
+        /// host — see `BattleView.backgroundTerrain(for:)`.
+        let hostLeadSpeciesID: Int?
         let log: [String]?
         let result: String?  // "win" | "loss" | "draw"
     }

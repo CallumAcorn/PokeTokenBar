@@ -94,15 +94,8 @@ final class TradeStore {
     }
 
     static func defaultURL() -> URL {
-        let override = (ProcessInfo.processInfo.environment["PTB_STATE_DIR"] ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let dir: URL
-        if !override.isEmpty {
-            dir = URL(fileURLWithPath: override, isDirectory: true)
-        } else {
-            dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("PokeTokenBar")
-        }
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("PokeTokenBar")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("trade-reservations.json")
     }
