@@ -113,7 +113,11 @@ fi
 # 바이너리 배포로 돌아간다면 게이트와 EXPECTED_LEAF 핀을 함께 되살려야 한다.
 
 echo "▶ 3/8 VERSION 범프 $PREV → $VERSION (아직 미커밋)"
-perl -pi -e "s/VERSION=\"[0-9.]+\"/VERSION=\"$VERSION\"/" scripts/build-app.sh
+# 치환 정규식은 접미사까지 잡아야 한다. `[0-9.]+` 는 2.5.1 은 잡지만 2.5.1-hardened.1 은 못 잡아
+# 조용히 no-op 이 되고, 그 상태로 빌드까지 간 뒤에야 버전 불일치로 죽는다(실측 2026-08-25).
+perl -pi -e "s/VERSION=\"[0-9][^\"]*\"/VERSION=\"$VERSION\"/" scripts/build-app.sh
+BUMPED=$(grep -oE 'VERSION="[^"]+"' scripts/build-app.sh | head -1 | sed -E 's/VERSION="([^"]+)"/\1/')
+[[ "$BUMPED" == "$VERSION" ]] || { echo "✗ VERSION 치환 실패: build-app.sh 가 아직 $BUMPED — 정규식이 이 버전 형식을 못 잡았습니다"; git checkout scripts/build-app.sh; exit 1; }
 
 echo "▶ 4/6 빌드 검증 (배포물 아님 — 태그가 실제로 빌드되는지 확인)"
 # 설치는 하지 않는다. 확인용 빌드가 실행 중인 앱을 죽이고 /Applications 를 교체하면, 릴리스를
