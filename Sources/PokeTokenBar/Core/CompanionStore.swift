@@ -906,6 +906,22 @@ final class CompanionStore {
         return true
     }
 
+    @discardableResult
+    func toggleBackFacing(for monID: MonState.ID) -> Bool {
+        guard let idx = state.party.firstIndex(where: { $0.id == monID }) else { return false }
+        state.party[idx].isBackFacing.toggle()
+        save()
+        return true
+    }
+
+    @discardableResult
+    func toggleMirrored(for monID: MonState.ID) -> Bool {
+        guard let idx = state.party.firstIndex(where: { $0.id == monID }) else { return false }
+        state.party[idx].isMirrored.toggle()
+        save()
+        return true
+    }
+
     /// 훈련 슬롯이 바뀔 때(전환·부화·새 알) 이전 훈련 개체가 떠 있었다면 그 핀을 새 훈련 개체로
     /// 옮긴다 — "떠 있는 건 항상 지금 훈련 중인 개체"(Home 핀 버튼의 기대와 일치). 핀이 없었다면
     /// 아무 일도 안 한다(새 개체를 억지로 띄우지 않는다). PC 화면에서 훈련과 무관하게 따로 핀한 다른
@@ -952,6 +968,11 @@ final class CompanionStore {
     /// Detail for a single move (type/power/PP etc.) — for displaying known-move and learnset rows.
     func moveDetail(id: Int) async -> Move? {
         try? await provider.moveDetail(id: id)
+    }
+    /// By display name, straight off a battle log line — for the battle screen's move-effect
+    /// type lookup, the one place this app only ever learns a move by name, never an id.
+    func moveDetail(name: String) async -> Move? {
+        try? await provider.moveDetail(name: name)
     }
     /// TM shop catalog (the whole version group) — for ShopView's TM grid.
     func tmCatalog() async -> [Move] {

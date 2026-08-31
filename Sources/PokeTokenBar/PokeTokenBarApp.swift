@@ -23,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var updater: UpdateChecker!
     private var online: OnlineStore!
     private var trade: TradeStore!
+    private var battle: BattleStore!
+    private var battleWindow: BattleWindowController!
     private var floatingPet: FloatingPetController!
     private let navigation = PopoverNavigation()
 
@@ -62,6 +64,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         updater = UpdateChecker()
         online = OnlineStore()
         trade = TradeStore(companion: companion, online: online)
+        battle = BattleStore(companion: companion, online: online)
+        battleWindow = BattleWindowController(companion: companion, battle: battle, online: online)
+        navigation.onOpenBattleWindow = { [weak self] in self?.battleWindow.show() }
         store.localizationLanguage = companion.language   // 알림 현지화용 미러 시드
         store.onRefresh = { [weak self] in self?.onStoreRefreshed() }   // 한도 로드 후 companion·사탕 지급
         floatingPet = FloatingPetController(
@@ -373,18 +378,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.contentViewController = NSHostingController(
             rootView: PopoverView()
                 .environment(store).environment(companion).environment(updater)
-                .environment(online).environment(navigation).environment(trade))
+                .environment(online).environment(navigation).environment(trade).environment(battle))
     }
 
-    /// Entry point for a trade invite link (`poketokenbar://trade?...`) — macOS calls this delegate
-    /// method for a scheme registered via `CFBundleURLTypes` (the hook that fits this app's
-    /// delegate-based structure, rather than `.onOpenURL`). LSUIElement only affects Dock/menu-bar
-    /// visibility, so it's unrelated to this hook.
+    /// Entry point for a trade or battle invite link (`poketokenbar://trade?...` /
+    /// `poketokenbar://battle?...`) — macOS calls this delegate method for a scheme registered via
+    /// `CFBundleURLTypes` (the hook that fits this app's delegate-based structure, rather than
+    /// `.onOpenURL`). LSUIElement only affects Dock/menu-bar visibility, so it's unrelated to this hook.
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard let url = urls.first, let link = TradeDeepLink(url: url) else { return }
-        trade.handleIncomingLink(link)
-        openPopover()
-        navigation.showTrade = true
+        guard let url = urls.first else { return }
+        if let link = TradeDeepLink(url: url) {
+            trade.handleIncomingLink(link)
+            openPopover()
+            navigation.showTrade = true
+        } else if let link = BattleDeepLink(url: url) {
+            battle.handleIncomingLink(link)
+            battleWindow.show()
+        }
+    }
+
+    /// Best-effort leave-on-quit: if a battle is still live (waiting for an opponent, or mid-battle)
+    /// when the app quits, tell the server before the process actually dies — otherwise the session
+    /// just idles out its TTL, leaving a stale open lobby entry or a stuck opponent for however long
+    /// that takes. `.terminateLater` defers the actual quit until whichever finishes first: the leave
+    /// request, or a timeout — so a dead network can't block quitting forever.
+    /// How long the quit path will wait for the leave request before giving up and quitting anyway.
+    /// Above `BattleClient.requestTimeout` so the request normally finishes on its own terms and this
+    /// only fires when something is genuinely wedged (asserted in BattleClientTests).
+    static let quitLeaveDeadline: TimeInterval = 15
+
+    /// Guards `NSApp.reply(toApplicationShouldTerminate:)` to exactly one call. Both closures below
+    /// are `@MainActor`, so they run serially on the main actor and a plain flag is race-free here.
+    private var terminateReplied = false
+    private func replyToTerminateOnce() {
+        guard !terminateReplied else { return }
+        terminateReplied = true
+        NSApp.reply(toApplicationShouldTerminate: true)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard battle.phase != .idle else { return .terminateNow }
+        // Deliberately **not** a task group. `withTaskGroup` implicitly awaits its children before
+        // returning, so a wedged leave request keeps the group (and therefore the reply, and
+        // therefore the quit) waiting no matter which task "wins" the race — the same reason
+        // TimeoutRace exists rather than a group. See defect-log "withTaskGroup 로 만든 타임아웃".
+        //
+        // Two independent tasks race to reply instead: nothing awaits the leave, so the deadline
+        // task can free the app while a stuck request is still outstanding.
+        let work = Task { @MainActor in
+            await self.battle.cancel()
+            self.replyToTerminateOnce()
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(Self.quitLeaveDeadline * 1_000_000_000))
+            work.cancel()
+            self.replyToTerminateOnce()
+        }
+        return .terminateLater
     }
 
     @objc private func togglePopover() {

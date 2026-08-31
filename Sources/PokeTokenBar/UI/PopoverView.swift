@@ -23,6 +23,11 @@ final class PopoverNavigation {
     var tab: PopoverTab = .home
     /// 프로바이더 탭 선택 — reset() 대상이 아님(팝오버를 다시 열어도 보던 서비스 유지).
     var providerID: String?
+    /// Set by AppDelegate to BattleWindowController.show — battling opens a real window, not a
+    /// popover screen (see BattleWindowController's doc for why: a battle scene needs proper window
+    /// chrome and real estate the 360pt popover strip can't give it). Same closure-bridging shape
+    /// FloatingPetController.onOpenPopover already uses to cross the AppKit/SwiftUI boundary.
+    var onOpenBattleWindow: (() -> Void)?
 
     func reset() {
         showSettings = false
@@ -37,6 +42,7 @@ struct PopoverView: View {
     @Environment(UpdateChecker.self) private var updater
     @Environment(OnlineStore.self) private var online
     @Environment(TradeStore.self) private var trade
+    @Environment(BattleStore.self) private var battle
     @Environment(PopoverNavigation.self) private var nav
 
     /// Shown from the update banner. The app cannot install an update, so the button opens
@@ -717,6 +723,21 @@ struct PopoverView: View {
             }
             .buttonStyle(.borderless)
             .help(l.tradeEntryPointHelp)
+            Button {
+                nav.onOpenBattleWindow?()
+            } label: {
+                Image(systemName: "bolt.fill")
+                    // A small dot while a battle is live — the window can be closed (hidden) without
+                    // ending the session (see BattleWindowController), so this is the only signal
+                    // that there's something to come back to once you've clicked away from it.
+                    .overlay(alignment: .topTrailing) {
+                        if battle.phase != .idle {
+                            Circle().fill(.red).frame(width: 6, height: 6).offset(x: 3, y: -3)
+                        }
+                    }
+            }
+            .buttonStyle(.borderless)
+            .help(l.battleEntryPointHelp)
             Button {
                 nav.showSettings = true
             } label: {

@@ -493,6 +493,10 @@ enum MoveDamageClass: String, Codable, Sendable {
 /// catalog and a mon's known-move list.
 struct Move: Sendable, Codable, Equatable {
     let id: Int
+    /// PokéAPI's own slug (e.g. `"quick-attack"`) — distinct from `names`' localized *display* names
+    /// (e.g. "Quick Attack"). Needed to submit a battle roster: the server's `@pkmn/dex` lookup wants
+    /// this exact slug, not the numeric id or a display string. See `BattleClient.primitive(for:...)`.
+    let name: String
     let type: PokemonType
     let power: Int?       // nil for status moves
     let accuracy: Int?    // nil for moves that never miss
@@ -737,6 +741,12 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     /// User-set — this individual gets its own floating desktop pet window (PC detail screen).
     /// Multiple party members can be floating at once, independent of who's training.
     var isFloating = false
+    /// User-set — floating pet shows the back-facing sprite (battle screen's "own mon" convention)
+    /// instead of the default front-facing one used everywhere else.
+    var isBackFacing = false
+    /// User-set — floating pet sprite is mirrored on the X axis. Purely cosmetic, independent of
+    /// isBackFacing.
+    var isMirrored = false
     /// 기술 슬롯 상한. 쓰기 경로(setKnownMove/리롤)와 신뢰경계 클램프가 같은 값을 봐야 하므로
     /// 리터럴 4 를 흩뿌리지 않고 여기 하나만 둔다.
     static let maxKnownMoves = 4
@@ -764,7 +774,7 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
          nature: PokemonNature? = nil, ability: String? = nil, ivs: StatSpread? = nil, evs: StatSpread = StatSpread(),
          dittoDisguise: Int? = nil, dittoRevealed: Bool = false,
          acquiredAt: Date = Date(), acquiredVia: AcquisitionSource = .egg, evolutionLocked: Bool = false,
-         isFloating: Bool = false, knownMoves: [Int] = []) {
+         isFloating: Bool = false, isBackFacing: Bool = false, isMirrored: Bool = false, knownMoves: [Int] = []) {
         self.id = id
         self.baseID = baseID
         self.pathIDs = pathIDs
@@ -788,6 +798,8 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         self.acquiredVia = acquiredVia
         self.evolutionLocked = evolutionLocked
         self.isFloating = isFloating
+        self.isBackFacing = isBackFacing
+        self.isMirrored = isMirrored
         self.knownMoves = knownMoves
     }
 
@@ -823,6 +835,8 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         acquiredVia = (try? c.decodeIfPresent(AcquisitionSource.self, forKey: .acquiredVia)) ?? .egg
         evolutionLocked = (try? c.decodeIfPresent(Bool.self, forKey: .evolutionLocked)) ?? false
         isFloating = (try? c.decodeIfPresent(Bool.self, forKey: .isFloating)) ?? false
+        isBackFacing = (try? c.decodeIfPresent(Bool.self, forKey: .isBackFacing)) ?? false
+        isMirrored = (try? c.decodeIfPresent(Bool.self, forKey: .isMirrored)) ?? false
         knownMoves = (try? c.decodeIfPresent([Int].self, forKey: .knownMoves)) ?? []
     }
 }

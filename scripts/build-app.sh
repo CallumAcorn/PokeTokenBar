@@ -17,6 +17,11 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp ".build/release/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
 # 심볼 strip — 릴리스 바이너리 1.84MB → 0.80MB(-57%). codesign 전에 수행(서명 무효화 방지).
 strip -rSTx "$APP/Contents/MacOS/$APP_NAME" 2>/dev/null || strip -rSx "$APP/Contents/MacOS/$APP_NAME"
+# SwiftPM 리소스 번들(Package.swift 의 `resources:` — 배틀 배경 등) — Bundle.module 이 런타임에
+# Bundle.main.resourceURL(= 이 .app 의 Contents/Resources) 에서 찾는다. 디버그 바이너리는 실행파일과
+# 같은 디렉터리에 SwiftPM 이 이미 놓아줘서 이 복사가 필요 없지만, 여기서 조립하는 .app 은 실행파일만
+# 복사했었다 — 리소스 번들 없이 배포하면 Bundle.module 조회가 조용히 실패한다.
+cp -R ".build/release/${APP_NAME}_${APP_NAME}.bundle" "$APP/Contents/Resources/"
 cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # MIT 는 "모든 사본"에 저작권 고지와 허가 고지를 포함하라고 요구한다. 소스 배포만 할 때는
 # 저장소의 LICENSE 로 충족되지만, .app 을 배포하는 순간 그 사본에는 고지가 없다. 번들에 넣어 둔다.

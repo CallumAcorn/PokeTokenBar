@@ -55,6 +55,9 @@ protocol PokeProviding: Sendable {
     func learnableMoves(speciesID: Int) async throws -> [LearnableMove]
     /// Detail for a single move (`/move/{id}`) — for displaying known moves/learnset only.
     func moveDetail(id: Int) async throws -> Move
+    /// Same, but by PokéAPI slug/display name (`/move/{name}` accepts either) — for resolving a
+    /// move an opponent used from the battle log, where only the name is known, never an id.
+    func moveDetail(name: String) async throws -> Move
     /// The full TM list for `MoveDataVersion.versionGroup` — for the shop's TM catalog only.
     func tmCatalog() async throws -> [Move]
 }
@@ -69,6 +72,7 @@ extension PokeProviding {
     func genus(speciesID: Int) async throws -> [String: String] { throw URLError(.unsupportedURL) }
     func learnableMoves(speciesID: Int) async throws -> [LearnableMove] { throw URLError(.unsupportedURL) }
     func moveDetail(id: Int) async throws -> Move { throw URLError(.unsupportedURL) }
+    func moveDetail(name: String) async throws -> Move { throw URLError(.unsupportedURL) }
     func tmCatalog() async throws -> [Move] { throw URLError(.unsupportedURL) }
 }
 
@@ -184,14 +188,42 @@ actor PokeAPIClient: PokeProviding {
     func moveDetail(id: Int) async throws -> Move {
         if let cached = moveCache[id] { return cached }
         let dto: MoveDTO = try await get(base.appendingPathComponent("move/\(id)"))
-        var byLang: [String: String] = [:]
-        for n in dto.names where langCodes.contains(n.language.name) { byLang[n.language.name] = n.name }
-        let move = Move(id: id, type: PokemonType(rawValue: dto.type.name) ?? .normal,
-                        power: dto.power, accuracy: dto.accuracy, pp: dto.pp,
-                        damageClass: MoveDamageClass(rawValue: dto.damage_class.name) ?? .status,
-                        names: byLang)
+        let move = Self.move(from: dto, id: id, langCodes: langCodes)
         moveCache[id] = move
         return move
+    }
+
+    /// By PokéAPI slug/display name — `/move/{name}` accepts either, same as `/move/{id}`. Only
+    /// caller that doesn't already have the id (a battle log line names the move, never its id).
+    /// Checks the existing id-keyed cache for a name match first (free if this move was already
+    /// fetched some other way this session, e.g. it's one of this side's own known moves) before
+    /// hitting the network.
+    func moveDetail(name: String) async throws -> Move {
+        let slug = Self.slug(fromDisplayName: name)
+        if let cached = moveCache.values.first(where: { $0.name == slug }) { return cached }
+        let dto: MoveDTO = try await get(base.appendingPathComponent("move/\(slug)"))
+        let move = Self.move(from: dto, id: dto.id, langCodes: langCodes)
+        moveCache[dto.id] = move
+        return move
+    }
+
+    /// PokéAPI's move name field is already its slug ("thunder-shock") — but the battle log only
+    /// ever gives the human display name ("Thunder Shock"), so this reverses the same lowercase-and-
+    /// hyphenate convention PokéAPI itself uses. Not airtight for every punctuation edge case
+    /// (apostrophes are dropped outright, e.g. "King's Shield" -> "kings-shield") — for a purely
+    /// cosmetic type-color lookup, a failed fetch just means the default neutral effect plays
+    /// instead, not a functional break.
+    private static func slug(fromDisplayName name: String) -> String {
+        name.lowercased().replacingOccurrences(of: "'", with: "").replacingOccurrences(of: " ", with: "-")
+    }
+
+    private static func move(from dto: MoveDTO, id: Int, langCodes: [String]) -> Move {
+        var byLang: [String: String] = [:]
+        for n in dto.names where langCodes.contains(n.language.name) { byLang[n.language.name] = n.name }
+        return Move(id: id, name: dto.name, type: PokemonType(rawValue: dto.type.name) ?? .normal,
+                   power: dto.power, accuracy: dto.accuracy, pp: dto.pp,
+                   damageClass: MoveDamageClass(rawValue: dto.damage_class.name) ?? .status,
+                   names: byLang)
     }
 
     // MARK: TM catalog (the full TM list for the version group)
@@ -239,6 +271,7 @@ actor PokeAPIClient: PokeProviding {
         struct Row: Decodable { let move: MoveRow }
         struct MoveRow: Decodable {
             let id: Int
+            let name: String
             let power: Int?
             let accuracy: Int?
             let pp: Int
@@ -260,7 +293,7 @@ actor PokeAPIClient: PokeProviding {
         let langList = langCodes.map { "\"\($0)\"" }.joined(separator: ", ")
         let query = """
         { machine(where: {versiongroup: {name: {_eq: "\(MoveDataVersion.versionGroup)"}}}, order_by: {machine_number: asc}) \
-        { move { id power accuracy pp type { name } movedamageclass { name } \
+        { move { id name power accuracy pp type { name } movedamageclass { name } \
         movenames(where: {language: {name: {_in: [\(langList)]}}}) { name language { name } } } } }
         """
         req.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
@@ -271,7 +304,7 @@ actor PokeAPIClient: PokeProviding {
         return decoded.data.machine.map { row in
             var byLang: [String: String] = [:]
             for n in row.move.movenames { byLang[n.language.name] = n.name }
-            return Move(id: row.move.id, type: PokemonType(rawValue: row.move.type.name) ?? .normal,
+            return Move(id: row.move.id, name: row.move.name, type: PokemonType(rawValue: row.move.type.name) ?? .normal,
                        power: row.move.power, accuracy: row.move.accuracy, pp: row.move.pp,
                        damageClass: MoveDamageClass(rawValue: row.move.movedamageclass.name) ?? .status,
                        names: byLang)
@@ -508,6 +541,10 @@ struct VersionGroupDetailDTO: Decodable, Sendable {
     let version_group: NamedRef
 }
 struct MoveDTO: Decodable, Sendable {
+    /// Not read by moveDetail(id:) — the id is already known there (it's in the request path). Read
+    /// by moveDetail(name:), the only caller that doesn't already have it.
+    let id: Int
+    let name: String
     let power: Int?
     let accuracy: Int?
     let pp: Int
