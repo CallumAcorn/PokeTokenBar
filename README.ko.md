@@ -110,6 +110,7 @@ Antigravity 2.0 과 IDE 가 추정치가 아닌 실제 할당량을 보고합니
 
 ## 이 밖에도
 
+- **1대1 온라인 배틀**: 링크나 공개 로비로 배틀을 만들거나 참가해, 파티에서 최대 6마리를 골라 전용 창에서 턴제로 겨룬다. 턴 순서는 서버가 정하므로 양쪽이 같은 순서로 같은 전투를 본다.
 - **기술과 TM**: 레벨업으로 기술을 최대 4개까지 익히고, 상점의 TM으로 더 학습. 4칸이 다 차면 교체할 기술을 선택. 학습 목록과 TM 카탈로그는 PokéAPI에서.
 - **인터랙티브 플로팅 펫** — 호버로 오늘 사용량, 클릭으로 메인 창, 우클릭 메뉴, 한도 알림은 말풍선으로 표시.
 - **서비스별 탭** — Claude Code·Codex·Gemini CLI·Antigravity·OpenCode·Hermes Agent·Cursor·Grok CLI·Copilot CLI·Kiro CLI·Pi Agent 중 2개 이상 감지되면 작은 탭으로 상세를 서비스별 전환(오늘 합계는 통합 유지).
@@ -203,6 +204,7 @@ swift test                   # 단위 테스트
 - **온디바이스.** 토큰 사용량은 로컬 Claude Code·Codex·Gemini CLI·Antigravity·OpenCode·Hermes Agent·Cursor·Grok CLI·Copilot CLI·Kiro CLI·Pi Agent 데이터에서 직접 읽습니다. 사용량을 업로드하거나 모델 turn을 실행하지 않습니다.
 - **외부 요청.** 앱은 완전 오프라인이 아닙니다. 10개 호스트에 접속합니다 — `pokeapi.co`·`graphql.pokeapi.co`(종·진화), `raw.githubusercontent.com`(스프라이트), `api.anthropic.com`(Claude 공식 한도), `cloudcode-pa.googleapis.com`·`daily-cloudcode-pa.googleapis.com`(Antigravity 공식 한도)와 `oauth2.googleapis.com`(토큰 갱신), `status.claude.com`·`status.openai.com`(장애 배너 — 설정에서 끌 수 있음), `api.github.com`(업데이트 확인). **어느 요청에도 사용량·토큰·프롬프트·프로젝트 경로는 담기지 않습니다** — 요청 자체만 나갑니다.
 - **Keychain(선택).** Claude OAuth 자격증명은 **갱신 버튼을 누를 때만** 읽습니다(설정, 또는 팝오버의 한도 행). 자동 폴링은 Keychain 을 건드리지 않으므로 비밀번호 프롬프트가 뜨지 않고, `~/.claude/.credentials.json` 이 있으면 그쪽에서 가져옵니다. 토큰은 메모리에만 두며 **앱 자체 Keychain 항목은 만들지 않습니다.** 토큰이 만료되면 한도는 갱신 전까지 이전 값(stale)으로 표시됩니다. 설정에서 끄면 한도 섹션만 숨겨집니다.
+- **교환·배틀(기본 꺼짐).** 기본 상태에서는 서버가 설정돼 있지 않아, 직접 설정하기 전까지는 아무것도 기기를 떠나지 않습니다. 설정하면 내보내거나 출전시키는 포켓몬이 **그 서버로** 전송됩니다(배틀은 종·레벨·성격·특성·개체값·노력치·기술과 표시 이름). 사용량·토큰·프롬프트·프로젝트 경로는 포함되지 않습니다. 초대 링크는 다른 서버를 지정할 수 있으며, 참가 전에 항상 확인을 받습니다.
 - **포켓몬 에셋**은 런타임에 PokéAPI에서 받아오며 `~/Library/Application Support/PokeTokenBar/`에만 캐시됩니다. 앱 바이너리와 릴리스 아티팩트에는 포켓몬 에셋이 포함되지 않습니다.
 
 ## 기여자

@@ -110,6 +110,7 @@ If a tool keeps its sessions outside the built-in paths, add your own roots unde
 
 ## Also in the box
 
+- **1v1 online battles**: create or join a battle from a shared link or the open lobby, field up to six of your party, and play a turn-based match in its own window. The server resolves turn order, so both players see the same fight in the same order.
 - **Moves and TMs**: companions learn up to four moves as they level, and TMs from the shop teach more. With all four slots full, you pick one to replace. Learnsets and the TM catalog come from PokéAPI.
 - **Interactive floating pet** — hover for today's usage, click to open the main window, right-click for a menu, and show limit alerts as speech bubbles.
 - **Per-service tabs** — when two or more of Claude Code, Codex, Gemini CLI, Antigravity, OpenCode, Hermes Agent, Cursor, Grok CLI, Copilot CLI, Kiro CLI, and Pi Agent are detected, compact tabs switch between them; today's total stays combined.
@@ -205,6 +206,7 @@ If a provider's logs live **outside** those built-in paths, add the folder in **
 - **On-device.** Token usage is read directly from local Claude Code, Codex, Gemini CLI, Antigravity, OpenCode, Hermes Agent, Cursor, Grok CLI, Copilot CLI, Kiro CLI, and Pi Agent data. The app never uploads usage or runs model turns.
 - **Outbound requests.** The app is not fully offline. It talks to ten hosts: `pokeapi.co` and `graphql.pokeapi.co` (species/evolution), `raw.githubusercontent.com` (sprites), `api.anthropic.com` (Claude official limits), `cloudcode-pa.googleapis.com` and `daily-cloudcode-pa.googleapis.com` (Antigravity official limits) plus `oauth2.googleapis.com` (their token refresh), `status.claude.com` and `status.openai.com` (incident banner — off switch in Settings), and `api.github.com` (update check). **None of them carry your usage, tokens, prompts, or project paths** — only the request itself.
 - **Keychain (optional).** The Claude OAuth credential is read **only when you press a refresh button** (Settings, or the limits row in the popover). Automatic polling never touches the Keychain, so it never raises a password prompt; when available, the credential is taken from `~/.claude/.credentials.json` instead. The token is held in memory only — the app creates no Keychain item of its own. Once the token expires, limits stay visible but stale until you refresh. Turn it off in Settings — the limits section simply hides.
+- **Trading and battles (off by default).** No server is configured out of the box, and nothing leaves your machine until you set one in Settings. Once you do, the Pokémon you offer or field are sent to **that** server: for a battle, species, level, nature, ability, IVs, EVs and moves, plus your display name. Your usage figures, tokens, prompts and project paths are never part of it. An invite link can name a different server, and joining always asks you first.
 - **Pokémon assets** are fetched at runtime from PokéAPI and cached only under `~/Library/Application Support/PokeTokenBar/`. The app binary and its release artifacts contain no Pokémon assets.
 
 ## Contributors
