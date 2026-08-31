@@ -30,6 +30,7 @@ Rows are permanent: a declined commit stays declined until someone deliberately 
 | `ported` | Reimplemented, because this fork's model differs |
 | `skipped` | Not applicable here — the code it touches does not exist in this fork |
 | `declined` | Applicable, and deliberately not wanted |
+| `pending` | Decided to take, not yet applied. Carries the reason it is waiting, so it stays out of UNREVIEWED without being forgotten |
 
 ## Ledger
 
@@ -75,3 +76,17 @@ declined for the same reason, not re-litigated.
   or collide with upstream. Enforced by `verify-hardening.sh`.
 - **Fork-only strings are not machine-translated.** They fall back to English, which is visibly
   untranslated. An invented translation looks exactly as authoritative as a reviewed one.
+| `73749c7d` | #193 | pending | Invisible text in floating pet hover tooltip. Approved to take; held until PR #22 (battles) merges because both touch `FloatingPetPanel` |
+| `79ba760e` | #211 | pending | Raising badge only on the current evolution stage. Approved to take; held until PR #22 merges because both touch `CompanionStore`/`CompanionView` |
+| `1ff36e1e` | #243 | **ported** | errSecParam(-50) from `kSecMatchLimitAll` + `kSecReturnData`. The code fix repairs damage from #232, which this fork never took: we query `kSecMatchLimitOne`, the valid combination, so the bug does not exist here. Ported the **guard only** — `claudeKeychainQuery` extracted so the test fires the production query at the real Security framework, plus the defect-log rule. Verified by injecting `kSecMatchLimitAll` and watching it return -50 |
+| `e81e620b` | #232 | declined | Resolve Claude OAuth across multiple Keychain entries. This is what introduced the errSecParam bug above, and taking it obliges taking #243 too. Single-entry lookup works here; revisit only if a real multi-entry case appears |
+| `8953ea8f` | #241 | **declined** | claude.ai session key path for official limits. Stores a **full account session cookie as plaintext JSON** in Application Support (0600); upstream states the tradeoff openly. 0600 does not protect against other processes running as the user, backups, or cloud sync, and a `sessionKey` is not a scoped limits token. The Keychain-prompt friction it solves is real, but the answer here is a stable signing identity (`create-signing-cert.sh`), not a credential at rest. **Do not revisit without that security argument being addressed** |
+| `3214f83c` | #228 | declined | Pick up an in-place Claude account switch on auto-poll. Touches the hardened OAuth path; only pays off if accounts are switched without restarting. Revisit if that becomes a real workflow |
+| `60808c54` | #242 | skipped | Keep released Pokémon in the Pokédex. This fork has no release feature, so it is a feature import, not a missing fix. **If ever imported**: it appends a dex row without `monID`, and `restoredPartyFromCatchLog` resurrects exactly those rows, so the restore must also skip `releasedAt != nil` or every released mon returns to the PC on next load |
+| `ff54b44e` | #238 | skipped | Kiro CLI 2.20+ JSONL sessions. Kiro is not installed on this fork's machines |
+| `b833f127` | #214 | skipped | oh-my-pi (omp) usage provider. Not installed |
+| `4fe965ee` | #197 | pending | Cursor usage from the dashboard API when local `tokenCount` is zero. Genuinely wanted (Cursor is in use), but adds a 464-line `CursorUsageAPI.swift` with a new outbound credential surface, so it goes in as its own reviewed change rather than a cherry-pick |
+| `d6fb966a` | #212 | pending | Animation quality picker for the menu bar sprite and floating pet. Reasonable value; take after #22 settles, since it touches four files battles also changed |
+| `77e159ce` | #234 | declined | German UI language. 549 lines of churn in the most-diverged file (`Localization.swift`: moves, TMs, battles), and it creates a standing tax where every new fork string needs a German value. Standing decision: no machine-translated fork strings. Revisit only if someone actually needs German |
+| `a69444c8` | #239 | declined | Upstream readme edits. The READMEs here have diverged (moves, TMs, battles); apply anything relevant by hand instead |
+| `8a20c3a4` | #247 | **ported** | Why Claude's `refreshToken` must not be used for renewal: it rotates, so refreshing from here would leave Claude Code holding a dead token and force the user to log in again. Pure docs upstream; ported the rule into this fork's defect log, minus its framing of the session key (#241) as the alternative, which this fork declined |

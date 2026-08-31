@@ -405,15 +405,7 @@ private actor OAuthAccessTokenCache {
         if KeychainAccessGate.isDisabled {
             throw LimitsError.keychainAccessDisabled
         }
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: OAuthCredentialData.claudeKeychainService,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        if !allowKeychainPrompt {
-            KeychainNoUIQuery.apply(to: &query)
-        }
+        let query = OAuthCredentialData.claudeKeychainQuery(allowKeychainPrompt: allowKeychainPrompt)
 
         var item: CFTypeRef?
         let status = KeychainReader.copyMatching(query, &item)
@@ -435,6 +427,27 @@ private actor OAuthAccessTokenCache {
 
 enum OAuthCredentialData {
     static let claudeKeychainService = "Claude Code-credentials"
+
+    /// 프로덕션 Keychain 쿼리. **인라인으로 두면 안 되는 이유**: 테스트가 쿼리를 재구성하게 되고,
+    /// 그러면 정작 프로덕션 쿼리가 무효한 조합으로 바뀌어도 테스트는 통과한다(결함 트리거와 다른
+    /// 경로로 통과하는 전형). 여기 한 곳에 두고 테스트가 **이 결과를** 실제 API 에 던진다.
+    ///
+    /// `kSecMatchLimitOne` + `kSecReturnData` 는 유효한 조합이다. `kSecMatchLimitAll` 과
+    /// `kSecReturnData` 를 같이 넣으면 macOS 가 errSecParam(-50) 으로 거절하며, 항목 유무·ACL
+    /// 승인 어느 것으로도 우회되지 않는다(상류 #243). 여러 항목을 훑고 싶어지면 열거(속성만)와
+    /// 단건 조회(데이터)를 나눠야 한다.
+    static func claudeKeychainQuery(allowKeychainPrompt: Bool) -> [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: claudeKeychainService,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        if !allowKeychainPrompt {
+            KeychainNoUIQuery.apply(to: &query)
+        }
+        return query
+    }
 
     struct Credential {
         let accessToken: String

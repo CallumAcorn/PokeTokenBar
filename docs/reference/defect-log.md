@@ -244,6 +244,33 @@ read_when:
 
 ## 자격증명·Keychain
 
+- **`kSecMatchLimitAll` 과 `kSecReturnData` 는 같이 못 쓴다 — macOS 가 errSecParam(-50) 으로 거절한다.**
+  "서비스에 항목이 여럿일 수 있으니 전부 받아서 유효한 걸 고르자"는 발상은 옳지만, 한 번의
+  `SecItemCopyMatching` 으로 *모든 항목의 데이터*를 받는 쿼리는 **파라미터 단계에서** 거절된다.
+  항목이 없어서가 아니라 조합이 무효라서라, ACL 승인·항목 존재·재로그인 어느 것으로도 우회되지 않는다.
+  상류(#232→#243)가 이 경로로 조용한 전면 실패를 냈다: Keychain 에만 자격증명이 있는 사용자는 수동
+  갱신을 눌러도 `-50` 만 나고 공식 한도가 **영구히** 안 떴다. 여러 항목을 훑어야 하면 열거(`MatchLimitAll`
+  + `ReturnAttributes`)와 단건 조회(`MatchLimitOne` + `ReturnData`)로 **나눈다**.
+  이 포크는 단건 조회라 결함이 없다. 가드는 미래용이다 —
+  `testKeychainQueryIsAcceptedBySecurityFramework` 가 **프로덕션 쿼리 빌더의 결과를** 존재하지 않는
+  서비스명으로 실제 API 에 던져 `errSecParam` 이 아님을 단정한다(매칭 0건이라 ACL·프롬프트에 안 닿는다).
+  기대값이 "성공"이 아니라 **"파라미터가 유효하다"(`errSecItemNotFound`)** 인 게 요점이다.
+  그래서 쿼리를 인라인으로 두지 않고 `OAuthCredentialData.claudeKeychainQuery` 로 뽑았다 — 테스트가
+  쿼리를 재구성하면 정작 프로덕션 쿼리가 무효로 바뀌어도 통과한다. `MatchLimitAll` 주입 확인 완료.
+
+- **Claude 의 `refreshToken` 은 보이지만 우리가 쓰면 안 된다 — 갱신 시 회전되어 Claude Code 를 깨뜨린다.**
+  키체인 항목(`claudeAiOauth`)에는 `accessToken`(~5h) 옆에 `refreshToken`(~15일)이 함께 들어 있어,
+  "그걸로 갱신하면 키체인 접근이 5시간마다에서 15일마다로 줄겠다"는 발상이 자연스럽게 나온다. 하면 안 된다.
+  Claude Code 는 갱신 응답의 새 `refreshToken` 으로 저장분을 **교체**한다(회전). 외부 앱이 대신 갱신하면
+  Claude Code 의 사본이 죽은 토큰이 되어 **사용자에게 재로그인을 요구한다**. 피하려면 남의 자격증명
+  저장소에 write 해야 하는데, 그건 '앱 소유 keychain 항목 금지'가 막는 영역이다.
+  Antigravity(Google)는 회전하지 않아 기존 refreshToken 을 재사용한다 — 프로바이더별 토큰 규약이 다른
+  것이지 Claude 쪽 구현 누락이 아니다. **패턴이 다른 프로바이더에 있다는 것만으로 이식하지 마라.**
+  판단 근거는 확률이 아니라 비대칭이다: 잘 돼야 프롬프트 간격이 줄 뿐이고, 잘못되면 사용자의 주 도구가
+  깨진다. (상류 #247 의 교훈만 이식. 상류가 대안으로 든 세션 키(#241)는 이 포크가 거절했다 — 전체 계정
+  쿠키를 평문으로 디스크에 두는 대가라, 우리 답은 안정적 서명 신원이다.)
+
+
 - **앱 소유 keychain 항목 금지.** 앱이 만든 keychain 항목은 코드서명(cdhash)이 바뀔 때마다(로컬 재빌드·
   실사용자 매 업그레이드) 항목 ACL 이 안 맞아 접근 허용 프롬프트를 유발한다 — **no-UI 쿼리로도 이 ACL
   프롬프트는 억제 안 됨**(#58). 토큰류는 인메모리 캐시 + 파일(`~/.claude/.credentials.json`) 재취득으로
