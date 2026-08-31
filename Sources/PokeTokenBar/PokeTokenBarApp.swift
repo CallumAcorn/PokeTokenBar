@@ -402,16 +402,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// just idles out its TTL, leaving a stale open lobby entry or a stuck opponent for however long
     /// that takes. `.terminateLater` defers the actual quit until whichever finishes first: the leave
     /// request, or a timeout — so a dead network can't block quitting forever.
+    /// How long the quit path will wait for the leave request before giving up and quitting anyway.
+    /// Above `BattleClient.requestTimeout` so the request normally finishes on its own terms and this
+    /// only fires when something is genuinely wedged (asserted in BattleClientTests).
+    static let quitLeaveDeadline: TimeInterval = 15
+
+    /// Guards `NSApp.reply(toApplicationShouldTerminate:)` to exactly one call. Both closures below
+    /// are `@MainActor`, so they run serially on the main actor and a plain flag is race-free here.
+    private var terminateReplied = false
+    private func replyToTerminateOnce() {
+        guard !terminateReplied else { return }
+        terminateReplied = true
+        NSApp.reply(toApplicationShouldTerminate: true)
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard battle.phase != .idle else { return .terminateNow }
+        // Deliberately **not** a task group. `withTaskGroup` implicitly awaits its children before
+        // returning, so a wedged leave request keeps the group (and therefore the reply, and
+        // therefore the quit) waiting no matter which task "wins" the race — the same reason
+        // TimeoutRace exists rather than a group. See defect-log "withTaskGroup 로 만든 타임아웃".
+        //
+        // Two independent tasks race to reply instead: nothing awaits the leave, so the deadline
+        // task can free the app while a stuck request is still outstanding.
+        let work = Task { @MainActor in
+            await self.battle.cancel()
+            self.replyToTerminateOnce()
+        }
         Task { @MainActor in
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await self.battle.cancel() }
-                group.addTask { try? await Task.sleep(nanoseconds: 3_000_000_000) }
-                await group.next()
-                group.cancelAll()
-            }
-            NSApp.reply(toApplicationShouldTerminate: true)
+            try? await Task.sleep(nanoseconds: UInt64(Self.quitLeaveDeadline * 1_000_000_000))
+            work.cancel()
+            self.replyToTerminateOnce()
         }
         return .terminateLater
     }

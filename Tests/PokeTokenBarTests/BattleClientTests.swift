@@ -165,4 +165,20 @@ final class BattleClientPrimitiveDerivationTests: XCTestCase {
             XCTFail("expected missingBaseStats, got \(error)")
         }
     }
+
+    /// 두 상수의 순서가 계약이다. 종료 백스톱이 요청 데드라인보다 짧으면 요청이 스스로 끝나기 전에
+    /// 앱이 죽어 leave 가 매번 잘리고 서버에 stale 세션이 남는다. 반대로 요청이 백스톱보다 길면
+    /// 종료가 그만큼 늘어진다. 어느 쪽 상수를 나중에 손대도 이 테스트가 먼저 걸린다.
+    @MainActor
+    func testQuitDeadlineOutlivesTheRequestTimeout() {
+        XCTAssertGreaterThan(AppDelegate.quitLeaveDeadline, BattleClient.requestTimeout,
+                             "종료 백스톱은 요청 데드라인보다 길어야 한다")
+    }
+
+    /// 요청에 데드라인이 실제로 박히는가. URLRequest 기본값 60s 를 그대로 두면 종료 경로가 그만큼
+    /// 매달린다 — 이 PR 이 처음 들어왔을 때가 그 상태였다.
+    func testRequestsCarryAnExplicitTimeout() {
+        XCTAssertLessThan(BattleClient.requestTimeout, 60, "URLRequest 기본값을 그대로 쓰고 있다")
+        XCTAssertGreaterThan(BattleClient.requestTimeout, 0)
+    }
 }

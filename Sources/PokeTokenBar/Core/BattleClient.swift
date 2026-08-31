@@ -88,9 +88,16 @@ enum BattleClient {
     private struct CreateResponse: Decodable { let sessionId: String }
     private struct OpenListResponse: Decodable { let battles: [OpenBattle] }
 
+    /// Per-request deadline. URLRequest's default is 60s, which is far longer than the quit path
+    /// is willing to wait: `applicationShouldTerminate` fires a leave and must let the app die
+    /// promptly. Bounding the request itself is the root fix; the quit deadline is the backstop.
+    /// `AppDelegate.quitLeaveDeadline` must stay above this — asserted in BattleClientTests.
+    static let requestTimeout: TimeInterval = 10
+
     private static func request(_ url: URL, method: String) -> URLRequest {
         var req = URLRequest(url: url)
         req.httpMethod = method
+        req.timeoutInterval = requestTimeout
         return req
     }
 
