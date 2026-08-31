@@ -484,4 +484,30 @@ final class CredentialGateCoverageTests: XCTestCase {
             XCTFail("expected LimitsError.keychainAccessDisabled, got \(error)")
         }
     }
+
+    /// [상류 #243 의 교훈만 이식 — 코드는 이식하지 않는다]
+    ///
+    /// `kSecMatchLimitAll` 을 `kSecReturnData` 와 같이 넣으면 macOS 는 errSecParam(-50) 을 낸다.
+    /// 항목이 없어서가 아니라 **파라미터 조합이 무효라서**라, ACL 승인·항목 존재·재로그인 어느
+    /// 것으로도 우회되지 않는다. 상류는 "항목이 여럿일 수 있으니 전부 받자"로 고치다 이 조합을
+    /// 만들었고, Keychain 에만 자격증명이 있는 사용자는 공식 한도가 **영구히** 안 떴다.
+    ///
+    /// 이 포크는 아직 단건 조회(`kSecMatchLimitOne`)라 그 결함이 없다. 이 테스트는 미래를 위한
+    /// 가드다 — 나중에 누군가 "여러 항목을 한 번에" 로 고치려는 순간 여기서 먼저 걸린다.
+    ///
+    /// 존재하지 않는 서비스명으로 던지므로 매칭이 0건이고, ACL·프롬프트 경로에 닿지 않는다.
+    /// 기대값이 "성공"이 아니라 **"파라미터가 유효하다"** 인 게 요점이다. 딕셔너리 모양만 단정하는
+    /// 테스트로는 이 부류를 못 잡는다 — 어떤 조합이 무효인지는 Security 프레임워크만 안다.
+    func testKeychainQueryIsAcceptedBySecurityFramework() throws {
+        for allowPrompt in [false, true] {
+            var probe = OAuthCredentialData.claudeKeychainQuery(allowKeychainPrompt: allowPrompt)
+            probe[kSecAttrService as String] = "PTB-NoSuchService-\(UUID().uuidString)"
+            var item: CFTypeRef?
+            let status = SecItemCopyMatching(probe as CFDictionary, &item)
+            XCTAssertNotEqual(status, errSecParam,
+                              "prompt=\(allowPrompt): 무효한 파라미터 조합이다 (-50)")
+            XCTAssertEqual(status, errSecItemNotFound,
+                           "prompt=\(allowPrompt): 매칭 0건이어야 한다 (status=\(status))")
+        }
+    }
 }
