@@ -61,86 +61,100 @@ struct GymBadgeInfo {
 }
 
 extension GymBadge {
+    /// Split into five per-region dictionary literals rather than one 65-case switch — CI's
+    /// `swift test --enable-code-coverage` (older Xcode 16 / Swift 6.0 toolchain, `macos-15`
+    /// runner) hit a bare, fileless `error: fatalError` compiling the test target right after this
+    /// file's original single-switch form landed; that shape (one huge switch expression building
+    /// nested struct/enum literals, then run back through coverage instrumentation) is a known
+    /// class of compiler crash on older toolchains, and this local machine's newer Swift (6.3.3)
+    /// can't reproduce it to confirm — so this is a defensive split, not a verified root-cause fix.
+    /// A missing entry force-unwraps rather than relying on switch exhaustiveness for the same
+    /// "every case has an info" guarantee — caught immediately by
+    /// `GymBadgeTests.testEveryBadgeHasDisplayMetadata`, which already iterates every case.
     var info: GymBadgeInfo {
-        switch self {
-        // MARK: Kanto
-        case .kantoBoulder: return GymBadgeInfo(title: "Boulder Badge", trainerName: "Brock", region: "Kanto", criterion: .allOpponentType(.rock))
-        case .kantoCascade: return GymBadgeInfo(title: "Cascade Badge", trainerName: "Misty", region: "Kanto", criterion: .allOpponentType(.water))
-        case .kantoThunder: return GymBadgeInfo(title: "Thunder Badge", trainerName: "Lt. Surge", region: "Kanto", criterion: .allOpponentType(.electric))
-        case .kantoRainbow: return GymBadgeInfo(title: "Rainbow Badge", trainerName: "Erika", region: "Kanto", criterion: .allOpponentType(.grass))
-        case .kantoSoul: return GymBadgeInfo(title: "Soul Badge", trainerName: "Koga", region: "Kanto", criterion: .allOpponentType(.poison))
-        case .kantoMarsh: return GymBadgeInfo(title: "Marsh Badge", trainerName: "Sabrina", region: "Kanto", criterion: .allOpponentType(.psychic))
-        case .kantoVolcano: return GymBadgeInfo(title: "Volcano Badge", trainerName: "Blaine", region: "Kanto", criterion: .allOpponentType(.fire))
-        case .kantoEarth: return GymBadgeInfo(title: "Earth Badge", trainerName: "Giovanni", region: "Kanto", criterion: .allOpponentType(.ground))
-        case .kantoEliteLorelei: return GymBadgeInfo(title: "Elite Four — Lorelei", trainerName: "Lorelei", region: "Kanto", criterion: .opponentRosterContainsAny(["Lapras"]))
-        case .kantoEliteBruno: return GymBadgeInfo(title: "Elite Four — Bruno", trainerName: "Bruno", region: "Kanto", criterion: .opponentRosterContainsAny(["Machamp"]))
-        case .kantoEliteAgatha: return GymBadgeInfo(title: "Elite Four — Agatha", trainerName: "Agatha", region: "Kanto", criterion: .opponentRosterContainsAny(["Gengar"]))
-        case .kantoEliteLance: return GymBadgeInfo(title: "Elite Four — Lance", trainerName: "Lance", region: "Kanto", criterion: .opponentRosterContainsAny(["Aerodactyl"]))
-        case .kantoChampion: return GymBadgeInfo(title: "Champion — Blue", trainerName: "Blue", region: "Kanto", criterion: .opponentRosterContainsAny(["Pidgeot", "Alakazam"]))
-
-        // MARK: Johto
-        case .johtoZephyr: return GymBadgeInfo(title: "Zephyr Badge", trainerName: "Falkner", region: "Johto", criterion: .allOpponentType(.flying))
-        case .johtoHive: return GymBadgeInfo(title: "Hive Badge", trainerName: "Bugsy", region: "Johto", criterion: .allOpponentType(.bug))
-        case .johtoPlain: return GymBadgeInfo(title: "Plain Badge", trainerName: "Whitney", region: "Johto", criterion: .allOpponentType(.normal))
-        case .johtoFog: return GymBadgeInfo(title: "Fog Badge", trainerName: "Morty", region: "Johto", criterion: .allOpponentType(.ghost))
-        case .johtoStorm: return GymBadgeInfo(title: "Storm Badge", trainerName: "Chuck", region: "Johto", criterion: .allOpponentType(.fighting))
-        case .johtoMineral: return GymBadgeInfo(title: "Mineral Badge", trainerName: "Jasmine", region: "Johto", criterion: .allOpponentType(.steel))
-        case .johtoGlacier: return GymBadgeInfo(title: "Glacier Badge", trainerName: "Pryce", region: "Johto", criterion: .allOpponentType(.ice))
-        case .johtoRising: return GymBadgeInfo(title: "Rising Badge", trainerName: "Clair", region: "Johto", criterion: .allOpponentType(.dragon))
-        case .johtoEliteWill: return GymBadgeInfo(title: "Elite Four — Will", trainerName: "Will", region: "Johto", criterion: .opponentRosterContainsAny(["Xatu"]))
-        case .johtoEliteKoga: return GymBadgeInfo(title: "Elite Four — Koga", trainerName: "Koga", region: "Johto", criterion: .opponentRosterContainsAny(["Crobat"]))
-        case .johtoEliteBruno: return GymBadgeInfo(title: "Elite Four — Bruno", trainerName: "Bruno", region: "Johto", criterion: .opponentRosterContainsAny(["Hitmonlee"]))
-        case .johtoEliteKaren: return GymBadgeInfo(title: "Elite Four — Karen", trainerName: "Karen", region: "Johto", criterion: .opponentRosterContainsAny(["Umbreon", "Houndoom"]))
-        case .johtoChampion: return GymBadgeInfo(title: "Champion — Lance", trainerName: "Lance", region: "Johto", criterion: .opponentRosterContainsAny(["Dragonite"]))
-
-        // MARK: Hoenn
-        case .hoennStone: return GymBadgeInfo(title: "Stone Badge", trainerName: "Roxanne", region: "Hoenn", criterion: .allOpponentType(.rock, minRosterSize: 3))
-        case .hoennKnuckle: return GymBadgeInfo(title: "Knuckle Badge", trainerName: "Brawly", region: "Hoenn", criterion: .allOpponentType(.fighting, minRosterSize: 3))
-        case .hoennDynamo: return GymBadgeInfo(title: "Dynamo Badge", trainerName: "Wattson", region: "Hoenn", criterion: .allOpponentType(.electric, minRosterSize: 3))
-        case .hoennHeat: return GymBadgeInfo(title: "Heat Badge", trainerName: "Flannery", region: "Hoenn", criterion: .allOpponentType(.fire, minRosterSize: 3))
-        case .hoennBalance: return GymBadgeInfo(title: "Balance Badge", trainerName: "Norman", region: "Hoenn", criterion: .allOpponentType(.normal, minRosterSize: 3))
-        case .hoennFeather: return GymBadgeInfo(title: "Feather Badge", trainerName: "Winona", region: "Hoenn", criterion: .allOpponentType(.flying, minRosterSize: 3))
-        case .hoennMind: return GymBadgeInfo(title: "Mind Badge", trainerName: "Tate & Liza", region: "Hoenn", criterion: .allOpponentType(.psychic, minRosterSize: 3))
-        case .hoennRain: return GymBadgeInfo(title: "Rain Badge", trainerName: "Wallace", region: "Hoenn", criterion: .allOpponentType(.water, minRosterSize: 3))
-        case .hoennEliteSidney: return GymBadgeInfo(title: "Elite Four — Sidney", trainerName: "Sidney", region: "Hoenn", criterion: .opponentRosterContainsAny(["Absol"]))
-        case .hoennElitePhoebe: return GymBadgeInfo(title: "Elite Four — Phoebe", trainerName: "Phoebe", region: "Hoenn", criterion: .opponentRosterContainsAny(["Dusclops", "Banette"]))
-        case .hoennEliteGlacia: return GymBadgeInfo(title: "Elite Four — Glacia", trainerName: "Glacia", region: "Hoenn", criterion: .opponentRosterContainsAny(["Walrein"]))
-        case .hoennEliteDrake: return GymBadgeInfo(title: "Elite Four — Drake", trainerName: "Drake", region: "Hoenn", criterion: .opponentRosterContainsAny(["Salamence"]))
-        case .hoennChampion: return GymBadgeInfo(title: "Champion — Steven", trainerName: "Steven Stone", region: "Hoenn", criterion: .opponentRosterContainsAny(["Metagross"]))
-
-        // MARK: Sinnoh
-        case .sinnohCoal: return GymBadgeInfo(title: "Coal Badge", trainerName: "Roark", region: "Sinnoh", criterion: .allOpponentType(.rock, minRosterSize: 4))
-        case .sinnohForest: return GymBadgeInfo(title: "Forest Badge", trainerName: "Gardenia", region: "Sinnoh", criterion: .allOpponentType(.grass, minRosterSize: 3))
-        case .sinnohCobble: return GymBadgeInfo(title: "Cobble Badge", trainerName: "Maylene", region: "Sinnoh", criterion: .allOpponentType(.fighting, minRosterSize: 4))
-        case .sinnohFen: return GymBadgeInfo(title: "Fen Badge", trainerName: "Crasher Wake", region: "Sinnoh", criterion: .allOpponentType(.water, minRosterSize: 4))
-        case .sinnohRelic: return GymBadgeInfo(title: "Relic Badge", trainerName: "Fantina", region: "Sinnoh", criterion: .allOpponentType(.ghost, minRosterSize: 3))
-        case .sinnohMine: return GymBadgeInfo(title: "Mine Badge", trainerName: "Byron", region: "Sinnoh", criterion: .allOpponentType(.steel, minRosterSize: 3))
-        case .sinnohIcicle: return GymBadgeInfo(title: "Icicle Badge", trainerName: "Candice", region: "Sinnoh", criterion: .allOpponentType(.ice, minRosterSize: 3))
-        case .sinnohBeacon: return GymBadgeInfo(title: "Beacon Badge", trainerName: "Volkner", region: "Sinnoh", criterion: .allOpponentType(.electric, minRosterSize: 4))
-        case .sinnohEliteAaron: return GymBadgeInfo(title: "Elite Four — Aaron", trainerName: "Aaron", region: "Sinnoh", criterion: .opponentRosterContainsAny(["Drapion", "Heracross"]))
-        case .sinnohEliteBertha: return GymBadgeInfo(title: "Elite Four — Bertha", trainerName: "Bertha", region: "Sinnoh", criterion: .opponentRosterContainsAny(["Hippowdon", "Rhyperior"]))
-        case .sinnohEliteFlint: return GymBadgeInfo(title: "Elite Four — Flint", trainerName: "Flint", region: "Sinnoh", criterion: .opponentRosterContainsAny(["Infernape"]))
-        case .sinnohEliteLucian: return GymBadgeInfo(title: "Elite Four — Lucian", trainerName: "Lucian", region: "Sinnoh", criterion: .opponentRosterContainsAny(["Bronzong", "Alakazam"]))
-        case .sinnohChampion: return GymBadgeInfo(title: "Champion — Cynthia", trainerName: "Cynthia", region: "Sinnoh", criterion: .opponentRosterContainsAny(["Garchomp"]))
-
-        // MARK: Unova
-        case .unovaTrio:
-            return GymBadgeInfo(title: "Trio Badge", trainerName: "Cilan, Chili & Cress", region: "Unova",
-                                 criterion: .opponentRosterContainsAny(["Pansage", "Simisage", "Pansear", "Simisear", "Panpour", "Simipour"]))
-        case .unovaBasic: return GymBadgeInfo(title: "Basic Badge", trainerName: "Lenora", region: "Unova", criterion: .allOpponentType(.normal, minRosterSize: 4))
-        case .unovaInsect: return GymBadgeInfo(title: "Insect Badge", trainerName: "Burgh", region: "Unova", criterion: .allOpponentType(.bug, minRosterSize: 3))
-        case .unovaBolt: return GymBadgeInfo(title: "Bolt Badge", trainerName: "Elesa", region: "Unova", criterion: .allOpponentType(.electric, minRosterSize: 5))
-        case .unovaQuake: return GymBadgeInfo(title: "Quake Badge", trainerName: "Clay", region: "Unova", criterion: .allOpponentType(.ground, minRosterSize: 3))
-        case .unovaJet: return GymBadgeInfo(title: "Jet Badge", trainerName: "Skyla", region: "Unova", criterion: .allOpponentType(.flying, minRosterSize: 4))
-        case .unovaFreeze: return GymBadgeInfo(title: "Freeze Badge", trainerName: "Brycen", region: "Unova", criterion: .allOpponentType(.ice, minRosterSize: 4))
-        case .unovaLegend: return GymBadgeInfo(title: "Legend Badge", trainerName: "Drayden", region: "Unova", criterion: .allOpponentType(.dragon, minRosterSize: 3))
-        case .unovaEliteShauntal: return GymBadgeInfo(title: "Elite Four — Shauntal", trainerName: "Shauntal", region: "Unova", criterion: .opponentRosterContainsAny(["Chandelure"]))
-        case .unovaEliteMarshal: return GymBadgeInfo(title: "Elite Four — Marshal", trainerName: "Marshal", region: "Unova", criterion: .opponentRosterContainsAny(["Conkeldurr"]))
-        case .unovaEliteGrimsley: return GymBadgeInfo(title: "Elite Four — Grimsley", trainerName: "Grimsley", region: "Unova", criterion: .opponentRosterContainsAny(["Bisharp", "Scrafty"]))
-        case .unovaEliteCaitlin: return GymBadgeInfo(title: "Elite Four — Caitlin", trainerName: "Caitlin", region: "Unova", criterion: .opponentRosterContainsAny(["Reuniclus", "Gothitelle"]))
-        case .unovaChampion: return GymBadgeInfo(title: "Champion — Alder", trainerName: "Alder", region: "Unova", criterion: .opponentRosterContainsAny(["Volcarona"]))
-        }
+        Self.kantoInfo[self] ?? Self.johtoInfo[self] ?? Self.hoennInfo[self] ?? Self.sinnohInfo[self] ?? Self.unovaInfo[self]!
     }
+
+    private static let kantoInfo: [GymBadge: GymBadgeInfo] = [
+        .kantoBoulder: GymBadgeInfo(title: "Boulder Badge", trainerName: "Brock", region: "Kanto", criterion: .allOpponentType(.rock)),
+        .kantoCascade: GymBadgeInfo(title: "Cascade Badge", trainerName: "Misty", region: "Kanto", criterion: .allOpponentType(.water)),
+        .kantoThunder: GymBadgeInfo(title: "Thunder Badge", trainerName: "Lt. Surge", region: "Kanto", criterion: .allOpponentType(.electric)),
+        .kantoRainbow: GymBadgeInfo(title: "Rainbow Badge", trainerName: "Erika", region: "Kanto", criterion: .allOpponentType(.grass)),
+        .kantoSoul: GymBadgeInfo(title: "Soul Badge", trainerName: "Koga", region: "Kanto", criterion: .allOpponentType(.poison)),
+        .kantoMarsh: GymBadgeInfo(title: "Marsh Badge", trainerName: "Sabrina", region: "Kanto", criterion: .allOpponentType(.psychic)),
+        .kantoVolcano: GymBadgeInfo(title: "Volcano Badge", trainerName: "Blaine", region: "Kanto", criterion: .allOpponentType(.fire)),
+        .kantoEarth: GymBadgeInfo(title: "Earth Badge", trainerName: "Giovanni", region: "Kanto", criterion: .allOpponentType(.ground)),
+        .kantoEliteLorelei: GymBadgeInfo(title: "Elite Four — Lorelei", trainerName: "Lorelei", region: "Kanto", criterion: .opponentRosterContainsAny(["Lapras"])),
+        .kantoEliteBruno: GymBadgeInfo(title: "Elite Four — Bruno", trainerName: "Bruno", region: "Kanto", criterion: .opponentRosterContainsAny(["Machamp"])),
+        .kantoEliteAgatha: GymBadgeInfo(title: "Elite Four — Agatha", trainerName: "Agatha", region: "Kanto", criterion: .opponentRosterContainsAny(["Gengar"])),
+        .kantoEliteLance: GymBadgeInfo(title: "Elite Four — Lance", trainerName: "Lance", region: "Kanto", criterion: .opponentRosterContainsAny(["Aerodactyl"])),
+        .kantoChampion: GymBadgeInfo(title: "Champion — Blue", trainerName: "Blue", region: "Kanto", criterion: .opponentRosterContainsAny(["Pidgeot", "Alakazam"])),
+    ]
+
+    private static let johtoInfo: [GymBadge: GymBadgeInfo] = [
+        .johtoZephyr: GymBadgeInfo(title: "Zephyr Badge", trainerName: "Falkner", region: "Johto", criterion: .allOpponentType(.flying)),
+        .johtoHive: GymBadgeInfo(title: "Hive Badge", trainerName: "Bugsy", region: "Johto", criterion: .allOpponentType(.bug)),
+        .johtoPlain: GymBadgeInfo(title: "Plain Badge", trainerName: "Whitney", region: "Johto", criterion: .allOpponentType(.normal)),
+        .johtoFog: GymBadgeInfo(title: "Fog Badge", trainerName: "Morty", region: "Johto", criterion: .allOpponentType(.ghost)),
+        .johtoStorm: GymBadgeInfo(title: "Storm Badge", trainerName: "Chuck", region: "Johto", criterion: .allOpponentType(.fighting)),
+        .johtoMineral: GymBadgeInfo(title: "Mineral Badge", trainerName: "Jasmine", region: "Johto", criterion: .allOpponentType(.steel)),
+        .johtoGlacier: GymBadgeInfo(title: "Glacier Badge", trainerName: "Pryce", region: "Johto", criterion: .allOpponentType(.ice)),
+        .johtoRising: GymBadgeInfo(title: "Rising Badge", trainerName: "Clair", region: "Johto", criterion: .allOpponentType(.dragon)),
+        .johtoEliteWill: GymBadgeInfo(title: "Elite Four — Will", trainerName: "Will", region: "Johto", criterion: .opponentRosterContainsAny(["Xatu"])),
+        .johtoEliteKoga: GymBadgeInfo(title: "Elite Four — Koga", trainerName: "Koga", region: "Johto", criterion: .opponentRosterContainsAny(["Crobat"])),
+        .johtoEliteBruno: GymBadgeInfo(title: "Elite Four — Bruno", trainerName: "Bruno", region: "Johto", criterion: .opponentRosterContainsAny(["Hitmonlee"])),
+        .johtoEliteKaren: GymBadgeInfo(title: "Elite Four — Karen", trainerName: "Karen", region: "Johto", criterion: .opponentRosterContainsAny(["Umbreon", "Houndoom"])),
+        .johtoChampion: GymBadgeInfo(title: "Champion — Lance", trainerName: "Lance", region: "Johto", criterion: .opponentRosterContainsAny(["Dragonite"])),
+    ]
+
+    private static let hoennInfo: [GymBadge: GymBadgeInfo] = [
+        .hoennStone: GymBadgeInfo(title: "Stone Badge", trainerName: "Roxanne", region: "Hoenn", criterion: .allOpponentType(.rock, minRosterSize: 3)),
+        .hoennKnuckle: GymBadgeInfo(title: "Knuckle Badge", trainerName: "Brawly", region: "Hoenn", criterion: .allOpponentType(.fighting, minRosterSize: 3)),
+        .hoennDynamo: GymBadgeInfo(title: "Dynamo Badge", trainerName: "Wattson", region: "Hoenn", criterion: .allOpponentType(.electric, minRosterSize: 3)),
+        .hoennHeat: GymBadgeInfo(title: "Heat Badge", trainerName: "Flannery", region: "Hoenn", criterion: .allOpponentType(.fire, minRosterSize: 3)),
+        .hoennBalance: GymBadgeInfo(title: "Balance Badge", trainerName: "Norman", region: "Hoenn", criterion: .allOpponentType(.normal, minRosterSize: 3)),
+        .hoennFeather: GymBadgeInfo(title: "Feather Badge", trainerName: "Winona", region: "Hoenn", criterion: .allOpponentType(.flying, minRosterSize: 3)),
+        .hoennMind: GymBadgeInfo(title: "Mind Badge", trainerName: "Tate & Liza", region: "Hoenn", criterion: .allOpponentType(.psychic, minRosterSize: 3)),
+        .hoennRain: GymBadgeInfo(title: "Rain Badge", trainerName: "Wallace", region: "Hoenn", criterion: .allOpponentType(.water, minRosterSize: 3)),
+        .hoennEliteSidney: GymBadgeInfo(title: "Elite Four — Sidney", trainerName: "Sidney", region: "Hoenn", criterion: .opponentRosterContainsAny(["Absol"])),
+        .hoennElitePhoebe: GymBadgeInfo(title: "Elite Four — Phoebe", trainerName: "Phoebe", region: "Hoenn", criterion: .opponentRosterContainsAny(["Dusclops", "Banette"])),
+        .hoennEliteGlacia: GymBadgeInfo(title: "Elite Four — Glacia", trainerName: "Glacia", region: "Hoenn", criterion: .opponentRosterContainsAny(["Walrein"])),
+        .hoennEliteDrake: GymBadgeInfo(title: "Elite Four — Drake", trainerName: "Drake", region: "Hoenn", criterion: .opponentRosterContainsAny(["Salamence"])),
+        .hoennChampion: GymBadgeInfo(title: "Champion — Steven", trainerName: "Steven Stone", region: "Hoenn", criterion: .opponentRosterContainsAny(["Metagross"])),
+    ]
+
+    private static let sinnohInfo: [GymBadge: GymBadgeInfo] = [
+        .sinnohCoal: GymBadgeInfo(title: "Coal Badge", trainerName: "Roark", region: "Sinnoh", criterion: .allOpponentType(.rock, minRosterSize: 4)),
+        .sinnohForest: GymBadgeInfo(title: "Forest Badge", trainerName: "Gardenia", region: "Sinnoh", criterion: .allOpponentType(.grass, minRosterSize: 3)),
+        .sinnohCobble: GymBadgeInfo(title: "Cobble Badge", trainerName: "Maylene", region: "Sinnoh", criterion: .allOpponentType(.fighting, minRosterSize: 4)),
+        .sinnohFen: GymBadgeInfo(title: "Fen Badge", trainerName: "Crasher Wake", region: "Sinnoh", criterion: .allOpponentType(.water, minRosterSize: 4)),
+        .sinnohRelic: GymBadgeInfo(title: "Relic Badge", trainerName: "Fantina", region: "Sinnoh", criterion: .allOpponentType(.ghost, minRosterSize: 3)),
+        .sinnohMine: GymBadgeInfo(title: "Mine Badge", trainerName: "Byron", region: "Sinnoh", criterion: .allOpponentType(.steel, minRosterSize: 3)),
+        .sinnohIcicle: GymBadgeInfo(title: "Icicle Badge", trainerName: "Candice", region: "Sinnoh", criterion: .allOpponentType(.ice, minRosterSize: 3)),
+        .sinnohBeacon: GymBadgeInfo(title: "Beacon Badge", trainerName: "Volkner", region: "Sinnoh", criterion: .allOpponentType(.electric, minRosterSize: 4)),
+        .sinnohEliteAaron: GymBadgeInfo(title: "Elite Four — Aaron", trainerName: "Aaron", region: "Sinnoh", criterion: .opponentRosterContainsAny(["Drapion", "Heracross"])),
+        .sinnohEliteBertha: GymBadgeInfo(title: "Elite Four — Bertha", trainerName: "Bertha", region: "Sinnoh", criterion: .opponentRosterContainsAny(["Hippowdon", "Rhyperior"])),
+        .sinnohEliteFlint: GymBadgeInfo(title: "Elite Four — Flint", trainerName: "Flint", region: "Sinnoh", criterion: .opponentRosterContainsAny(["Infernape"])),
+        .sinnohEliteLucian: GymBadgeInfo(title: "Elite Four — Lucian", trainerName: "Lucian", region: "Sinnoh", criterion: .opponentRosterContainsAny(["Bronzong", "Alakazam"])),
+        .sinnohChampion: GymBadgeInfo(title: "Champion — Cynthia", trainerName: "Cynthia", region: "Sinnoh", criterion: .opponentRosterContainsAny(["Garchomp"])),
+    ]
+
+    private static let unovaInfo: [GymBadge: GymBadgeInfo] = [
+        .unovaTrio: GymBadgeInfo(title: "Trio Badge", trainerName: "Cilan, Chili & Cress", region: "Unova",
+                                  criterion: .opponentRosterContainsAny(["Pansage", "Simisage", "Pansear", "Simisear", "Panpour", "Simipour"])),
+        .unovaBasic: GymBadgeInfo(title: "Basic Badge", trainerName: "Lenora", region: "Unova", criterion: .allOpponentType(.normal, minRosterSize: 4)),
+        .unovaInsect: GymBadgeInfo(title: "Insect Badge", trainerName: "Burgh", region: "Unova", criterion: .allOpponentType(.bug, minRosterSize: 3)),
+        .unovaBolt: GymBadgeInfo(title: "Bolt Badge", trainerName: "Elesa", region: "Unova", criterion: .allOpponentType(.electric, minRosterSize: 5)),
+        .unovaQuake: GymBadgeInfo(title: "Quake Badge", trainerName: "Clay", region: "Unova", criterion: .allOpponentType(.ground, minRosterSize: 3)),
+        .unovaJet: GymBadgeInfo(title: "Jet Badge", trainerName: "Skyla", region: "Unova", criterion: .allOpponentType(.flying, minRosterSize: 4)),
+        .unovaFreeze: GymBadgeInfo(title: "Freeze Badge", trainerName: "Brycen", region: "Unova", criterion: .allOpponentType(.ice, minRosterSize: 4)),
+        .unovaLegend: GymBadgeInfo(title: "Legend Badge", trainerName: "Drayden", region: "Unova", criterion: .allOpponentType(.dragon, minRosterSize: 3)),
+        .unovaEliteShauntal: GymBadgeInfo(title: "Elite Four — Shauntal", trainerName: "Shauntal", region: "Unova", criterion: .opponentRosterContainsAny(["Chandelure"])),
+        .unovaEliteMarshal: GymBadgeInfo(title: "Elite Four — Marshal", trainerName: "Marshal", region: "Unova", criterion: .opponentRosterContainsAny(["Conkeldurr"])),
+        .unovaEliteGrimsley: GymBadgeInfo(title: "Elite Four — Grimsley", trainerName: "Grimsley", region: "Unova", criterion: .opponentRosterContainsAny(["Bisharp", "Scrafty"])),
+        .unovaEliteCaitlin: GymBadgeInfo(title: "Elite Four — Caitlin", trainerName: "Caitlin", region: "Unova", criterion: .opponentRosterContainsAny(["Reuniclus", "Gothitelle"])),
+        .unovaChampion: GymBadgeInfo(title: "Champion — Alder", trainerName: "Alder", region: "Unova", criterion: .opponentRosterContainsAny(["Volcarona"])),
+    ]
 
     /// Index into `PokeAPI/sprites`' `sprites/badges/{n}.png` set (fetched at runtime — see
     /// `SpriteLoader.badgeImage`, same "URL, not bundled" approach the rest of this app already
