@@ -1,8 +1,6 @@
 import SwiftUI
 
 /// 상점 카테고리 — 탭하면 그 그룹의 아이템 목록으로 들어간다(PC/도감과 같은 push 패턴).
-/// eggs 는 활성 포켓몬이 없으면(알 상태) 목록에서 아예 빠진다 — 즉시 액션(리롤 대상 없음)이라
-/// purchasableItems 처럼 "재고만 쌓아둘 수 있는" 것과 다르다(기존 shopEntries 게이트와 동일 규칙).
 private enum ShopGroup: Hashable, CaseIterable {
     case items, vitamins, tms, eggs
 }
@@ -14,11 +12,6 @@ struct ShopView: View {
     let store: CompanionStore
     let nav: PopoverNavigation
     @State private var selectedGroup: ShopGroup?
-
-    /// eggs 그룹은 활성 포켓몬이 있을 때만 보인다 — 나머지 둘은 항상.
-    private var availableGroups: [ShopGroup] {
-        ShopGroup.allCases.filter { $0 != .eggs || store.hasActive }
-    }
 
     var body: some View {
         let l = store.l
@@ -42,10 +35,6 @@ struct ShopView: View {
         // and under "always show scroll bars" the thick legacy scroller sits right on top of them —
         // same reason as EvoLineView, `.never` instead of `.hidden`.
         .scrollIndicators(.never)
-        // 선택한 그룹이 사라지면(예: 알 상태로 돌아가 eggs 그룹이 빠짐) 목록으로 돌아간다 — 빈 화면 방지.
-        .onChange(of: availableGroups) { _, groups in
-            if let g = selectedGroup, !groups.contains(g) { selectedGroup = nil }
-        }
     }
 
     private func groupHeader(_ group: ShopGroup, _ l: L) -> some View {
@@ -60,7 +49,7 @@ struct ShopView: View {
 
     private func groupTiles(_ l: L) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(availableGroups, id: \.self) { group in
+            ForEach(ShopGroup.allCases, id: \.self) { group in
                 Button {
                     selectedGroup = group
                 } label: {
@@ -141,9 +130,15 @@ struct ShopView: View {
             TMGridView(store: store)
         case .eggs:
             walletHeader(l)
+            // 지역 필터는 부화 중인 알에도 즉시 적용되는 상시 설정이라, 이미 알을 품고 있어(hasActive
+            // false) 새로 살 수 없는 동안에도 계속 보여준다 — 구매 카드만 그 상태를 대신한다.
             regionFilter(l)
-            ForEach(FreshEgg.shopTiers, id: \.self) { tier in
-                EggCard(store: store, nav: nav, tier: tier)
+            if store.hasActive {
+                ForEach(FreshEgg.shopTiers, id: \.self) { tier in
+                    EggCard(store: store, nav: nav, tier: tier)
+                }
+            } else {
+                Text(l.eggIncubating).font(.caption).foregroundStyle(.secondary)
             }
         }
     }

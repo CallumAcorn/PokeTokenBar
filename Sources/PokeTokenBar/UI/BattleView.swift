@@ -28,7 +28,10 @@ struct BattleView: View {
     @Environment(OnlineStore.self) private var online
     var onClose: () -> Void
 
-    @State private var selectedMonIDs: Set<MonState.ID> = []
+    /// Ordered, not a `Set` — the team grid and the roster actually submitted both follow *pick
+    /// order* (append on select, remove on deselect via `toggle`), not party order. Reordering
+    /// (`moveDroppedMon`) mutates this same array by moving an id, so both stay in sync for free.
+    @State private var selectedMonIDs: [MonState.ID] = []
     @State private var confirmingLink: BattleDeepLink?
     @State private var copiedFeedback = false
     @State private var pastedInviteLink = ""
@@ -335,8 +338,8 @@ struct BattleView: View {
             // the roster picker just sat there unchanged after a tap, reading as stuck/unresponsive.
             statusView(message: l.battleStartingTitle, showsSpinner: true)
                 .padding(BattleWindowMetrics.padding)
-        case .waitingForOpponent(_, let shareURL):
-            waitingForOpponent(shareURL: shareURL).padding(BattleWindowMetrics.padding)
+        case .waitingForOpponent(let sessionId, let shareURL):
+            waitingForOpponent(sessionId: sessionId, shareURL: shareURL).padding(BattleWindowMetrics.padding)
         case .battling(_, let view):
             // Deliberately no padding — a battle scene reads as a real game screen only if the
             // background actually fills the window edge to edge, not sitting in a padded card.
@@ -424,35 +427,60 @@ struct BattleView: View {
 
     /// Step 2a: paste a link. Submitting a valid one sets `battle.pendingInvite`, which makes
     /// `joinTarget` non-nil — `rosterPicker` advances to the roster-pick step on its own next render,
-    /// no explicit step transition needed here.
+    /// no explicit step transition needed here. Centered and space-filling, matching the browse and
+    /// waiting screens' own pass — this used to be a single small text field pinned in the corner.
     private var pasteLinkStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            backButton
-            Text(l.battlePasteLinkPrompt).font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-            pasteInviteRow
+        VStack(spacing: 16) {
+            backButton.frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 0)
+            VStack(spacing: 10) {
+                Image(systemName: "link")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(Color.blue.gradient, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text(l.battlePasteLinkPrompt).font(.system(size: 15, weight: .semibold))
+            }
+            pasteInviteCard
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// Step 2b: browse the open lobby. Tapping an entry sets `browseTarget`, which — same as
     /// `pasteLinkStep` — makes `joinTarget` non-nil and advances the flow on its own.
     private var browseListStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             backButton
             Text(l.battleBrowsePrompt).font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
             openBattlesList
         }
     }
 
-    private var backButton: some View {
-        Button { pickerStep = .chooseMode } label: {
+    /// Same `<- Back` affordance on every step of this flow (`pasteLinkStep`/`browseListStep` use the
+    /// no-arg form below; `rosterPickStep` needs the extra resets `exitRosterPick` does, so it passes
+    /// its own action) — this used to be a bare "X" glyph here and a labeled chevron everywhere else.
+    private func backButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             Label(l.back, systemImage: "chevron.left")
                 .font(.system(size: 12, weight: .semibold))
         }
         .buttonStyle(.borderless)
     }
 
+    private var backButton: some View {
+        backButton { pickerStep = .chooseMode }
+    }
+
+    private func exitRosterPick() {
+        browseTarget = nil
+        declineInvite()
+        creatingNew = false
+        pickerStep = .chooseMode
+    }
+
     /// Step 3, shared by both create and join: pick a roster, then confirm. `target` is `nil` only
-    /// for a fresh create — everything else about this screen (the "X" to back out, the display-name
+    /// for a fresh create — everything else about this screen (the back button, the display-name
     /// gate, the grid, the submit button) is identical either way.
     private func rosterPickStep(target: (sessionId: String, server: String)?) -> some View {
         // A mon with no known moves yet can't field a legal roster slot (the server would reject
@@ -461,18 +489,9 @@ struct BattleView: View {
         // removes a mon from the PC the way a trade does (battles.md's Flow §1).
         let eligible = companion.party.filter { !$0.knownMoves.isEmpty }
         return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(target != nil ? l.battleJoinPrompt(target!.server) : l.battlePickRoster)
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    browseTarget = nil
-                    declineInvite()
-                    creatingNew = false
-                    pickerStep = .chooseMode
-                } label: { Image(systemName: "xmark.circle") }
-                .buttonStyle(.borderless)
-            }
+            backButton(action: exitRosterPick)
+            Text(target != nil ? l.battleJoinPrompt(target!.server) : l.battlePickRoster)
+                .font(.caption).foregroundStyle(.secondary)
             if !hasValidDisplayName {
                 Text(l.tradeDisplayNameRequired).font(.caption2).foregroundStyle(.orange)
             }
@@ -490,13 +509,17 @@ struct BattleView: View {
                 // empty dashed slots for the rest. Tap a filled one to drop it back out.
                 selectedRosterGrid(eligible: eligible)
                 sectionHeader(l.battleYourParty)
+                // Flexible, not a fixed height (unlike TradeView's offer list) — fills whatever
+                // space is left below the fixed-size team grid/headers, so Your Party isn't
+                // squeezed into a small box and the submit button below lands at the window's
+                // bottom edge instead of floating right under a cramped list.
                 ScrollView {
                     partyGrid(eligible: eligible)
                 }
-                // Fixed height, not maxHeight — same reasoning as TradeView's offer list.
-                .frame(height: 130)
+                .frame(maxHeight: .infinity)
                 Button {
-                    let roster = eligible.filter { selectedMonIDs.contains($0.id) }
+                    let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
+                    let roster = selectedMonIDs.compactMap { byID[$0] }
                     Task {
                         if let target {
                             await battle.joinBattle(sessionId: target.sessionId, server: target.server, roster: roster)
@@ -528,26 +551,56 @@ struct BattleView: View {
 
     /// Fixed 3×2 grid (not "as many columns as fit") — a party is always exactly up to 6, so a
     /// stable grid reads as "your team" rather than a list that reflows as you add/remove picks.
+    /// Order follows pick order (`selectedMonIDs`), not party order — this is exactly the order the
+    /// server sees (`rosterPickStep`'s submit maps `selectedMonIDs` the same way). Filled tiles are
+    /// also drag-reorderable — dropping one onto another tile, or an empty dashed slot, moves it
+    /// there rather than requiring remove-then-re-add-in-order.
     private func selectedRosterGrid(eligible: [MonState]) -> some View {
-        let selected = eligible.filter { selectedMonIDs.contains($0.id) }
+        let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
+        let selected = selectedMonIDs.compactMap { byID[$0] }
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
             ForEach(0..<BattleClient.maxRosterSize, id: \.self) { slot in
                 if slot < selected.count {
                     pcStyleTile(selected[slot], selected: true, size: 38)
+                        .draggable(selected[slot].id)
+                        .dropDestination(for: String.self) { items, _ in moveDroppedMon(items, toSlot: slot) }
                 } else {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4]))
                         .frame(height: 54)
+                        .dropDestination(for: String.self) { items, _ in moveDroppedMon(items, toSlot: slot) }
                 }
             }
         }
     }
 
+    /// A drop landing in the team grid at `slot` — either a reorder (the dragged id is already on
+    /// the team, so it's removed from its old spot first) or a pick (dragged up from `partyGrid`,
+    /// not yet on the team, so it's just inserted — same size cap `toggle` already enforces on tap).
+    /// `slot` may be past the current selection's end (an empty dashed slot), so it's clamped to
+    /// append in that case.
+    private func moveDroppedMon(_ items: [String], toSlot slot: Int) -> Bool {
+        guard let draggedID = items.first else { return false }
+        if let from = selectedMonIDs.firstIndex(of: draggedID) {
+            selectedMonIDs.remove(at: from)
+        } else if selectedMonIDs.count >= BattleClient.maxRosterSize {
+            return false
+        }
+        selectedMonIDs.insert(draggedID, at: min(slot, selectedMonIDs.count))
+        return true
+    }
+
     /// The rest of the party to pick from — a PC-box grid (sprite tiles), not the old list rows.
+    /// Mons already on the team are hidden here (they're shown up in `selectedRosterGrid` instead)
+    /// — showing the same mon in both grids read as a duplicate entry, not a picked/unpicked state.
+    /// Draggable up into a team slot — same drop handling `selectedRosterGrid`'s own tiles use for
+    /// reordering, `moveDroppedMon` just treats a not-yet-selected id as a pick rather than a move.
     private func partyGrid(eligible: [MonState]) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
-            ForEach(eligible) { mon in
-                pcStyleTile(mon, selected: selectedMonIDs.contains(mon.id), size: 30)
+        let unselected = eligible.filter { !selectedMonIDs.contains($0.id) }
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
+            ForEach(unselected) { mon in
+                pcStyleTile(mon, selected: false, size: 30)
+                    .draggable(mon.id)
             }
         }
     }
@@ -570,10 +623,10 @@ struct BattleView: View {
     }
 
     private func toggle(_ id: MonState.ID) {
-        if selectedMonIDs.contains(id) {
-            selectedMonIDs.remove(id)
+        if let idx = selectedMonIDs.firstIndex(of: id) {
+            selectedMonIDs.remove(at: idx)
         } else if selectedMonIDs.count < BattleClient.maxRosterSize {
-            selectedMonIDs.insert(id)
+            selectedMonIDs.append(id)
         }
     }
 
@@ -589,21 +642,30 @@ struct BattleView: View {
         pastedInviteError = false
     }
 
-    private var pasteInviteRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                TextField(l.battlePasteInviteLinkPlaceholder, text: $pastedInviteLink)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.caption)
-                    .onSubmit(submitPastedInviteLink)
-                Button(l.battleJoinButton, action: submitPastedInviteLink)
-                    .buttonStyle(.bordered).controlSize(.small)
-                    .disabled(pastedInviteLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+    /// Same card chrome (`Color.secondary.opacity(0.07)` fill + hairline border, 12pt radius,
+    /// 340pt max width) `waitingInviteCard`/`openBattleRow`/`modeChoiceButton` already use — a
+    /// consistent look across every screen in this flow, not a plain unstyled field + small button.
+    private var pasteInviteCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField(l.battlePasteInviteLinkPlaceholder, text: $pastedInviteLink)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 13))
+                .onSubmit(submitPastedInviteLink)
             if pastedInviteError {
-                Text(l.battleInvalidInviteLink).font(.caption2).foregroundStyle(.red)
+                Text(l.battleInvalidInviteLink).font(.system(size: 11)).foregroundStyle(.red)
             }
+            Button(l.battleJoinButton, action: submitPastedInviteLink)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .disabled(pastedInviteLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .padding(14)
+        .frame(maxWidth: 340, alignment: .leading)
+        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
     }
 
     private func submitPastedInviteLink() {
@@ -617,84 +679,154 @@ struct BattleView: View {
     }
 
     private var openBattlesList: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if battle.openBattles.isEmpty {
-                Text(l.battleNoOpenBattles).font(.caption2).foregroundStyle(.tertiary)
+        VStack(alignment: .leading, spacing: 10) {
+            if battle.isLoadingOpenBattles && battle.openBattles.isEmpty {
+                // First load, nothing to show yet — a spinner here instead of falling through to the
+                // empty-state text, which would otherwise flash "no open battles" for the round trip
+                // and could be mistaken for the real (empty) result.
+                browseStatus(showsSpinner: true, icon: nil, text: nil)
+            } else if battle.openBattles.isEmpty {
+                browseStatus(showsSpinner: false, icon: "tray", text: l.battleNoOpenBattles)
             } else {
+                // Flexible, not a fixed height — fills whatever space is left below the prompt so
+                // the refresh button underneath lands at the window's bottom edge, and the screen
+                // doesn't read as a small cramped list floating over a big dead gap.
                 ScrollView {
-                    VStack(spacing: 6) {
+                    VStack(spacing: 8) {
                         ForEach(battle.openBattles, id: \.sessionId) { open in
-                            Button {
-                                browseTarget = (open.sessionId, online.serverURL)
-                            } label: {
-                                HStack(spacing: 8) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        HStack {
-                                            Text(open.displayName).font(.system(size: 12, weight: .semibold))
-                                            Spacer()
-                                            Text(l.battleOpenRosterSize(open.rosterSize)).font(.caption2).foregroundStyle(.secondary)
-                                        }
-                                        HStack {
-                                            // "X min ago", live-updating — the freshest lobby is usually
-                                            // the right one when several share a display name (e.g. two
-                                            // local test instances both named "Test P2").
-                                            Text(Date(timeIntervalSince1970: open.createdAt / 1000), style: .relative)
-                                                .font(.system(size: 9)).foregroundStyle(.tertiary)
-                                            Spacer()
-                                            // Last 4 chars of the session id — a stable tiebreaker when name
-                                            // *and* age are both ambiguous (created within the same second).
-                                            Text(open.sessionId.suffix(4)).font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary)
-                                        }
-                                    }
-                                    // Reinforces the whole row is tappable — matches modeChoiceButton's
-                                    // same trailing-chevron affordance.
-                                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
-                                }
-                                .padding(8)
-                                .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                        .strokeBorder(Color.secondary.opacity(0.12), lineWidth: 1))
-                            }
-                            .buttonStyle(.plain)
+                            openBattleRow(open)
                         }
                     }
                 }
-                .frame(height: 120)
+                .frame(maxHeight: .infinity)
             }
             Button { Task { await battle.refreshOpenBattles() } } label: {
-                Label(l.battleBrowseOpen, systemImage: "arrow.clockwise")
-            }.buttonStyle(.borderless).controlSize(.small)
+                if battle.isLoadingOpenBattles && !battle.openBattles.isEmpty {
+                    Label(l.refresh, systemImage: "arrow.clockwise").opacity(0.5)
+                } else {
+                    Label(l.refresh, systemImage: "arrow.clockwise")
+                }
+            }
+            .buttonStyle(.borderless).controlSize(.small)
+            .disabled(battle.isLoadingOpenBattles)
         }
+    }
+
+    /// Centered placeholder filling the same flexible footprint the real list uses — a spinner on
+    /// first load, or an icon + message once a refresh has actually come back empty, so the screen
+    /// never collapses to one thin line of text floating at the top, and switching between
+    /// loading/empty/populated never resizes the window.
+    private func browseStatus(showsSpinner: Bool, icon: String?, text: String?) -> some View {
+        VStack(spacing: 8) {
+            if showsSpinner {
+                ProgressView().controlSize(.small)
+            } else if let icon {
+                Image(systemName: icon).font(.system(size: 22)).foregroundStyle(.tertiary)
+            }
+            if let text {
+                Text(text).font(.system(size: 12)).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func openBattleRow(_ open: BattleClient.OpenBattle) -> some View {
+        Button {
+            browseTarget = (open.sessionId, online.serverURL)
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(open.displayName).font(.system(size: 13, weight: .semibold))
+                        Spacer()
+                        Text(l.battleOpenRosterSize(open.rosterSize)).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        // "X min ago", live-updating — the freshest lobby is usually the right one
+                        // when several share a display name (e.g. two local test instances both
+                        // named "Test P2").
+                        Text(Date(timeIntervalSince1970: open.createdAt / 1000), style: .relative)
+                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                        Spacer()
+                        // Last 4 chars of the session id — a stable tiebreaker when name *and* age
+                        // are both ambiguous (created within the same second).
+                        Text(open.sessionId.suffix(4)).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
+                    }
+                }
+                // Reinforces the whole row is tappable — matches modeChoiceButton's same
+                // trailing-chevron affordance.
+                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.secondary.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Waiting to be joined
 
-    private func waitingForOpponent(shareURL: URL?) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(l.battleWaitingForOpponent).font(.caption).foregroundStyle(.secondary)
+    /// Centered rather than top-left (like the roster/browse screens after their own space-filling
+    /// pass) — a spinner + one caption line used to sit alone in the corner of a 460pt window with
+    /// nothing else to look at. Now shows what's actually useful while you wait: the roster you just
+    /// submitted, and the session code, alongside the existing Share/Copy buttons.
+    private func waitingForOpponent(sessionId: String, shareURL: URL?) -> some View {
+        VStack(spacing: 16) {
+            Spacer(minLength: 0)
+            VStack(spacing: 10) {
+                ProgressView().controlSize(.regular)
+                Text(l.battleWaitingForOpponent).font(.system(size: 15, weight: .semibold))
             }
-            if let shareURL {
+            if !battle.myRoster.isEmpty {
                 HStack(spacing: 8) {
-                    ShareLink(item: shareURL) { Label(l.tradeShareLink, systemImage: "square.and.arrow.up") }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(shareURL.absoluteString, forType: .string)
-                        copiedFeedback = true
-                        Task { try? await Task.sleep(nanoseconds: 1_500_000_000); copiedFeedback = false }
-                    } label: {
-                        Label(copiedFeedback ? l.tradeCopied : l.tradeCopyLink, systemImage: "doc.on.doc")
+                    ForEach(battle.myRoster) { mon in
+                        SpriteView(speciesID: mon.currentID, size: 34, shiny: mon.isShiny)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
                 }
             }
+            if let shareURL {
+                waitingInviteCard(sessionId: sessionId, shareURL: shareURL)
+            }
+            Spacer(minLength: 0)
             Button(l.tradeCancelButton) { Task { await battle.cancel() } }.buttonStyle(.borderless)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The invite itself, laid out as a card — same chrome (`Color.secondary.opacity(0.07)` fill +
+    /// hairline border, 12pt radius) `openBattleRow`/`modeChoiceButton` already use elsewhere in this
+    /// file, so this screen doesn't look like a different app from the ones either side of it.
+    private func waitingInviteCard(sessionId: String, shareURL: URL) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                sectionHeader(l.battleSessionCodeLabel)
+                Text(sessionId.suffix(4).uppercased())
+                    .font(.system(size: 20, weight: .bold, design: .monospaced))
+            }
+            HStack(spacing: 8) {
+                ShareLink(item: shareURL) { Label(l.tradeShareLink, systemImage: "square.and.arrow.up") }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(shareURL.absoluteString, forType: .string)
+                    copiedFeedback = true
+                    Task { try? await Task.sleep(nanoseconds: 1_500_000_000); copiedFeedback = false }
+                } label: {
+                    Label(copiedFeedback ? l.tradeCopied : l.tradeCopyLink, systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: 340, alignment: .leading)
+        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
     }
 
     // MARK: In battle — laid out like the handheld games' own battle screen: sky-to-grass field,

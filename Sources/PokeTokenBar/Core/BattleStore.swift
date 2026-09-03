@@ -61,6 +61,9 @@ final class BattleStore {
     /// polled continuously (unlike an in-progress battle, a lobby list going a few seconds stale is
     /// harmless — worst case you tap a session that just got taken and get a plain join error).
     private(set) var openBattles: [BattleClient.OpenBattle] = []
+    /// True only while a `refreshOpenBattles()` call is in flight — lets the browse screen show a
+    /// spinner on the very first load instead of flashing "no open battles" for the round trip.
+    private(set) var isLoadingOpenBattles = false
     /// The roster this side submitted — kept client-side because the server's `BattleView` never
     /// echoes back which moves a mon knows (`PublicMon` is just species/name/fainted/HP; `choose`
     /// only ever takes a 1-indexed slot number). The move grid renders this side's active mon's real
@@ -176,6 +179,8 @@ final class BattleStore {
     }
 
     func refreshOpenBattles() async {
+        isLoadingOpenBattles = true
+        defer { isLoadingOpenBattles = false }
         openBattles = (try? await BattleClient.openBattles(serverURL: online.serverURL, session: session)) ?? []
     }
 

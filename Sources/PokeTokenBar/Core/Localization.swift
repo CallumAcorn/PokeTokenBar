@@ -658,6 +658,10 @@ struct L {
     /// (e.g. two local test instances both named "Test P2").
     func battleOpenRosterSize(_ n: Int) -> String { t("포켓몬 ×\(n)", "×\(n) Pokémon", "ポケモン ×\(n)", "×\(n) Pokémon") }
     var battleWaitingForOpponent: String { t("상대를 기다리는 중…", "Waiting for an opponent…", "対戦相手を待っています…", "Esperando a un oponente…") }
+    /// Header over the short (last-4) session code shown on the waiting screen — the same tiebreaker
+    /// value `battleOpenRosterSize`'s row already shows in the browse list, just surfaced here too so
+    /// two people can confirm they're looking at the same session over voice/text without the link.
+    var battleSessionCodeLabel: String { t("세션 코드", "Session code", "セッションコード", "Código de sesión") }
     /// The instant gap between tapping Create/Join and there being anything real to show yet — see
     /// `BattleStore.Phase.starting`'s doc comment.
     var battleStartingTitle: String { t("배틀 시작 중…", "Starting battle…", "バトルを開始しています…", "Iniciando batalla…") }
