@@ -7,7 +7,7 @@ struct BaseSpecies: Sendable, Codable {
 }
 
 /// 포켓몬 타입 18종 — rawValue 는 PokéAPI `type.name` 그대로(예: "fire"), 디코드에 그대로 재사용.
-enum PokemonType: String, Sendable, Codable, CaseIterable {
+enum PokemonType: String, Sendable, Codable, CaseIterable, Equatable {
     case normal, fire, water, electric, grass, ice, fighting, poison, ground
     case flying, psychic, bug, rock, ghost, dragon, dark, steel, fairy
 }

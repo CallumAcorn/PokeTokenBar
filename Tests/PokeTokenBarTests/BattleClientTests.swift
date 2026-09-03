@@ -181,4 +181,27 @@ final class BattleClientPrimitiveDerivationTests: XCTestCase {
         XCTAssertLessThan(BattleClient.requestTimeout, 60, "URLRequest 기본값을 그대로 쓰고 있다")
         XCTAssertGreaterThan(BattleClient.requestTimeout, 0)
     }
+
+    // MARK: opponentRosterNames — same "|poke|SIDE|Species, Level|" fixture shape BattleViewTests uses.
+
+    func testOpponentRosterNamesReturnsTheOtherSidesFullRevealedRoster() {
+        let log = [
+            "|poke|p1|Pikachu, L50|",
+            "|poke|p1|Charizard, L50|",
+            "|poke|p2|Venusaur, L59|",
+            "|poke|p2|Onix, L59|",
+            "|teampreview",
+            "|switch|p1a: Ash-0|Pikachu, L50, M|100/100",
+            "|switch|p2a: Gary-0|Venusaur, L59, M|100/100",
+        ]
+        XCTAssertEqual(BattleClient.opponentRosterNames(log: log, myDisplayName: "Ash"), ["Venusaur", "Onix"])
+        // Same log, opposite viewer — proves this is never hardcoded to p1/p2, only to whichever
+        // ident nickname matches the caller's own display name.
+        XCTAssertEqual(BattleClient.opponentRosterNames(log: log, myDisplayName: "Gary"), ["Pikachu", "Charizard"])
+    }
+
+    func testOpponentRosterNamesIsEmptyWithoutAnIdentToAnchorMySideOn() {
+        let log = ["|poke|p1|Pikachu, L50|", "|poke|p2|Venusaur, L59|"]
+        XCTAssertEqual(BattleClient.opponentRosterNames(log: log, myDisplayName: "Ash"), [])
+    }
 }

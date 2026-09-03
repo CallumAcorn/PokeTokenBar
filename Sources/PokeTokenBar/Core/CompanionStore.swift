@@ -993,6 +993,18 @@ final class CompanionStore {
 
     func canBuyTM(_ moveID: Int) -> Bool { availableTokens >= TM.price }
 
+    // MARK: Gym badges (see GymBadge) — earned by BattleStore on a completed, won battle.
+
+    var gymBadges: Set<GymBadge> { state.gymBadges }
+
+    /// Records newly earned gym badges. A no-op for badges already held (Set union), so a
+    /// defensive re-score of an already-scored battle can't lose data or double-fire a UI toast.
+    func awardGymBadges(_ badges: Set<GymBadge>) {
+        guard !badges.isEmpty, !badges.isSubset(of: state.gymBadges) else { return }
+        state.gymBadges.formUnion(badges)
+        save()
+    }
+
     /// Buy one TM — deducts price from the wallet, +1 to that move id's stock. Same shape as buying
     /// an ItemKind (buy(_:)), but a separate function since the target collection differs (ownedTMs
     /// is keyed by move id, inventory by ItemKind rawValue).

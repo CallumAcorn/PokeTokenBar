@@ -983,6 +983,10 @@ struct CompanionState: Codable, Sendable {
     // (~10 cases), so the ~100 move-specific TMs get their own dynamic map instead of new cases
     // (doc: moves-shop.md).
     var ownedTMs: [Int: Int] = [:]
+    // Gym badges earned by beating a battle opponent whose revealed roster matched a real gym
+    // leader/Elite Four/Champion's team (doc: GymBadge). Same "owned goods" class as ownedTMs —
+    // earned, not this device's ledger.
+    var gymBadges: Set<GymBadge> = []
     // 사탕 지급 엣지 상태(창 key → 지급한 tier). ★영속 — notifiedTier(인메모리)와 달리 재시작 무한지급 방지.
     var candyGrantTier: [String: Int] = [:]
     // 사탕 지급 첫 실행 시드 완료 — 업데이트 직후 이미 100%였던 창의 소급 지급 차단.
@@ -1052,6 +1056,10 @@ struct CompanionState: Codable, Sendable {
         language           = c.lenient(AppLanguage.self, forKey: .language, default: .systemDefault)
         inventory          = c.lenient([String: Int].self, forKey: .inventory, default: [:])
         ownedTMs           = c.lenient([Int: Int].self, forKey: .ownedTMs, default: [:])
+        // Per-item isolation (like dex above), not a whole-Set lenient decode — an unrecognized
+        // rawValue (a badge added by a newer app version, opened once on an older one) would
+        // otherwise fail the *entire* Set and silently wipe every already-earned badge.
+        gymBadges          = Set(c.lenient([Lossy<GymBadge>].self, forKey: .gymBadges, default: []).compactMap(\.value))
         candyGrantTier     = c.lenient([String: Int].self, forKey: .candyGrantTier, default: [:])
         candyFeatureSeeded = c.lenient(Bool.self, forKey: .candyFeatureSeeded, default: false)
         movesFeatureSeeded = c.lenient(Bool.self, forKey: .movesFeatureSeeded, default: false)

@@ -70,6 +70,15 @@ final class BattleStore {
     /// moves from here, matched to `you.roster`/`activeIndex` by array position (both are built from
     /// this same roster, in this same order, so the positions always agree).
     private(set) var myRoster: [MonState] = []
+    /// Badges scored on the most recently observed completion — empty most of the time (no win, or
+    /// no criterion matched, or nothing new since every already-held badge is filtered out). The
+    /// UI can watch this to show an unlock toast; not persisted itself (`companion.gymBadges` is
+    /// the source of truth — see `scoreCompletionIfNeeded`).
+    private(set) var newlyEarnedBadges: Set<GymBadge> = []
+    /// Session ids already scored for gym badges — makes `scoreCompletionIfNeeded` idempotent
+    /// across repeated polls of the same completed battle, same "applied once" rule
+    /// `TradeStore.applyCompletion` follows for trade stats.
+    private var scoredSessionIDs: Set<String> = []
 
     private let companion: CompanionStore
     private let online: OnlineStore
@@ -186,10 +195,31 @@ final class BattleStore {
 
     // MARK: Polling
 
+    /// This is a menu-bar accessory app — no Dock icon, so macOS treats it as backgrounded the
+    /// instant its one window isn't key, and App Nap throttles `Task.sleep`-driven timers hard
+    /// enough that a 2s poll loop can stall for minutes. A battle result (and the badge scoring
+    /// that rides on it — see `scoreCompletionIfNeeded`) must not silently wait on the user keeping
+    /// this window focused, so polling holds a `ProcessInfo` activity token for as long as it runs,
+    /// same mechanism apps use to stay responsive during a background download/render.
+    private var activityToken: NSObjectProtocol?
+
+    private func beginPollingActivity() {
+        endPollingActivity()
+        activityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled],
+            reason: "Live Pokémon battle in progress")
+    }
+
+    private func endPollingActivity() {
+        if let activityToken { ProcessInfo.processInfo.endActivity(activityToken) }
+        activityToken = nil
+    }
+
     private func startPolling(sessionId: String, server: String? = nil) {
         let serverURL = server ?? online.serverURL
         activeServerURL = serverURL
         pollTask?.cancel()
+        beginPollingActivity()
         pollTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
@@ -206,7 +236,19 @@ final class BattleStore {
             switch view.status {
             case "active", "completed":
                 phase = .battling(sessionId: sessionId, view: view)
-                if view.status == "completed" { pollTask?.cancel() }
+                if view.status == "completed" {
+                    // Score BEFORE cancelling — pollOnce runs *inside* pollTask's own loop, so
+                    // `pollTask?.cancel()` here is self-cancellation. URLSession's async APIs are
+                    // cancellation-aware and can abort an in-flight request the instant their
+                    // enclosing Task is marked cancelled — cancelling first turned
+                    // scoreCompletionIfNeeded's own network calls (PokeAPI species/type lookups)
+                    // into a race that silently dropped the badge almost every time. Scoring first
+                    // means those awaits run while the task is still uncancelled; cancelling after
+                    // is still correct (nothing left to poll for either way).
+                    await scoreCompletionIfNeeded(sessionId: sessionId, view: view)
+                    pollTask?.cancel()
+                    endPollingActivity()
+                }
             default:
                 break   // "waiting" — nothing new, still waiting for a join
             }
@@ -239,7 +281,13 @@ final class BattleStore {
             let view = try await BattleClient.choose(serverURL: online.serverURL, sessionId: sessionId, uuid: online.clientUUID,
                                                       choice: choice, session: session)
             phase = .battling(sessionId: sessionId, view: view)
-            if view.status == "completed" { pollTask?.cancel() }
+            if view.status == "completed" {
+                // Same score-before-cancel ordering as pollOnce, for consistency (this call site
+                // runs on the caller's own Task, not pollTask's, so it isn't self-cancellation
+                // here — but scoring first costs nothing and keeps both call sites uniform).
+                await scoreCompletionIfNeeded(sessionId: sessionId, view: view)
+                pollTask?.cancel()
+            }
             return true
         } catch {
             if case .server(status: 404) = error {
@@ -254,6 +302,29 @@ final class BattleStore {
         }
     }
 
+    // MARK: Gym badges (see GymBadge)
+
+    /// Scores gym badges once, the first time a completed-and-won view is observed for this
+    /// session — resolves the opponent's revealed roster (team preview) to species + types via
+    /// PokéAPI and awards whatever `GymBadge.earned(against:)` matches that this side doesn't
+    /// already hold.
+    private func scoreCompletionIfNeeded(sessionId: String, view: BattleClient.BattleView) async {
+        newlyEarnedBadges = []
+        guard view.status == "completed", view.result == "win", let log = view.log,
+              !scoredSessionIDs.contains(sessionId) else { return }
+        scoredSessionIDs.insert(sessionId)
+        let names = BattleClient.opponentRosterNames(log: log, myDisplayName: online.displayName)
+        var opponent: [(name: String, types: [PokemonType])] = []
+        for name in names {
+            guard let speciesID = await companion.speciesID(name: name) else { continue }
+            opponent.append((name, await companion.baseStats(speciesID: speciesID)?.types ?? []))
+        }
+        let earned = GymBadge.earned(against: opponent).subtracting(companion.gymBadges)
+        guard !earned.isEmpty else { return }
+        companion.awardGymBadges(earned)
+        newlyEarnedBadges = earned
+    }
+
     // MARK: Failure / cleanup
 
     /// Same self-healing shape as TradeStore.fail: put up the failure state, then automatically
@@ -261,6 +332,7 @@ final class BattleStore {
     private func fail(_ error: StoreError) {
         pollTask?.cancel()
         pollTask = nil
+        endPollingActivity()
         if case .client(.server(status: 404)) = error {
             phase = .expired
             return
@@ -282,9 +354,11 @@ final class BattleStore {
         await leaveIfNeeded()
         pollTask?.cancel()
         pollTask = nil
+        endPollingActivity()
         activeServerURL = nil
         phase = .idle
         myRoster = []
+        newlyEarnedBadges = []
     }
 
     private func leaveIfNeeded() async {

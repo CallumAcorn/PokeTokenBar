@@ -391,7 +391,7 @@ struct BattleView: View {
             // switch re-enters .idle, which covers both "returning to idle" and "window reopened
             // while already idle" in one hook.
             rosterPicker.padding(BattleWindowMetrics.padding)
-                .onAppear { resetPickerState() }
+                .onAppear { resetPickerState(); resetBattleSceneState() }
         case .starting:
             // The instant gap between tapping Create/Join and there being anything real to show
             // (the roster-build + create/join POST + join's first confirming poll) — without this,
@@ -700,6 +700,37 @@ struct BattleView: View {
         creatingNew = false
         pastedInviteLink = ""
         pastedInviteError = false
+    }
+
+    /// The battle scene's own display state — `displayedOpponentSpeciesID`/`displayedYourSpeciesID`
+    /// and everything derived alongside them — only ever seeds itself once, the first time
+    /// `battleScene`'s `.task` sees them `nil` (see that `.task`'s doc comment for why it can't just
+    /// react to the log instead). In a reused window that's a bug, not a feature: after the first
+    /// battle these are never `nil` again, so a second battle's scene opens still showing the
+    /// previous one's mon/HP/fainted-pose until enough new log lines happen to overwrite each field
+    /// piecemeal. Cleared here, alongside `resetPickerState()`, on the same proven-reliable
+    /// "re-entered `.idle`" hook — a fresh `.battling` phase always starts from here.
+    private func resetBattleSceneState() {
+        displayedOpponentSpeciesID = nil
+        displayedYourSpeciesID = nil
+        displayedOpponentFainted = false
+        displayedYourFainted = false
+        displayedOpponentHPFraction = nil
+        displayedYourHPFraction = nil
+        opponentChips = []
+        yourChips = []
+        hpFractionsByIdent = [:]
+        myActiveMaxHP = nil
+        pendingBeats = []
+        isPlayingBeats = false
+        revealResult = false
+        recentMoveText = nil
+        moveTextGeneration = 0
+        lastSeenLogCount = 0
+        opponentSpeciesIDByName = [:]
+        choiceSubmittedForTurn = nil
+        battleBackgroundImage = nil
+        showMoveLog = false
     }
 
     /// Same card chrome (`Color.secondary.opacity(0.07)` fill + hairline border, 12pt radius,
@@ -1192,6 +1223,20 @@ struct BattleView: View {
 
     private func battleScene(opponent: BattleClient.Opponent, you: BattleClient.You, log: [String]?) -> some View {
         let yourActive = you.roster[safeIndex: you.activeIndex]
+        // Falls back to live truth (`opponent.active`/`yourActive`) whenever the seed `.task` below
+        // hasn't landed yet — nil right after `resetBattleSceneState` at the very start of a fresh
+        // battle. Without this fallback, that gap between "scene appears" and "task's first await
+        // resumes" renders `battleSprite(speciesID: nil, ...)`, which is the 🥚 egg placeholder
+        // (much smaller than real sprite artwork) — reads as "the mon spawns in small, then gets
+        // big" the instant the real sprite pops in a frame later. The info cards never had this
+        // problem (they always read `opponent.active`/`yourActive` directly, not through this
+        // seeded/cached indirection).
+        let opponentSpeciesID = displayedOpponentSpeciesID ?? opponent.active?.speciesID
+        let opponentFainted = displayedOpponentSpeciesID == nil ? (opponent.active?.fainted ?? false) : displayedOpponentFainted
+        let opponentHPFraction = displayedOpponentHPFraction ?? opponent.active?.hpFraction
+        let yourSpeciesID = displayedYourSpeciesID ?? yourActive?.speciesID
+        let yourFainted = displayedYourSpeciesID == nil ? (yourActive?.fainted ?? false) : displayedYourFainted
+        let yourHPFraction = displayedYourHPFraction ?? yourActive?.hpFraction
         return ZStack {
             battleFieldBackground
             // chipStack is attached here, before the .frame(maxWidth: .infinity, ...) below — that
@@ -1199,19 +1244,19 @@ struct BattleView: View {
             // buggy placement) anchors to the scene's own bounds, not the box's actual small footprint,
             // landing both sides' chips at the same top-center spot regardless of which mon they're
             // for. Attached here, `.top`/`.bottom` alignment is relative to the compact card itself.
-            pokemonInfoBox(name: opponent.displayName, active: opponent.active, hpFraction: displayedOpponentHPFraction, benchCount: opponent.rosterSize)
+            pokemonInfoBox(name: opponent.displayName, active: opponent.active, hpFraction: opponentHPFraction, benchCount: opponent.rosterSize)
                 .overlay(alignment: .bottom) { chipStack(opponentChips).offset(y: 20) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(14)
             // Kept clear of the action-box overlay below (extra bottom padding) — unlike the plain
             // sprite artwork, this card is information (name/HP) and must never be the thing that's
             // partly hidden.
-            pokemonInfoBox(name: you.displayName, active: yourActive, hpFraction: displayedYourHPFraction, benchCount: you.roster.count)
+            pokemonInfoBox(name: you.displayName, active: yourActive, hpFraction: yourHPFraction, benchCount: you.roster.count)
                 .overlay(alignment: .top) { chipStack(yourChips).offset(y: -20) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(.horizontal, 14).padding(.top, 14)
                 .padding(.bottom, BattleWindowMetrics.actionBoxHeight + 10)
-            battleSprite(speciesID: displayedOpponentSpeciesID, fainted: displayedOpponentFainted, size: 130, facing: .front, effect: opponentEffect)
+            battleSprite(speciesID: opponentSpeciesID, fainted: opponentFainted, size: 130, facing: .front, effect: opponentEffect)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .padding(.top, 16).padding(.trailing, 28)
             // .back (the real games' own convention: you see your own mon from behind, the
@@ -1219,7 +1264,7 @@ struct BattleView: View {
             // to sit behind the action-box overlay the caller (battlingContent) draws in front of
             // this whole scene, the same way the real games' own message box covers the very bottom
             // of your Pokémon but never reaches the opponent's (too far up-screen to ever meet it).
-            battleSprite(speciesID: displayedYourSpeciesID, fainted: displayedYourFainted, size: 170, facing: .back, effect: yourEffect)
+            battleSprite(speciesID: yourSpeciesID, fainted: yourFainted, size: 170, facing: .back, effect: yourEffect)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 .padding(.bottom, 130).padding(.leading, 8)
         }
@@ -1670,28 +1715,73 @@ struct BattleView: View {
         case "loss": ("xmark.circle.fill", .red)
         default: ("equal.circle.fill", .secondary)
         }
-        return VStack {
-            Spacer()
-            // A solid, theme-adaptive card — not colored text sitting directly on the light pastel
-            // sky/grass gradient behind it, which read as low-contrast (green title text over a
-            // green-tinted background especially). Same fix pokemonInfoBox/actionBox already use for
-            // the same underlying problem: guarantee contrast against a busy/variable background by
-            // putting text on a solid surface instead. The icon alone keeps the win/loss tint — a
-            // small shape reads fine in color; a whole line of text needs the safer `.primary`.
-            VStack(spacing: 14) {
-                Image(systemName: icon).font(.system(size: 36)).foregroundStyle(tint)
-                Text(title).font(.system(size: 22, weight: .bold)).foregroundStyle(.primary)
-                Button(l.battleDoneButton) { Task { await battle.cancel() }; onClose() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+        return ZStack {
+            VStack {
+                Spacer()
+                // A solid, theme-adaptive card — not colored text sitting directly on the light pastel
+                // sky/grass gradient behind it, which read as low-contrast (green title text over a
+                // green-tinted background especially). Same fix pokemonInfoBox/actionBox already use for
+                // the same underlying problem: guarantee contrast against a busy/variable background by
+                // putting text on a solid surface instead. The icon alone keeps the win/loss tint — a
+                // small shape reads fine in color; a whole line of text needs the safer `.primary`.
+                VStack(spacing: 14) {
+                    Image(systemName: icon).font(.system(size: 36)).foregroundStyle(tint)
+                    Text(title).font(.system(size: 22, weight: .bold)).foregroundStyle(.primary)
+                    // Populated by BattleStore.scoreCompletionIfNeeded — only ever non-empty right
+                    // after a win, so this never shows on a loss/draw result card.
+                    if !battle.newlyEarnedBadges.isEmpty {
+                        newBadgesBanner
+                    }
+                    // Equal-weight with Done — the log was only ever reachable mid-battle before
+                    // (the small floating toggle in battlingContent's corner), so once the result
+                    // screen takes over there was no way back to "what actually happened" short of
+                    // forfeiting the win/loss screen entirely and losing the session. A full-size
+                    // button here, not the same small icon, since this is now a primary action on
+                    // this screen, not an optional overlay toggle.
+                    HStack(spacing: 12) {
+                        Button { showMoveLog = true } label: {
+                            Label(l.battleLogTitle, systemImage: "list.bullet.rectangle.fill")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                        Button(l.battleDoneButton) { Task { await battle.cancel() }; onClose() }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                    }
+                }
+                .padding(28)
+                .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+                Spacer()
             }
-            .padding(28)
-            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
-            Spacer()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(battleFieldBackground)
+            // Same "log panel first, toggle last" stacking battlingContent already uses — the small
+            // floating toggle (now serving as the close affordance) has to paint on top of the panel
+            // to stay tappable. `view.you` is technically optional on the model but always present on
+            // a completed view in practice; `if let` degrades to "no log available" rather than a
+            // force-unwrap crash on the (unreachable in this app) alternative.
+            if showMoveLog, let you = view.you {
+                moveLogOverlay(log: view.log ?? [], you: you)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(battleFieldBackground)
+        .overlay(alignment: .topTrailing) { if showMoveLog { moveLogToggleButton } }
+    }
+
+    /// One row per newly earned badge — sorted for a stable order across renders (`Set` has none of
+    /// its own), since a single clean sweep can plausibly clear more than one at once (see
+    /// GymBadgeTests.testACleanSweepCanEarnMultipleBadgesAtOnceAcrossRegions).
+    private var newBadgesBanner: some View {
+        VStack(spacing: 4) {
+            Text(l.gymBadgeEarnedBannerTitle).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ForEach(battle.newlyEarnedBadges.sorted { $0.rawValue < $1.rawValue }, id: \.self) { badge in
+                HStack(spacing: 5) {
+                    BadgeGlyph(badge: badge, earned: true, size: 16)
+                    Text(badge.info.title).font(.system(size: 12, weight: .medium))
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     // MARK: Status messages

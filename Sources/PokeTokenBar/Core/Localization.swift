@@ -496,6 +496,38 @@ struct L {
     func pcLevel(_ n: Int) -> String { t("Lv.\(n)", "Lv.\(n)", "Lv.\(n)", "Nv.\(n)") }
     var pcSetTraining: String { t("훈련 대상으로 설정", "Set as training", "育成対象に設定", "Poner en entrenamiento") }
 
+    // MARK: 체육관 배지 (GymBadge) — 트레이너·지역 이름은 원작 고유명사라 번역하지 않는다(L 을
+    // 거치지 않고 GymBadge.info 의 영어 문자열을 그대로 쓴다) — fr/pt 처럼, 검증 안 된 번역을
+    // 검증된 번역과 똑같은 얼굴로 내놓지 않기 위해서다.
+    var gymBadgesTitle: String { t("배지", "Badges", "バッジ", "Medallas", "Badges", "Insígnias") }
+    func gymBadgesTotal(_ earned: Int, _ total: Int) -> String {
+        t("\(earned)/\(total)개 획득", "\(earned)/\(total) earned", "\(earned)/\(total)個獲得",
+          "\(earned)/\(total) obtenidas", "\(earned)/\(total) obtenus", "\(earned)/\(total) obtidas")
+    }
+    var gymBadgeLocked: String { t("미획득", "locked", "未獲得", "bloqueada", "verrouillé", "bloqueada") }
+    var gymBadgeEarnedStatus: String { t("획득함", "Earned", "獲得済み", "Obtenida", "Obtenu", "Obtida") }
+    var gymBadgeEarnedBannerTitle: String { t("배지 획득!", "Badge earned!", "バッジ獲得！", "¡Medalla obtenida!", "Badge obtenu !", "Insígnia obtida!") }
+    var gymBadgeHowToUnlock: String { t("획득 방법", "How to unlock", "獲得方法", "Cómo desbloquear", "Comment débloquer", "Como desbloquear") }
+    var gymBadgeGroupGyms: String { t("체육관 배지", "Gym Badges", "ジムバッジ", "Medallas de gimnasio", "Badges d'arène", "Insígnias de ginásio") }
+    var gymBadgeGroupEliteFour: String { t("사천왕", "Elite Four", "四天王", "Alto Mando", "Conseil 4", "Elite Four") }
+    var gymBadgeGroupChampion: String { t("챔피언", "Champion", "チャンピオン", "Campeón", "Champion", "Campeão") }
+    /// type 은 이미 번역된 typeName(_:) 결과를 그대로 받는다 — 트레이너/지역 고유명사와 달리
+    /// "타입" 자체는 원작 고유명사가 아니라 일반 UI 어휘라 번역한다.
+    func gymBadgeUnlockHintType(_ type: String, _ minRosterSize: Int) -> String {
+        t("상대가 공개한 로스터 전원(\(minRosterSize)마리 이상)이 \(type) 타입이면, 그 배틀에서 승리할 때 획득합니다.",
+          "Win a battle where every mon in your opponent's revealed roster (\(minRosterSize)+ mons) is \(type)-type.",
+          "相手が公開したロスター全員（\(minRosterSize)匹以上）が\(type)タイプなら、そのバトルに勝利した時に獲得します。",
+          "Gana una batalla en la que todo el equipo revelado de tu rival (\(minRosterSize)+ Pokémon) sea de tipo \(type).")
+    }
+    /// names 는 트레이너 고유명사(포켓몬 종명)라 번역하지 않고 그대로 끼워 넣는다 — gymBadgesTitle
+    /// 주석과 같은 이유.
+    func gymBadgeUnlockHintSignature(_ names: String) -> String {
+        t("상대 로스터에 \(names) 중 하나라도 있으면, 그 배틀에서 승리할 때 획득합니다.",
+          "Win a battle where your opponent's roster includes one of: \(names).",
+          "相手のロスターに\(names)のいずれかが含まれていれば、そのバトルに勝利した時に獲得します。",
+          "Gana una batalla en la que el equipo de tu rival incluya uno de estos: \(names).")
+    }
+
     // MARK: 스탯
     var pcStatsTitle: String { t("능력치", "Stats", "ステータス", "Estadísticas") }
     var statHP: String { t("HP", "HP", "HP", "PS") }
