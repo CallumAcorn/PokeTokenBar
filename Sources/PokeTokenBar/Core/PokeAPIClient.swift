@@ -60,6 +60,11 @@ protocol PokeProviding: Sendable {
     func moveDetail(name: String) async throws -> Move
     /// The full TM list for `MoveDataVersion.versionGroup` — for the shop's TM catalog only.
     func tmCatalog() async throws -> [Move]
+    /// A species' numeric id from its plain-English display name ("Venusaur") — for resolving an
+    /// opponent battle-log mon (team preview only ever reveals a species name, never an id) to a
+    /// real sprite, the same "only ever learn it by name" situation `moveDetail(name:)` solves for
+    /// moves.
+    func speciesID(name: String) async throws -> Int
 }
 
 /// 스탯/특성/설명/분류 표시를 지원하지 않는 provider(대부분의 기존 테스트 스텁)의 기본값 — 호출부는
@@ -74,6 +79,7 @@ extension PokeProviding {
     func moveDetail(id: Int) async throws -> Move { throw URLError(.unsupportedURL) }
     func moveDetail(name: String) async throws -> Move { throw URLError(.unsupportedURL) }
     func tmCatalog() async throws -> [Move] { throw URLError(.unsupportedURL) }
+    func speciesID(name: String) async throws -> Int { throw URLError(.unsupportedURL) }
 }
 
 /// PokéAPI 클라이언트 — 종/진화체인을 런타임 fetch + 파싱. 포켓몬 데이터는 레포에 번들하지 않는다.
@@ -94,6 +100,7 @@ actor PokeAPIClient: PokeProviding {
     private var pokemonDTOCache: [Int: PokemonDTO] = [:]     // shared by baseStats/learnableMoves (same `/pokemon/{id}`)
     private var learnableMovesCache: [Int: [LearnableMove]] = [:]
     private var moveCache: [Int: Move] = [:]
+    private var speciesIDByNameCache: [String: Int] = [:]
 
     /// `/pokemon/{id}` — baseStats (base stats) and learnableMoves (learnset) both split the same
     /// response, so the cache is pooled here (same pattern as species(_:) being split by flavorText/genus).
@@ -451,6 +458,18 @@ actor PokeAPIClient: PokeProviding {
         return dto
     }
 
+    /// PokéAPI accepts a species slug where an id is expected — same convention `moveDetail(name:)`
+    /// already relies on for moves, and the same reverse-slugging caveat (apostrophes dropped,
+    /// e.g. "Farfetch'd" -> "farfetchd" wouldn't match PokéAPI's actual "farfetchd" slug — mostly
+    /// fine in practice, a failed lookup just leaves that one caller without a sprite/id).
+    func speciesID(name: String) async throws -> Int {
+        let slug = Self.slug(fromDisplayName: name)
+        if let cached = speciesIDByNameCache[slug] { return cached }
+        let dto: SpeciesIDDTO = try await get(base.appendingPathComponent("pokemon-species/\(slug)"))
+        speciesIDByNameCache[slug] = dto.id
+        return dto.id
+    }
+
     /// pokemon-species 는 line(baseSpeciesID:) 가 라인 조회 때 이미 캐시해뒀을 수 있다 —
     /// species(_:) 를 그대로 재사용하므로 그 경우 추가 네트워크 없이 즉시 반환된다.
     func flavorText(speciesID id: Int) async throws -> [String: String] {
@@ -510,6 +529,8 @@ actor PokeAPIClient: PokeProviding {
 
 // MARK: - DTO (PokéAPI 응답 부분 디코드)
 
+/// Minimal decode for `speciesID(name:)` — only the id is needed, unlike `SpeciesDTO`'s full shape.
+struct SpeciesIDDTO: Decodable, Sendable { let id: Int }
 struct SpeciesDTO: Decodable, Sendable {
     let capture_rate: Int
     let is_legendary: Bool

@@ -229,14 +229,18 @@ final class BattleStore {
     /// Applies the server's response to this call directly rather than waiting for the next poll
     /// tick — safe here (unlike TradeStore.confirm deliberately *not* doing this for its own
     /// completion), since choosing never mutates local party/save state, only reflects server truth
-    /// a couple seconds sooner.
-    func choose(_ choice: String) async {
-        guard case .battling(let sessionId, let currentView) = phase else { return }
+    /// a couple seconds sooner. Returns whether the choice actually went through — callers that
+    /// optimistically update UI state before this resolves (BattleView's `moveSubmittedForTurn`)
+    /// need to know when to undo that guess on a rejection.
+    @discardableResult
+    func choose(_ choice: String) async -> Bool {
+        guard case .battling(let sessionId, let currentView) = phase else { return false }
         do {
             let view = try await BattleClient.choose(serverURL: online.serverURL, sessionId: sessionId, uuid: online.clientUUID,
                                                       choice: choice, session: session)
             phase = .battling(sessionId: sessionId, view: view)
             if view.status == "completed" { pollTask?.cancel() }
+            return true
         } catch {
             if case .server(status: 404) = error {
                 fail(.client(error))
@@ -246,6 +250,7 @@ final class BattleStore {
                 // "don't overwrite phase on a transient failure" reasoning pollOnce already follows.
                 phase = .battling(sessionId: sessionId, view: currentView)
             }
+            return false
         }
     }
 

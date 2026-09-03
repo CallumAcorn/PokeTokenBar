@@ -978,6 +978,12 @@ final class CompanionStore {
     func tmCatalog() async -> [Move] {
         (try? await provider.tmCatalog()) ?? []
     }
+    /// By display name, straight off a battle's team-preview data — the battle log's chat recap's
+    /// only way to get a real sprite for an opponent mon that isn't currently active (their bench
+    /// stays hidden as structured data; only a species *name* is ever revealed for it).
+    func speciesID(name: String) async -> Int? {
+        try? await provider.speciesID(name: name)
+    }
 
     // MARK: TM (technical machine) — stock (ownedTMs) comes only from the shop (doc: shop purchase only for now)
 
