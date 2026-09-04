@@ -235,6 +235,11 @@ final class BattleViewEffectChipParsingTests: XCTestCase {
 /// care about, since this one's meant to read like a recap rather than drive scene playback. Each
 /// line is also attributed to a speaker (mine/opponent/neutral) so the chat-log UI can put my
 /// lines on one side and the opponent's on the other.
+// BattleView.formattedLogLines 는 SwiftUI View 의 static 이라 @MainActor 다. Swift 6.3 은 테스트
+// 메서드에 MainActor 를 추론해 로컬에서는 그냥 컴파일되지만, CI(macos-15 / Swift 6.0)는 추론하지
+// 않아 'main actor-isolated ... in a synchronous nonisolated context' 로 빌드가 깨진다.
+// 같은 파일의 다른 두 클래스는 이미 @MainActor 다 — 이 클래스만 빠져 있었다.
+@MainActor
 final class BattleViewFormattedLogLinesTests: XCTestCase {
     func testCoversTheCommonlyInterestingLineKindsAndAttributesEachToASpeaker() {
         let log = [
