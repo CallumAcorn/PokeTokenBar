@@ -17,6 +17,8 @@ cd "$(dirname "$0")/.."
 REPO="${PTB_REPO:-CallumAcorn/PokeTokenBar}"
 TAP_REPO="${PTB_TAP_REPO:-CallumAcorn/homebrew-tap}"
 CASK_PATH="Casks/poke-token-bar-hardened.rb"
+# 에셋 게이트 면제 기록. 버전을 명시한 줄만 유효하다(= 다음 릴리스에 자동 만료).
+WAIVERS="docs/reference/asset-waivers.md"
 
 # ── 문서 일관성 검토 (배포 전 항상 실행) ───────────────────────────────────
 # 기계적으로 잡을 수 있는 것만 자동 경고. 내용(기능 설명) 변경 여부는 사람이 체크리스트로 판단.
@@ -47,23 +49,38 @@ doc_check() {
       warn=1
     fi
 
-    # 새 UI 기능 → **신규** 에셋 커버리지 (하드 게이트).
-    # 위 staleness 는 "에셋이 하나라도 바뀌었나"만 본다 → 기존 스크린샷만 다시 그려도 통과한다.
-    # 2.5.0 이 정확히 그 경로로 새 나갔다: 플로팅 펫(신규 기능)이 README·랜딩에 이미지 하나 없이 배포됐고,
-    # settings.png 를 갱신해 둔 탓에 위 검사는 조용히 통과했다. 신규 기능은 신규 에셋을 요구한다.
-    local ui_feats new_assets
-    ui_feats=$(git log "$last_tag"..HEAD --format='%s' -- 'Sources/PokeTokenBar/UI/' 2>/dev/null \
-                 | grep -iE '^(feat|feature)[(:]' || true)
+    # UI 표면이 바뀌었는데 **신규** 에셋이 없다 → 하드 게이트.
+    #
+    # 판정 기준이 커밋 메시지였을 때 이 게이트는 세 번 연속 헛돌았다: moves/TM, battles, gym badges 는
+    # 전부 새 화면인데 커밋 제목이 `feat:` 이 아니라 조용히 통과했고, 정작 처음 걸린 건 업스트림에서
+    # 체리픽한 설정 드롭다운(#212)이었다 — 상류가 conventional commits 를 쓴다는 이유만으로. 기여자의
+    # 커밋 관례는 우리가 정할 수 없으니 **무엇이 바뀌었는가**(UI 소스 diff)로 판정한다.
+    local new_assets waiver
     new_assets=$(git diff --name-only --diff-filter=A "$last_tag"..HEAD -- 'assets/' 2>/dev/null)
-    if [[ -n "$ui_feats" && -z "$new_assets" ]]; then
-      echo "  ✗ UI 를 바꾼 신규 기능이 있는데 assets/ 에 **새로 추가된** 파일이 없습니다:"
-      echo "$ui_feats" | sed 's/^/       /'
-      echo "     → 새 화면·새 표면이면 전용 스크린샷을 만들어 README(ko/ja 포함)와 랜딩에 넣으세요."
-      echo "     → 이미지가 정말 불필요하다고 판단되면 그 판단을 커밋에 남기세요(feat 가 아닌 타입으로)."
-      # 예외 없음. 경고(return 1, y/N 프롬프트)와 달리 return 2 는 호출부에서 즉시 중단시킨다 —
-      # 환경변수 우회구를 두면 결국 그 변수가 습관이 된다. 통과시키려면 에셋을 만들거나
-      # 커밋 타입을 바꿔야 한다(= 판단을 기록으로 남겨야 한다).
-      return 2
+    # 면제는 기록으로만 — 커밋 타입을 바꾸는 우회는 이미 푸시된 커밋에선 히스토리 재작성이라 불가능하고
+    # (hardened.5 에서 실제로 막혔다), 무엇보다 판단이 커밋 제목 안에 숨는다. 대신 **이번 버전을 적은**
+    # 한 줄을 남긴다: 버전이 박혀 있으니 다음 릴리스에는 자동으로 만료되어 영구 우회로 굳지 않는다.
+    # --check-only 는 VERSION 설정 **전에** 이 함수를 부른다(set -u 라 참조만으로 죽는다).
+    # 그때는 면제를 조회할 대상 버전이 없으므로 항상 "면제 없음"으로 본다 = 게이트를 보여준다.
+    waiver=""
+    if [[ -n "${VERSION:-}" ]]; then
+      waiver=$(grep -F "\`${VERSION}\`" "$WAIVERS" 2>/dev/null | grep -E "^\|" || true)
+    fi
+    if [[ -n "$ui_changed" && -z "$new_assets" ]]; then
+      if [[ -n "$waiver" ]]; then
+        echo "  ⚠ 에셋 게이트 면제 (기록됨 — $WAIVERS):"
+        echo "$waiver" | sed 's/^/       /'
+        warn=1
+      else
+        echo "  ✗ UI 소스가 $last_tag 이후 바뀌었는데 assets/ 에 **새로 추가된** 파일이 없습니다:"
+        echo "$ui_changed" | sed 's/^/       /'
+        echo "     → 새 화면·새 표면이면 전용 스크린샷을 만들어 README(ko/ja 포함)에 넣으세요."
+        echo "     → 이번 릴리스엔 불필요하다고 판단했다면 $WAIVERS 에 이 버전으로 한 줄 남기세요:"
+        echo "       | \`${VERSION:-<version>}\` | $(date +%F) | 사유 |"
+        # 예외는 있지만 무기명이 아니다. 환경변수 우회구를 두지 않는 이유와 같다 — 그 변수는 습관이
+        # 되지만, 버전이 박힌 기록은 다음 릴리스에 만료되고 리뷰에도 남는다.
+        return 2
+      fi
     fi
   fi
   cat <<'CHECK'
