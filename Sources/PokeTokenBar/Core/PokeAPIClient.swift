@@ -220,8 +220,24 @@ actor PokeAPIClient: PokeProviding {
     /// (apostrophes are dropped outright, e.g. "King's Shield" -> "kings-shield") — for a purely
     /// cosmetic type-color lookup, a failed fetch just means the default neutral effect plays
     /// instead, not a functional break.
-    private static func slug(fromDisplayName name: String) -> String {
-        name.lowercased().replacingOccurrences(of: "'", with: "").replacingOccurrences(of: " ", with: "-")
+    /// 표시명 → PokéAPI 슬러그.
+    ///
+    /// 마지막 필터가 신뢰경계다. 이 함수의 입력은 **배틀 로그 줄에서 온 종명**이고, 그 로그는 서버가
+    /// 준다(초대 링크가 서버를 지정할 수 있으므로 서버 자체가 신뢰 대상이 아니다). 결과는
+    /// `appendingPathComponent` 로 URL 경로에 들어가므로, `/` 나 `..` 가 남아 있으면 의도하지 않은
+    /// 경로 세그먼트가 만들어진다. 호스트는 고정이라 피해는 PokéAPI 안에서 끝나지만, 경계에서 문자
+    /// 집합을 좁히는 편이 호출부마다 따지는 것보다 싸다.
+    ///
+    /// 부수 효과로 **정확도도 올라간다** — 실제 종명에 섞인 구두점이 여기서 떨어지면서 PokéAPI 의
+    /// 슬러그와 일치하게 된다: "Mr. Mime" → `mr-mime`, "Type: Null" → `type-null`.
+    /// (`Nidoran♀` 처럼 슬러그가 아예 다른 규칙인 경우는 여전히 못 맞춘다 — 조회가 실패해 그 호출부만
+    /// 스프라이트 없이 지나간다.)
+    static func slug(fromDisplayName name: String) -> String {
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        return name.lowercased()
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: " ", with: "-")
+            .filter { allowed.contains($0) }
     }
 
     private static func move(from dto: MoveDTO, id: Int, langCodes: [String]) -> Move {
