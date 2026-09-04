@@ -48,7 +48,7 @@ rotation. Turn it off in Settings → Advanced, and delete the file to remove th
 
 ## Network egress
 
-Seven fixed hosts, plus one optional host you choose yourself. There is no telemetry, no
+Ten fixed hosts, plus one optional host you choose yourself. There is no telemetry, no
 analytics, and no vendor server.
 
 | Host | Purpose | Carries |
@@ -58,16 +58,30 @@ analytics, and no vendor server.
 | `pokeapi.co`, `graphql.pokeapi.co` | Species and evolution data | Nothing |
 | `raw.githubusercontent.com` | Sprite images | Nothing |
 | `status.claude.com`, `status.openai.com` | Incident banner | Nothing |
-| **A trade server you configure** | Pokémon trading (opt-in) | A Pokémon, your display name, a random client id |
+| `cloudcode-pa.googleapis.com`, `daily-cloudcode-pa.googleapis.com` | Official Antigravity limits | Your Google OAuth bearer token |
+| `oauth2.googleapis.com` | Refreshing that Antigravity token | Your Google refresh token |
+| **A trade/battle server you configure** | Pokémon trading and 1v1 battles (opt-in) | Trading: one Pokémon. Battles: up to six, plus every move you choose. Both: your display name and a random client id |
 
-**The trade server is off unless you set one.** With no server address configured the app never
-contacts anything beyond the seven fixed hosts. There is no default or hosted instance; you point
-it at a server you run.
+**The trade/battle server is off unless you set one.** With no server address configured the app
+never contacts anything beyond the ten fixed hosts. There is no default or hosted instance; you
+point it at a server you run.
 
-What that host receives is game state only: one `MonState`, the display name you typed, and a
-random `clientUUID` generated on first use. No usage figures, no prompts, no project paths, and no
-credential. The `clientUUID` is a per-trade participant identifier, not an account, and lives in
-UserDefaults rather than the Keychain because it protects nothing.
+What that host receives is game state only, and it is more for a battle than for a trade:
+
+- **Trading** sends one `MonState`.
+- **A battle** sends your chosen roster, up to six Pokémon, as verifiable primitives rather than a
+  finished stat block: species id, level, nature, ability, IVs, EVs and move names. It then sends
+  each choice you make for the length of the session, and polls the server for the resulting log.
+  The server derives real stats and arbitrates turn order, which is why it needs the primitives:
+  a client-supplied stat block would be trivially forgeable by the other player.
+
+Both also send the display name you typed and a random `clientUUID` generated on first use. No
+usage figures, no prompts, no project paths, and no credential. The `clientUUID` identifies a
+participant, not an account, and lives in UserDefaults rather than the Keychain because it protects
+nothing.
+
+Your opponent's client never receives your real stats, and you never receive theirs: the server
+sends each side a redacted view carrying only an HP fraction.
 
 Transport is HTTPS. Plaintext `http` is refused for any remote host and permitted only for
 loopback, where it never leaves the machine.

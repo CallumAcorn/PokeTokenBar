@@ -164,14 +164,16 @@ Four things make that conversation easier:
 
 - The app reads **token counters only**. Prompt and response content is never parsed, stored or
   transmitted. [SECURITY.md](SECURITY.md) lists every path it touches.
-- It talks to **seven fixed hosts**, none of which carry your usage, prompts or project paths. The
-  only request carrying anything of yours is the Claude limits call, which goes to Anthropic, and
-  can be switched off entirely in Settings.
-- Trading adds **one more host, and only if you configure it** — a trade server you run yourself.
-  It receives a Pokémon, a display name you type, and a random client id; no usage data and no
-  credential. Leave the field empty and the feature is inert.
-- It registers the `poketokenbar://` URL scheme for trade invites. Any web page can open such a
-  link, so the app names the server and asks before connecting to it.
+- It talks to **ten fixed hosts**, none of which carry your usage, prompts or project paths. The
+  only requests carrying anything of yours are the official-limit calls, which go to Anthropic and
+  Google, the parties that issued those tokens, and can be switched off entirely in Settings.
+- Trading and battles add **one more host, and only if you configure it**: a server you run
+  yourself. Trading sends one Pokémon; a battle sends a roster of up to six as primitives (species,
+  level, nature, ability, IVs, EVs, moves) plus each move you choose. Both send a display name you
+  type and a random client id. No usage data and no credential. Leave the field empty and both
+  features are inert.
+- It registers the `poketokenbar://` URL scheme for trade and battle invites. Any web page can open
+  such a link, so the app names the server and asks before connecting to it.
 
 Ask first. Do not strip quarantine or disable protections to make it run.
 
