@@ -34,6 +34,18 @@ func typeColor(_ t: PokemonType) -> Color {
     }
 }
 
+/// Shared between the Collection tab's badge grid (BadgeChip) and BattleView's "badge earned"
+/// banner — a type-gym badge borrows typeColor (same vocabulary as move/type chips elsewhere);
+/// an Elite Four/Champion badge has no single type to borrow (mixed-team criterion), so it gets a
+/// flat accent instead.
+func gymBadgeAccentColor(_ badge: GymBadge) -> Color {
+    switch badge.info.criterion {
+    case .allOpponentType(let type, _): return typeColor(type)
+    case .opponentRosterContainsAny: return .indigo
+    }
+}
+
+
 /// 희귀도 캡슐을 늘어놓는 순서(귀한 것부터) — 포획 로그 요약 헤더와 도감 헤더가 공유한다.
 /// 순수 표시 순서다. 목록 정렬에는 쓰지 않는다.
 let rarityDisplayOrder: [Rarity] = [.legendary, .rare, .uncommon, .common]
@@ -766,18 +778,21 @@ struct DexSummaryHeader: View {
 }
 
 /// 컬렉션 탭 세그먼트 — 도감(종 단위 영구 언락) / PC(소유한 모든 개체) / 포획 로그(합류 기록).
-private enum CollectionSegment: Hashable { case dex, pc, log }
+private enum CollectionSegment: Hashable { case dex, pc, log, badges }
 
-/// 컬렉션 탭 — 도감·PC·포획 로그를 하위 세그먼트로 전환한다.
+/// 컬렉션 탭 — 도감·PC·포획 로그·배지를 하위 세그먼트로 전환한다.
 ///
-/// 세 화면은 같은 데이터를 다른 축으로 본다:
+/// 네 화면은 같은 데이터를 다른 축으로 본다:
 ///  - **도감**: 종 1개 = 1칸, 영구 언락(개체를 나중에 잃어도 안 지워진다). 같은 라인을 여러 번
 ///    키워도 한 칸으로 접힌다(종 정보만).
 ///  - **PC**: 지금 소유한 개체 1마리 = 1칸(도감과 같은 4×6 격자). 칸을 탭하면 개체 상세 화면이
 ///    열리고, 거기서 진화 잠금·훈련 전환을 한다.
 ///  - **로그**: 파티에 합류한 개체 1마리 = 1행(합류 시각순, 알/거래 표시). 같은 라인이 여러 행으로
 ///    나오는 게 정상 — 성격·합류 시각처럼 개체에 딸린 정보는 여기에만 있다.
-/// 상위 탭(PopoverTab)은 그대로 4개 — 세그먼트 폭(332/3)이 넉넉해 탭바를 늘릴 필요가 없다.
+///  - **배지**: 배틀에서 딴 GymBadge — 지역별로 묶은 고정 목록(65개 전부 항상 보임, 잠김/획득
+///    상태만 다름). 다른 세 세그먼트와 달리 페이지가 없다 — 종/개체처럼 늘어나는 컬렉션이 아니라
+///    고정된 체크리스트라 스크롤 하나로 충분하다.
+/// 상위 탭(PopoverTab)은 그대로 4개 — 세그먼트 폭(332/4)도 짧은 라벨엔 여전히 넉넉하다.
 struct CollectionView: View {
     let store: CompanionStore
     @State private var segment: CollectionSegment = .pc
@@ -810,6 +825,7 @@ struct CollectionView: View {
                     Text(store.l.pcTitle).tag(CollectionSegment.pc)
                     Text(store.l.dexTitle).tag(CollectionSegment.dex)
                     Text(store.l.catchLogTitle).tag(CollectionSegment.log)
+                    Text(store.l.gymBadgesTitle).tag(CollectionSegment.badges)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -817,6 +833,7 @@ struct CollectionView: View {
                 case .dex: DexGridView(store: store)
                 case .pc: PartyGridView(store: store)
                 case .log: catchLog
+                case .badges: BadgesGridView(store: store)
                 }
             }
             .frame(height: Self.contentHeight)
@@ -863,6 +880,242 @@ struct CollectionView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
+    }
+}
+
+/// 배지 — GymBadge 65개를 지역별로 묶어 늘 전부 보여주는 고정 체크리스트(잠김/획득만 갈린다).
+/// 도감/PC 처럼 늘어나는 컬렉션이 아니라 개수가 고정이라 페이지 대신 스크롤 하나로 충분하다
+/// (포획 로그와 같은 이유·같은 ScrollView 패턴).
+private struct BadgesGridView: View {
+    let store: CompanionStore
+    /// Tapped chip — pushes BadgeDetailView in its place, same pattern PartyGridView/DexGridView
+    /// use for their own cell → detail transition.
+    @State private var selectedBadge: GymBadge?
+
+    /// 선언 순서 그대로 지역별로 묶는다(GymBadge 가 지역별로 연달아 선언돼 있어 안전 — 지역이
+    /// 바뀌는 지점마다 새 그룹을 연다). Dictionary(grouping:) 을 안 쓰는 이유: 그건 원래 선언
+    /// 순서(간토→조토→…)를 보장하지 않는다.
+    private static let badgesByRegion: [(region: String, badges: [GymBadge])] = {
+        var result: [(region: String, badges: [GymBadge])] = []
+        for badge in GymBadge.allCases {
+            let region = badge.info.region
+            if let last = result.indices.last, result[last].region == region {
+                result[last].badges.append(badge)
+            } else {
+                result.append((region, [badge]))
+            }
+        }
+        return result
+    }()
+
+    var body: some View {
+        if let badge = selectedBadge {
+            BadgeDetailView(store: store, badge: badge) { selectedBadge = nil }
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text(store.l.gymBadgesTitle).font(.callout.weight(.semibold))
+                    Text(store.l.gymBadgesTotal(store.gymBadges.count, GymBadge.allCases.count))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(Self.badgesByRegion, id: \.region) { entry in
+                            regionSection(entry.region, entry.badges)
+                        }
+                    }
+                }
+                .frame(maxHeight: .infinity)
+            }
+        }
+    }
+
+    /// A region's 13 badges are always 8 gym leaders + 4 Elite Four + 1 Champion, in that declared
+    /// order (see GymBadge's case order) — split into two background cards (Gym Badges; Elite
+    /// Four+Champion together, each with its own sub-label) instead of one flat wrapping grid, so
+    /// the Elite Four/Champion group (no real artwork — see BadgeGlyph) reads as its own labeled
+    /// section rather than blending into the real-art gym badges above it.
+    private func regionSection(_ region: String, _ badges: [GymBadge]) -> some View {
+        let earned = badges.lazy.filter { store.gymBadges.contains($0) }.count
+        let gymBadges = Array(badges.prefix(8))
+        let eliteFour = Array(badges.dropFirst(8).prefix(4))
+        let champion = badges.dropFirst(12).first
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(region).font(.caption.weight(.semibold))
+                Text("\(earned)/\(badges.count)").font(.caption2).foregroundStyle(.secondary)
+            }
+            badgeCard {
+                subLabel(store.l.gymBadgeGroupGyms)
+                badgeRow(Array(gymBadges.prefix(4)))
+                badgeRow(Array(gymBadges.dropFirst(4)))
+            }
+            badgeCard {
+                subLabel(store.l.gymBadgeGroupEliteFour)
+                badgeRow(eliteFour)
+                if let champion {
+                    subLabel(store.l.gymBadgeGroupChampion)
+                    HStack(spacing: 8) {
+                        BadgeChip(store: store, badge: champion, earned: store.gymBadges.contains(champion)) {
+                            selectedBadge = champion
+                        }
+                        .frame(width: 60)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+    }
+
+    private func subLabel(_ text: String) -> some View {
+        Text(text).font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+    }
+
+    /// Same card language ShopView's groupTile already uses (`Color.secondary.opacity(0.06)` +
+    /// 10pt corner radius) — reused here so the Badges tab doesn't introduce its own card style.
+    private func badgeCard(@ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 6, content: content)
+            .padding(8)
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func badgeRow(_ badges: [GymBadge]) -> some View {
+        HStack(spacing: 8) {
+            ForEach(badges, id: \.self) { badge in
+                BadgeChip(store: store, badge: badge, earned: store.gymBadges.contains(badge)) {
+                    selectedBadge = badge
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+}
+
+/// One glyph, any size — real PokeAPI/sprites artwork fetched at runtime (see
+/// `SpriteLoader.badgeImage`) for the 40 real gym-leader badges, the plain seal SF Symbol fallback
+/// otherwise (the 25 Elite Four/Champion badges the source set has no art for — see
+/// `GymBadge.artworkSpriteNumber`). Locked badges desaturate + dim regardless of which glyph they
+/// end up as — same "opacity + grayscale" language
+/// DexSpeciesDetailView's spriteSlot already uses for a locked shiny slot.
+struct BadgeGlyph: View {
+    let badge: GymBadge
+    let earned: Bool
+    var size: CGFloat = 20
+    @State private var img: NSImage?
+
+    init(badge: GymBadge, earned: Bool, size: CGFloat = 20) {
+        self.badge = badge
+        self.earned = earned
+        self.size = size
+        // 캐시에 있으면 즉시(동기) 표시 — ItemIconView 와 같은 재렌더 플래시 방지.
+        _img = State(initialValue: badge.artworkSpriteNumber.flatMap { SpriteLoader.cachedBadgeImage(spriteNumber: $0) })
+    }
+
+    var body: some View {
+        Group {
+            if let img {
+                Image(nsImage: img)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .saturation(earned ? 1 : 0)
+                    .opacity(earned ? 1 : 0.35)
+            } else {
+                Image(systemName: earned ? "seal.fill" : "seal")
+                    .font(.system(size: size * 0.85))
+                    .foregroundStyle(earned ? gymBadgeAccentColor(badge) : Color.secondary.opacity(0.3))
+            }
+        }
+        .frame(width: size, height: size)
+        .task(id: badge) {
+            guard img == nil, let number = badge.artworkSpriteNumber else { return }
+            img = await SpriteLoader.badgeImage(spriteNumber: number)
+        }
+    }
+}
+
+private struct BadgeChip: View {
+    let store: CompanionStore
+    let badge: GymBadge
+    let earned: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 3) {
+                BadgeGlyph(badge: badge, earned: earned, size: 22)
+                Text(badge.info.trainerName)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(earned ? .primary : .secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .help(earned ? badge.info.title : "\(badge.info.title) — \(store.l.gymBadgeLocked)")
+    }
+}
+
+/// Tapped from BadgeChip — same "push a detail screen in place of the grid" shape
+/// DexSpeciesDetailView/MonDetailView already use. Its whole reason to exist is answering "how do
+/// I get this one" (GymBadgeCriterion.unlockHint, phrased via the L templates below) — the grid
+/// itself only ever shows a locked/earned seal, never the criterion.
+private struct BadgeDetailView: View {
+    let store: CompanionStore
+    let badge: GymBadge
+    var onClose: () -> Void
+
+    private var earned: Bool { store.gymBadges.contains(badge) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            header
+            VStack(spacing: 8) {
+                BadgeGlyph(badge: badge, earned: earned, size: 56)
+                Text(badge.info.title).font(.title3.weight(.bold)).multilineTextAlignment(.center)
+                Text("\(badge.info.trainerName) · \(badge.info.region)")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                statusPill
+            }
+            .frame(maxWidth: .infinity)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(store.l.gymBadgeHowToUnlock).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(unlockHint).font(.caption)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            Button(action: onClose) { Image(systemName: "chevron.left") }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(store.l.back)
+            Text(store.l.gymBadgesTitle).font(.callout.weight(.semibold))
+            Spacer()
+        }
+    }
+
+    private var statusPill: some View {
+        Text(earned ? store.l.gymBadgeEarnedStatus : store.l.gymBadgeLocked)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(earned ? Color.green.opacity(0.15) : Color.secondary.opacity(0.15), in: Capsule())
+            .foregroundStyle(earned ? .green : .secondary)
+    }
+
+    /// GymBadgeCriterion carries no localized text of its own (Core has no L dependency) — this is
+    /// where its two shapes turn into a sentence, using typeName for the one proper-noun-adjacent
+    /// piece that already has real translations.
+    private var unlockHint: String {
+        switch badge.info.criterion {
+        case .allOpponentType(let type, let minRosterSize):
+            return store.l.gymBadgeUnlockHintType(store.l.typeName(type), minRosterSize)
+        case .opponentRosterContainsAny(let names):
+            return store.l.gymBadgeUnlockHintSignature(names.joined(separator: ", "))
+        }
     }
 }
 

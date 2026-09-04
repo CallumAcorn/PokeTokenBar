@@ -183,6 +183,49 @@ enum BattleClient {
         return decoded.battles
     }
 
+    // MARK: Opponent roster reveal (gym badges)
+
+    /// Team preview (`|poke|p1|Pikachu, L50|`, one line per roster slot, in roster order) reveals
+    /// every mon's species for *both* sides right at battle start, including bench mons never sent
+    /// out — kept as its own small copy of the parse `BattleView` (the SwiftUI screen) already does
+    /// for its chat recap; different callers, pure wire-format knowledge, not worth sharing a type
+    /// across the Core/UI boundary for.
+    private static func teamPreviewSpeciesNames(_ log: [String]) -> [String: [String]] {
+        var result: [String: [String]] = [:]
+        for line in log {
+            let parts = line.components(separatedBy: "|")
+            guard parts.count >= 4, parts[1] == "poke" else { continue }
+            let species = parts[3].components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? parts[3]
+            result[parts[2], default: []].append(species)
+        }
+        return result
+    }
+
+    /// This side's ident always looks like "{side}a: {displayName}-{index}" (pkmnAdapter.ts's
+    /// nickname convention) — so scanning the log for the first ident whose nickname starts with
+    /// our own display name tells "p1"/"p2" apart without ever needing to be told which one we are
+    /// server-side (the wire format always speaks in terms of you/opponent, never p1/p2).
+    private static func mySide(log: [String], myDisplayName: String) -> String? {
+        let prefix = myDisplayName + "-"
+        for line in log {
+            for part in line.components(separatedBy: "|") {
+                guard part.hasPrefix("p1") || part.hasPrefix("p2"), let colonRange = part.range(of: ": ") else { continue }
+                if part[colonRange.upperBound...].hasPrefix(prefix) { return String(part.prefix(2)) }
+            }
+        }
+        return nil
+    }
+
+    /// Every species in the opponent's revealed roster (team preview), for scoring gym badges once
+    /// a battle completes as a win — see `GymBadge.earned(against:)`. Empty if team preview never
+    /// ran (shouldn't happen; this app's fixed battle format always runs it) or `mySide` couldn't be
+    /// determined (e.g. a truncated/corrupt log).
+    static func opponentRosterNames(log: [String], myDisplayName: String) -> [String] {
+        guard let mine = mySide(log: log, myDisplayName: myDisplayName) else { return [] }
+        let other = mine == "p1" ? "p2" : "p1"
+        return teamPreviewSpeciesNames(log)[other] ?? []
+    }
+
     // MARK: MonState → Primitive
 
     enum PrimitiveError: Error, Equatable {

@@ -1971,6 +1971,21 @@ final class PokeAPIGuardTests: XCTestCase {
     func testValidatedChainURLRejectsUntrusted() {
         XCTAssertNil(PokeAPIClient.validatedChainURL("https://evil.example.com/x"), "임의 호스트 거부(SSRF)")
         XCTAssertNil(PokeAPIClient.validatedChainURL("https://pokeapi.co.evil.com/x"), "유사 호스트 거부")
+
+        // 슬러그도 같은 부류의 경계다. 입력이 **배틀 로그 줄의 종명**이라 서버가 준 값이고(초대 링크가
+        // 서버를 지정할 수 있다), 결과는 appendingPathComponent 로 URL 경로에 들어간다. 호스트는 고정이라
+        // 임의 호스트로는 못 가지만, `/`·`..` 가 남으면 PokéAPI 안에서 의도하지 않은 경로가 만들어진다.
+        XCTAssertEqual(PokeAPIClient.slug(fromDisplayName: "../../etc/passwd"), "etcpasswd",
+                       "경로 구분자와 상위 참조가 남았다")
+        XCTAssertEqual(PokeAPIClient.slug(fromDisplayName: "a/b"), "ab")
+        XCTAssertFalse(PokeAPIClient.slug(fromDisplayName: "x?y=1#z").contains(where: { "?#=".contains($0) }),
+                       "쿼리·프래그먼트 문자가 남았다")
+        // 정상 이름은 그대로 통과하고, 구두점이 섞인 종명은 오히려 PokéAPI 슬러그와 **맞게** 된다.
+        XCTAssertEqual(PokeAPIClient.slug(fromDisplayName: "Venusaur"), "venusaur")
+        XCTAssertEqual(PokeAPIClient.slug(fromDisplayName: "Ho-Oh"), "ho-oh")
+        XCTAssertEqual(PokeAPIClient.slug(fromDisplayName: "Farfetch'd"), "farfetchd")
+        XCTAssertEqual(PokeAPIClient.slug(fromDisplayName: "Mr. Mime"), "mr-mime")
+        XCTAssertEqual(PokeAPIClient.slug(fromDisplayName: "Type: Null"), "type-null")
         XCTAssertNil(PokeAPIClient.validatedChainURL("http://pokeapi.co/x"), "http 거부(https 고정)")
         XCTAssertNil(PokeAPIClient.validatedChainURL(""), "빈 문자열 거부")
     }

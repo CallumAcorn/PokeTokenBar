@@ -664,9 +664,11 @@ final class SaveTransferTests: XCTestCase {
         // and ownership travels with the save. sanitized() reconciles it after backfilling
         // dexUnlocked, so a hand-edited save cannot import a pin for a species the state lacks.
         // ownedTMs (owned TMs) = same class as inventory — it's owned goods, so it follows progress (not this device's ledger).
+        // gymBadges = same class as ownedTMs — earned by beating a battle opponent, travels with the save.
         let progress: Set<String> = ["usedSinceInstall", "spentTokens", "eggUsage", "eggTier", "eggRegion",
                                      "pendingHatchID", "party", "trainingSlotID", "dexUnlocked",
-                                     "dex", "collectedFinals", "inventory", "representativeSpeciesID", "ownedTMs"]
+                                     "dex", "collectedFinals", "inventory", "representativeSpeciesID", "ownedTMs",
+                                     "gymBadges"]
         let deviceLedger: Set<String> = ["installBaselineSet", "claimedTodayTokensByProvider", "lastDate"]
         let accountLedger: Set<String> = ["candyGrantTier", "candyFeatureSeeded", "movesFeatureSeeded"]
         let devicePreference: Set<String> = ["language"]

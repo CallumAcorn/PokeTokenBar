@@ -4,6 +4,7 @@ import XCTest
 private extension Array where Element == BattleView.LogBeat {
     var moves: [BattleView.MoveLogEvent] { compactMap { if case .move(let e) = $0 { e } else { nil } } }
     var chips: [BattleView.EffectChip] { compactMap { if case .chip(let c) = $0 { c } else { nil } } }
+    var switches: [BattleView.SwitchLogEvent] { compactMap { if case .switchIn(let s) = $0 { s } else { nil } } }
 }
 
 /// [Regression] Status moves (Growl, Tail Whip, String Shot…) never move an HP bar, so without this
@@ -101,11 +102,34 @@ final class BattleViewMoveLogParsingTests: XCTestCase {
         // would lose this order entirely.
         let kinds = result.beats.map { beat -> String in
             switch beat {
+            case .switchIn(let s): return "switch:\(s.isMine ? "mine" : "opponent")"
             case .move(let e): return "move:\(e.moveName)"
             case .chip(let c): return "chip:\(c.text)"
             }
         }
         XCTAssertEqual(kinds, ["move:Growl", "chip:-1 Atk", "move:Tackle", "chip:Poisoned!"])
+    }
+
+    /// [Regression] A switch and a move landing in the same poll (opponent swaps in a counter, then
+    /// immediately attacks) rendered as if they happened simultaneously — reported as "it all
+    /// happened at once, the switch should happen, then the moves, with proper delays between like
+    /// combat does". The switch line produced no beat at all before this, so only the move got
+    /// queued/paced; the sprite itself just snapped to the new mon the instant the poll landed.
+    func testSwitchLinesProduceTheirOwnBeatOrderedBeforeAFollowingMove() {
+        let log = [
+            "|switch|p2a: Gary-0|Venusaur, L59|177/177",
+            tackleLine,
+        ]
+        let result = beats(log)
+        XCTAssertEqual(result.beats.switches.map(\.isMine), [false], "the opponent's switch, not mine")
+        let kinds = result.beats.map { beat -> String in
+            switch beat {
+            case .switchIn: return "switch"
+            case .move: return "move"
+            case .chip: return "chip"
+            }
+        }
+        XCTAssertEqual(kinds, ["switch", "move"], "the switch is its own beat, playable before the move rather than invisible")
     }
 }
 
@@ -204,6 +228,93 @@ final class BattleViewEffectChipParsingTests: XCTestCase {
         XCTAssertEqual(chips(["|-damage|p2a: Gary-0|80/100"], previouslySeenCount: 50, hpFractions: &fractions),
                        [BattleView.EffectChip(text: "-20% HP", isMine: false, isPositive: false)],
                        "should diff against a fresh 1.0 baseline, not the stale 0.2")
+    }
+}
+
+/// The moveLogOverlay's plain-English recap — a superset of the line kinds `parseLogBeats`/`chips`
+/// care about, since this one's meant to read like a recap rather than drive scene playback. Each
+/// line is also attributed to a speaker (mine/opponent/neutral) so the chat-log UI can put my
+/// lines on one side and the opponent's on the other.
+// BattleView.formattedLogLines 는 SwiftUI View 의 static 이라 @MainActor 다. Swift 6.3 은 테스트
+// 메서드에 MainActor 를 추론해 로컬에서는 그냥 컴파일되지만, CI(macos-15 / Swift 6.0)는 추론하지
+// 않아 'main actor-isolated ... in a synchronous nonisolated context' 로 빌드가 깨진다.
+// 같은 파일의 다른 두 클래스는 이미 @MainActor 다 — 이 클래스만 빠져 있었다.
+@MainActor
+final class BattleViewFormattedLogLinesTests: XCTestCase {
+    func testCoversTheCommonlyInterestingLineKindsAndAttributesEachToASpeaker() {
+        let log = [
+            "|switch|p1a: Ash-0|Pikachu, L50, M|100/100",
+            "|move|p1a: Ash-0|Thunderbolt|p2a: Gary-0",
+            "|-supereffective|p2a: Gary-0",
+            "|-crit|p2a: Gary-0",
+            "|-damage|p2a: Gary-0|40/100",
+            "|-status|p2a: Gary-0|par",
+            "|cant|p2a: Gary-0|par",
+            "|-miss|p1a: Ash-0|p2a: Gary-0",
+            "|-immune|p2a: Gary-0",
+            "|-ability|p1a: Ash-0|Static",
+            "|-weather|RainDance",
+            "|-weather|RainDance|[upkeep]",
+            "|-curestatus|p2a: Gary-0|par",
+            "|faint|p2a: Gary-0",
+            "|turn|2",
+            "|win|Ash",
+        ]
+        let lines = BattleView.formattedLogLines(log, myDisplayName: "Ash")
+        XCTAssertEqual(lines.map(\.text), [
+            "Ash-0 was sent out!",
+            "Ash-0 used Thunderbolt!",
+            "It's super effective on Gary-0!",
+            "A critical hit on Gary-0!",
+            "Gary-0 took damage. (40/100)",
+            "Gary-0 was afflicted!",
+            "Gary-0 couldn't move!",
+            "Ash-0's attack missed!",
+            "Gary-0 is unaffected!",
+            "Ash-0's Ability: Static",
+            "The weather became RainDance!",
+            "Gary-0's status was cured!",
+            "Gary-0 fainted!",
+            "— Turn 2 —",
+            "Ash won the battle!",
+        ], "the [upkeep] weather repeat should be suppressed, not shown every turn")
+        // No |poke| team preview lines in this fixture — displayName(for:teamPreview:) falls back
+        // to the raw nickname, same as formattedLogLines' own fallback test covers.
+        let gary = BattleView.ChatLogLine.Speaker.opponent(speciesName: "Gary-0")
+        XCTAssertEqual(lines.map(\.speaker), [
+            .mine(index: 0), .mine(index: 0), gary, gary, gary, gary, gary,
+            .mine(index: 0), gary, .mine(index: 0), .neutral, gary, gary,
+            .neutral, .neutral,
+        ], "my own lines (Ash-N) carry my roster index; the opponent's carry their species name (falls back to the raw nickname without team preview data); field-wide lines carry neither")
+    }
+
+    func testUsesTeamPreviewSpeciesNamesInsteadOfTheRawNickname() {
+        // |poke|SIDE|Species, Level| — one line per roster slot, in roster order, emitted for both
+        // sides before turn 1. This is what lets a battle line say "Pikachu" instead of "Ash-0".
+        let log = [
+            "|poke|p1|Pikachu, L50|",
+            "|poke|p1|Charizard, L50|",
+            "|poke|p2|Venusaur, L59|",
+            "|teampreview",
+            "|switch|p1a: Ash-0|Pikachu, L50, M|100/100",
+            "|move|p1a: Ash-0|Thunderbolt|p2a: Gary-0",
+            "|-damage|p2a: Gary-0|80/100",
+        ]
+        let lines = BattleView.formattedLogLines(log, myDisplayName: "Ash")
+        XCTAssertEqual(lines.map(\.text), [
+            "Pikachu was sent out!",
+            "Pikachu used Thunderbolt!",
+            "Venusaur took damage. (80/100)",
+        ], "the roster's real species names, not the \"{displayName}-{index}\" nickname the server assigns")
+    }
+
+    func testFallsBackToTheRawNicknameWhenTeamPreviewDoesntCoverAnIdentity() {
+        // No |poke| lines at all here — shouldn't happen in practice (this app's fixed
+        // gen5customgame format always opens with team preview), but a missing/partial lookup
+        // should degrade to the old nickname text, not an empty or crashing line.
+        let log = ["|move|p1a: Ash-0|Thunderbolt|p2a: Gary-0"]
+        let lines = BattleView.formattedLogLines(log, myDisplayName: "Ash")
+        XCTAssertEqual(lines.map(\.text), ["Ash-0 used Thunderbolt!"])
     }
 }
 

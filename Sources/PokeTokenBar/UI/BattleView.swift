@@ -28,7 +28,10 @@ struct BattleView: View {
     @Environment(OnlineStore.self) private var online
     var onClose: () -> Void
 
-    @State private var selectedMonIDs: Set<MonState.ID> = []
+    /// Ordered, not a `Set` — the team grid and the roster actually submitted both follow *pick
+    /// order* (append on select, remove on deselect via `toggle`), not party order. Reordering
+    /// (`moveDroppedMon`) mutates this same array by moving an id, so both stay in sync for free.
+    @State private var selectedMonIDs: [MonState.ID] = []
     @State private var confirmingLink: BattleDeepLink?
     @State private var copiedFeedback = false
     @State private var pastedInviteLink = ""
@@ -60,6 +63,33 @@ struct BattleView: View {
     }
     @State private var opponentEffect = SpriteEffect()
     @State private var yourEffect = SpriteEffect()
+    /// The sprite actually shown for each side — driven by `.switchIn` beats landing (see `play(_:)`),
+    /// not bound live to `opponent.active`/`yourActive`. A switch and a move can land in the same
+    /// poll (opponent swaps in a counter, then immediately attacks); binding the sprite straight to
+    /// live state would show the new mon and the move's flash at the same instant, reading as "it
+    /// all happened at once" instead of "switch, then — a beat later — the move." Seeded once from
+    /// live state when the scene first appears (`battleScene`'s `.task`) so reopening the window
+    /// mid-battle shows the correct mon immediately rather than an egg placeholder until catch-up
+    /// beats replay far enough to resolve one.
+    @State private var displayedOpponentSpeciesID: Int?
+    @State private var displayedYourSpeciesID: Int?
+    /// Same "paced, not live" reasoning as `displayedOpponentSpeciesID` — the just-switched-in mon
+    /// fainting to a beat that hasn't played yet (the fatal move's flash, the damage chip, the faint
+    /// chip itself) is exactly what read as "no delay, it came in dead": `yourActive?.fainted`/
+    /// `opponent.active?.fainted` already say `true` the instant the poll lands, showing the tilted/
+    /// faded fainted pose on the switch-in's very first frame instead of only once the "faint" chip
+    /// beat actually plays. Set `true` by that chip beat (see `play(_:)`), reset `false` the moment a
+    /// fresh switch-in beat plays for that side (a mon that just switched in is obviously not fainted).
+    @State private var displayedOpponentFainted = false
+    /// Same "paced, not live" reasoning again, this time for the HP bar itself — `active.hpFraction`
+    /// already reflects the *finished* result of a hit the instant the poll lands, so the bar would
+    /// otherwise drop (or the faint pose show) before the move's own flash/text beat had even played,
+    /// undercutting the whole point of pacing the rest. Set by an HP chip beat landing (`play(_:)`'s
+    /// `.chip` case, via `EffectChip.hpDeltaFraction`) or reset to the switched-in mon's own current
+    /// fraction by a switch-in beat; seeded from live state on first appearance same as the others.
+    @State private var displayedOpponentHPFraction: Double?
+    @State private var displayedYourHPFraction: Double?
+    @State private var displayedYourFainted = false
     /// Short floating labels next to a sprite ("+1 SPE", "Poisoned!", "-14% HP") — the numeric/named
     /// detail the flash/color alone doesn't convey. A list, not a single overwritten value, because
     /// one log update can carry more than one (Leech Seed damages one side and heals the other in
@@ -101,7 +131,21 @@ struct BattleView: View {
     /// The full battle log, toggled on demand — off by default (the scene + action box already
     /// cover "what do I do now"; this is for "what actually happened", opt-in detail).
     @State private var showMoveLog = false
+    /// Species-name → sprite id for opponent mons revealed via team preview, resolved over the
+    /// network once per name (see `moveLogOverlay`'s `.task`) — lets the chat-log recap show the
+    /// mon that actually said each line instead of whichever one's active *now* (`opponent.active`
+    /// only ever tells you that). A name absent here just means "not resolved yet" (or the lookup
+    /// failed) — `chatLogRow` falls back to an egg placeholder rather than guessing.
+    @State private var opponentSpeciesIDByName: [String: Int] = [:]
     @State private var confirmingForfeit = false
+    /// Set the instant a move *or* voluntary switch is submitted, to the turn it was submitted for
+    /// — @pkmn/sim's own `Side.requestState` (what `view.pendingChoice` mirrors) doesn't clear on
+    /// the side that already chose; it only resets once *both* sides have and the turn resolves
+    /// (`commitChoices` nulls both `activeRequest`s together). Left alone, that reads as "still
+    /// waiting on you" — the move grid (or the forced-switch prompt) flashing back up — even though
+    /// your choice already went through. Comparing against `view.turn` is what self-clears this once
+    /// the real turn actually advances, without an explicit reset anywhere else.
+    @State private var choiceSubmittedForTurn: Int?
 
     private var l: L { companion.l }
 
@@ -161,6 +205,19 @@ struct BattleView: View {
         var userName: String? = nil
     }
 
+    struct SwitchLogEvent: Equatable {
+        let isMine: Bool
+        /// Same "can't know from the log identity alone, filled in from current state after
+        /// `parseLogBeats` returns" shape as `MoveLogEvent.userName` — a switch beat is always the
+        /// mon that ends up active on that side, so `you`/`opponent`'s current active species is
+        /// exact, not an approximation.
+        var speciesID: Int? = nil
+        /// The switched-in mon's *own* current HP (not a delta) — a fresh switch-in should show
+        /// whatever HP that mon actually has right now (possibly already damaged from earlier this
+        /// battle), not the fraction the previous occupant left behind.
+        var hpFraction: Double? = nil
+    }
+
     struct EffectChip: Identifiable, Equatable {
         let id = UUID()
         /// `var`, not `let` — an HP chip's percentage text can be upgraded to a real point count
@@ -186,10 +243,14 @@ struct BattleView: View {
         }
     }
 
-    /// One line of "what visibly happened" — a move landing (flash + banner) or a side-effect chip
-    /// (a stat stage, a status, an HP swing, a faint). Kept as an enum, not two separate arrays, so
-    /// playback can walk them in one single, already-correctly-ordered sequence — see `parseLogBeats`.
+    /// One line of "what visibly happened" — a switch, a move landing (flash + banner), or a
+    /// side-effect chip (a stat stage, a status, an HP swing, a faint). Kept as an enum, not
+    /// separate arrays, so playback can walk them in one single, already-correctly-ordered
+    /// sequence — see `parseLogBeats`. Including switches here (not just applying them the instant
+    /// new state arrives) is what makes "opponent switches, *then* a move lands on the new mon"
+    /// read as two separate beats with a real gap between them, instead of both appearing at once.
     enum LogBeat: Equatable {
+        case switchIn(SwitchLogEvent)
         case move(MoveLogEvent)
         case chip(EffectChip)
     }
@@ -226,6 +287,8 @@ struct BattleView: View {
             guard parts.count >= 3 else { continue }
             let isMine = identBelongsToMe(parts[2], myDisplayName: myDisplayName)
             switch parts[1] {
+            case "switch", "drag":
+                beats.append(.switchIn(SwitchLogEvent(isMine: isMine)))
             case "move":
                 guard parts.count >= 4 else { continue }
                 // No explicit target field (some self-targeting moves omit it) — assume it landed on
@@ -328,15 +391,15 @@ struct BattleView: View {
             // switch re-enters .idle, which covers both "returning to idle" and "window reopened
             // while already idle" in one hook.
             rosterPicker.padding(BattleWindowMetrics.padding)
-                .onAppear { resetPickerState() }
+                .onAppear { resetPickerState(); resetBattleSceneState() }
         case .starting:
             // The instant gap between tapping Create/Join and there being anything real to show
             // (the roster-build + create/join POST + join's first confirming poll) — without this,
             // the roster picker just sat there unchanged after a tap, reading as stuck/unresponsive.
             statusView(message: l.battleStartingTitle, showsSpinner: true)
                 .padding(BattleWindowMetrics.padding)
-        case .waitingForOpponent(_, let shareURL):
-            waitingForOpponent(shareURL: shareURL).padding(BattleWindowMetrics.padding)
+        case .waitingForOpponent(let sessionId, let shareURL):
+            waitingForOpponent(sessionId: sessionId, shareURL: shareURL).padding(BattleWindowMetrics.padding)
         case .battling(_, let view):
             // Deliberately no padding — a battle scene reads as a real game screen only if the
             // background actually fills the window edge to edge, not sitting in a padded card.
@@ -424,35 +487,60 @@ struct BattleView: View {
 
     /// Step 2a: paste a link. Submitting a valid one sets `battle.pendingInvite`, which makes
     /// `joinTarget` non-nil — `rosterPicker` advances to the roster-pick step on its own next render,
-    /// no explicit step transition needed here.
+    /// no explicit step transition needed here. Centered and space-filling, matching the browse and
+    /// waiting screens' own pass — this used to be a single small text field pinned in the corner.
     private var pasteLinkStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            backButton
-            Text(l.battlePasteLinkPrompt).font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-            pasteInviteRow
+        VStack(spacing: 16) {
+            backButton.frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 0)
+            VStack(spacing: 10) {
+                Image(systemName: "link")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(Color.blue.gradient, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text(l.battlePasteLinkPrompt).font(.system(size: 15, weight: .semibold))
+            }
+            pasteInviteCard
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// Step 2b: browse the open lobby. Tapping an entry sets `browseTarget`, which — same as
     /// `pasteLinkStep` — makes `joinTarget` non-nil and advances the flow on its own.
     private var browseListStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             backButton
             Text(l.battleBrowsePrompt).font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
             openBattlesList
         }
     }
 
-    private var backButton: some View {
-        Button { pickerStep = .chooseMode } label: {
+    /// Same `<- Back` affordance on every step of this flow (`pasteLinkStep`/`browseListStep` use the
+    /// no-arg form below; `rosterPickStep` needs the extra resets `exitRosterPick` does, so it passes
+    /// its own action) — this used to be a bare "X" glyph here and a labeled chevron everywhere else.
+    private func backButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             Label(l.back, systemImage: "chevron.left")
                 .font(.system(size: 12, weight: .semibold))
         }
         .buttonStyle(.borderless)
     }
 
+    private var backButton: some View {
+        backButton { pickerStep = .chooseMode }
+    }
+
+    private func exitRosterPick() {
+        browseTarget = nil
+        declineInvite()
+        creatingNew = false
+        pickerStep = .chooseMode
+    }
+
     /// Step 3, shared by both create and join: pick a roster, then confirm. `target` is `nil` only
-    /// for a fresh create — everything else about this screen (the "X" to back out, the display-name
+    /// for a fresh create — everything else about this screen (the back button, the display-name
     /// gate, the grid, the submit button) is identical either way.
     private func rosterPickStep(target: (sessionId: String, server: String)?) -> some View {
         // A mon with no known moves yet can't field a legal roster slot (the server would reject
@@ -461,18 +549,9 @@ struct BattleView: View {
         // removes a mon from the PC the way a trade does (battles.md's Flow §1).
         let eligible = companion.party.filter { !$0.knownMoves.isEmpty }
         return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(target != nil ? l.battleJoinPrompt(target!.server) : l.battlePickRoster)
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    browseTarget = nil
-                    declineInvite()
-                    creatingNew = false
-                    pickerStep = .chooseMode
-                } label: { Image(systemName: "xmark.circle") }
-                .buttonStyle(.borderless)
-            }
+            backButton(action: exitRosterPick)
+            Text(target != nil ? l.battleJoinPrompt(target!.server) : l.battlePickRoster)
+                .font(.caption).foregroundStyle(.secondary)
             if !hasValidDisplayName {
                 Text(l.tradeDisplayNameRequired).font(.caption2).foregroundStyle(.orange)
             }
@@ -490,13 +569,17 @@ struct BattleView: View {
                 // empty dashed slots for the rest. Tap a filled one to drop it back out.
                 selectedRosterGrid(eligible: eligible)
                 sectionHeader(l.battleYourParty)
+                // Flexible, not a fixed height (unlike TradeView's offer list) — fills whatever
+                // space is left below the fixed-size team grid/headers, so Your Party isn't
+                // squeezed into a small box and the submit button below lands at the window's
+                // bottom edge instead of floating right under a cramped list.
                 ScrollView {
                     partyGrid(eligible: eligible)
                 }
-                // Fixed height, not maxHeight — same reasoning as TradeView's offer list.
-                .frame(height: 130)
+                .frame(maxHeight: .infinity)
                 Button {
-                    let roster = eligible.filter { selectedMonIDs.contains($0.id) }
+                    let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
+                    let roster = selectedMonIDs.compactMap { byID[$0] }
                     Task {
                         if let target {
                             await battle.joinBattle(sessionId: target.sessionId, server: target.server, roster: roster)
@@ -528,26 +611,56 @@ struct BattleView: View {
 
     /// Fixed 3×2 grid (not "as many columns as fit") — a party is always exactly up to 6, so a
     /// stable grid reads as "your team" rather than a list that reflows as you add/remove picks.
+    /// Order follows pick order (`selectedMonIDs`), not party order — this is exactly the order the
+    /// server sees (`rosterPickStep`'s submit maps `selectedMonIDs` the same way). Filled tiles are
+    /// also drag-reorderable — dropping one onto another tile, or an empty dashed slot, moves it
+    /// there rather than requiring remove-then-re-add-in-order.
     private func selectedRosterGrid(eligible: [MonState]) -> some View {
-        let selected = eligible.filter { selectedMonIDs.contains($0.id) }
+        let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
+        let selected = selectedMonIDs.compactMap { byID[$0] }
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
             ForEach(0..<BattleClient.maxRosterSize, id: \.self) { slot in
                 if slot < selected.count {
                     pcStyleTile(selected[slot], selected: true, size: 38)
+                        .draggable(selected[slot].id)
+                        .dropDestination(for: String.self) { items, _ in moveDroppedMon(items, toSlot: slot) }
                 } else {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4]))
                         .frame(height: 54)
+                        .dropDestination(for: String.self) { items, _ in moveDroppedMon(items, toSlot: slot) }
                 }
             }
         }
     }
 
+    /// A drop landing in the team grid at `slot` — either a reorder (the dragged id is already on
+    /// the team, so it's removed from its old spot first) or a pick (dragged up from `partyGrid`,
+    /// not yet on the team, so it's just inserted — same size cap `toggle` already enforces on tap).
+    /// `slot` may be past the current selection's end (an empty dashed slot), so it's clamped to
+    /// append in that case.
+    private func moveDroppedMon(_ items: [String], toSlot slot: Int) -> Bool {
+        guard let draggedID = items.first else { return false }
+        if let from = selectedMonIDs.firstIndex(of: draggedID) {
+            selectedMonIDs.remove(at: from)
+        } else if selectedMonIDs.count >= BattleClient.maxRosterSize {
+            return false
+        }
+        selectedMonIDs.insert(draggedID, at: min(slot, selectedMonIDs.count))
+        return true
+    }
+
     /// The rest of the party to pick from — a PC-box grid (sprite tiles), not the old list rows.
+    /// Mons already on the team are hidden here (they're shown up in `selectedRosterGrid` instead)
+    /// — showing the same mon in both grids read as a duplicate entry, not a picked/unpicked state.
+    /// Draggable up into a team slot — same drop handling `selectedRosterGrid`'s own tiles use for
+    /// reordering, `moveDroppedMon` just treats a not-yet-selected id as a pick rather than a move.
     private func partyGrid(eligible: [MonState]) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
-            ForEach(eligible) { mon in
-                pcStyleTile(mon, selected: selectedMonIDs.contains(mon.id), size: 30)
+        let unselected = eligible.filter { !selectedMonIDs.contains($0.id) }
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
+            ForEach(unselected) { mon in
+                pcStyleTile(mon, selected: false, size: 30)
+                    .draggable(mon.id)
             }
         }
     }
@@ -570,10 +683,10 @@ struct BattleView: View {
     }
 
     private func toggle(_ id: MonState.ID) {
-        if selectedMonIDs.contains(id) {
-            selectedMonIDs.remove(id)
+        if let idx = selectedMonIDs.firstIndex(of: id) {
+            selectedMonIDs.remove(at: idx)
         } else if selectedMonIDs.count < BattleClient.maxRosterSize {
-            selectedMonIDs.insert(id)
+            selectedMonIDs.append(id)
         }
     }
 
@@ -589,21 +702,61 @@ struct BattleView: View {
         pastedInviteError = false
     }
 
-    private var pasteInviteRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                TextField(l.battlePasteInviteLinkPlaceholder, text: $pastedInviteLink)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.caption)
-                    .onSubmit(submitPastedInviteLink)
-                Button(l.battleJoinButton, action: submitPastedInviteLink)
-                    .buttonStyle(.bordered).controlSize(.small)
-                    .disabled(pastedInviteLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+    /// The battle scene's own display state — `displayedOpponentSpeciesID`/`displayedYourSpeciesID`
+    /// and everything derived alongside them — only ever seeds itself once, the first time
+    /// `battleScene`'s `.task` sees them `nil` (see that `.task`'s doc comment for why it can't just
+    /// react to the log instead). In a reused window that's a bug, not a feature: after the first
+    /// battle these are never `nil` again, so a second battle's scene opens still showing the
+    /// previous one's mon/HP/fainted-pose until enough new log lines happen to overwrite each field
+    /// piecemeal. Cleared here, alongside `resetPickerState()`, on the same proven-reliable
+    /// "re-entered `.idle`" hook — a fresh `.battling` phase always starts from here.
+    private func resetBattleSceneState() {
+        displayedOpponentSpeciesID = nil
+        displayedYourSpeciesID = nil
+        displayedOpponentFainted = false
+        displayedYourFainted = false
+        displayedOpponentHPFraction = nil
+        displayedYourHPFraction = nil
+        opponentChips = []
+        yourChips = []
+        hpFractionsByIdent = [:]
+        myActiveMaxHP = nil
+        pendingBeats = []
+        isPlayingBeats = false
+        revealResult = false
+        recentMoveText = nil
+        moveTextGeneration = 0
+        lastSeenLogCount = 0
+        opponentSpeciesIDByName = [:]
+        choiceSubmittedForTurn = nil
+        battleBackgroundImage = nil
+        showMoveLog = false
+    }
+
+    /// Same card chrome (`Color.secondary.opacity(0.07)` fill + hairline border, 12pt radius,
+    /// 340pt max width) `waitingInviteCard`/`openBattleRow`/`modeChoiceButton` already use — a
+    /// consistent look across every screen in this flow, not a plain unstyled field + small button.
+    private var pasteInviteCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField(l.battlePasteInviteLinkPlaceholder, text: $pastedInviteLink)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 13))
+                .onSubmit(submitPastedInviteLink)
             if pastedInviteError {
-                Text(l.battleInvalidInviteLink).font(.caption2).foregroundStyle(.red)
+                Text(l.battleInvalidInviteLink).font(.system(size: 11)).foregroundStyle(.red)
             }
+            Button(l.battleJoinButton, action: submitPastedInviteLink)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .disabled(pastedInviteLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .padding(14)
+        .frame(maxWidth: 340, alignment: .leading)
+        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
     }
 
     private func submitPastedInviteLink() {
@@ -617,84 +770,154 @@ struct BattleView: View {
     }
 
     private var openBattlesList: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if battle.openBattles.isEmpty {
-                Text(l.battleNoOpenBattles).font(.caption2).foregroundStyle(.tertiary)
+        VStack(alignment: .leading, spacing: 10) {
+            if battle.isLoadingOpenBattles && battle.openBattles.isEmpty {
+                // First load, nothing to show yet — a spinner here instead of falling through to the
+                // empty-state text, which would otherwise flash "no open battles" for the round trip
+                // and could be mistaken for the real (empty) result.
+                browseStatus(showsSpinner: true, icon: nil, text: nil)
+            } else if battle.openBattles.isEmpty {
+                browseStatus(showsSpinner: false, icon: "tray", text: l.battleNoOpenBattles)
             } else {
+                // Flexible, not a fixed height — fills whatever space is left below the prompt so
+                // the refresh button underneath lands at the window's bottom edge, and the screen
+                // doesn't read as a small cramped list floating over a big dead gap.
                 ScrollView {
-                    VStack(spacing: 6) {
+                    VStack(spacing: 8) {
                         ForEach(battle.openBattles, id: \.sessionId) { open in
-                            Button {
-                                browseTarget = (open.sessionId, online.serverURL)
-                            } label: {
-                                HStack(spacing: 8) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        HStack {
-                                            Text(open.displayName).font(.system(size: 12, weight: .semibold))
-                                            Spacer()
-                                            Text(l.battleOpenRosterSize(open.rosterSize)).font(.caption2).foregroundStyle(.secondary)
-                                        }
-                                        HStack {
-                                            // "X min ago", live-updating — the freshest lobby is usually
-                                            // the right one when several share a display name (e.g. two
-                                            // local test instances both named "Test P2").
-                                            Text(Date(timeIntervalSince1970: open.createdAt / 1000), style: .relative)
-                                                .font(.system(size: 9)).foregroundStyle(.tertiary)
-                                            Spacer()
-                                            // Last 4 chars of the session id — a stable tiebreaker when name
-                                            // *and* age are both ambiguous (created within the same second).
-                                            Text(open.sessionId.suffix(4)).font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary)
-                                        }
-                                    }
-                                    // Reinforces the whole row is tappable — matches modeChoiceButton's
-                                    // same trailing-chevron affordance.
-                                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
-                                }
-                                .padding(8)
-                                .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                        .strokeBorder(Color.secondary.opacity(0.12), lineWidth: 1))
-                            }
-                            .buttonStyle(.plain)
+                            openBattleRow(open)
                         }
                     }
                 }
-                .frame(height: 120)
+                .frame(maxHeight: .infinity)
             }
             Button { Task { await battle.refreshOpenBattles() } } label: {
-                Label(l.battleBrowseOpen, systemImage: "arrow.clockwise")
-            }.buttonStyle(.borderless).controlSize(.small)
+                if battle.isLoadingOpenBattles && !battle.openBattles.isEmpty {
+                    Label(l.refresh, systemImage: "arrow.clockwise").opacity(0.5)
+                } else {
+                    Label(l.refresh, systemImage: "arrow.clockwise")
+                }
+            }
+            .buttonStyle(.borderless).controlSize(.small)
+            .disabled(battle.isLoadingOpenBattles)
         }
+    }
+
+    /// Centered placeholder filling the same flexible footprint the real list uses — a spinner on
+    /// first load, or an icon + message once a refresh has actually come back empty, so the screen
+    /// never collapses to one thin line of text floating at the top, and switching between
+    /// loading/empty/populated never resizes the window.
+    private func browseStatus(showsSpinner: Bool, icon: String?, text: String?) -> some View {
+        VStack(spacing: 8) {
+            if showsSpinner {
+                ProgressView().controlSize(.small)
+            } else if let icon {
+                Image(systemName: icon).font(.system(size: 22)).foregroundStyle(.tertiary)
+            }
+            if let text {
+                Text(text).font(.system(size: 12)).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func openBattleRow(_ open: BattleClient.OpenBattle) -> some View {
+        Button {
+            browseTarget = (open.sessionId, online.serverURL)
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(open.displayName).font(.system(size: 13, weight: .semibold))
+                        Spacer()
+                        Text(l.battleOpenRosterSize(open.rosterSize)).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        // "X min ago", live-updating — the freshest lobby is usually the right one
+                        // when several share a display name (e.g. two local test instances both
+                        // named "Test P2").
+                        Text(Date(timeIntervalSince1970: open.createdAt / 1000), style: .relative)
+                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                        Spacer()
+                        // Last 4 chars of the session id — a stable tiebreaker when name *and* age
+                        // are both ambiguous (created within the same second).
+                        Text(open.sessionId.suffix(4)).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
+                    }
+                }
+                // Reinforces the whole row is tappable — matches modeChoiceButton's same
+                // trailing-chevron affordance.
+                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.secondary.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Waiting to be joined
 
-    private func waitingForOpponent(shareURL: URL?) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(l.battleWaitingForOpponent).font(.caption).foregroundStyle(.secondary)
+    /// Centered rather than top-left (like the roster/browse screens after their own space-filling
+    /// pass) — a spinner + one caption line used to sit alone in the corner of a 460pt window with
+    /// nothing else to look at. Now shows what's actually useful while you wait: the roster you just
+    /// submitted, and the session code, alongside the existing Share/Copy buttons.
+    private func waitingForOpponent(sessionId: String, shareURL: URL?) -> some View {
+        VStack(spacing: 16) {
+            Spacer(minLength: 0)
+            VStack(spacing: 10) {
+                ProgressView().controlSize(.regular)
+                Text(l.battleWaitingForOpponent).font(.system(size: 15, weight: .semibold))
             }
-            if let shareURL {
+            if !battle.myRoster.isEmpty {
                 HStack(spacing: 8) {
-                    ShareLink(item: shareURL) { Label(l.tradeShareLink, systemImage: "square.and.arrow.up") }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(shareURL.absoluteString, forType: .string)
-                        copiedFeedback = true
-                        Task { try? await Task.sleep(nanoseconds: 1_500_000_000); copiedFeedback = false }
-                    } label: {
-                        Label(copiedFeedback ? l.tradeCopied : l.tradeCopyLink, systemImage: "doc.on.doc")
+                    ForEach(battle.myRoster) { mon in
+                        SpriteView(speciesID: mon.currentID, size: 34, shiny: mon.isShiny)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
                 }
             }
+            if let shareURL {
+                waitingInviteCard(sessionId: sessionId, shareURL: shareURL)
+            }
+            Spacer(minLength: 0)
             Button(l.tradeCancelButton) { Task { await battle.cancel() } }.buttonStyle(.borderless)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The invite itself, laid out as a card — same chrome (`Color.secondary.opacity(0.07)` fill +
+    /// hairline border, 12pt radius) `openBattleRow`/`modeChoiceButton` already use elsewhere in this
+    /// file, so this screen doesn't look like a different app from the ones either side of it.
+    private func waitingInviteCard(sessionId: String, shareURL: URL) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                sectionHeader(l.battleSessionCodeLabel)
+                Text(sessionId.suffix(4).uppercased())
+                    .font(.system(size: 20, weight: .bold, design: .monospaced))
+            }
+            HStack(spacing: 8) {
+                ShareLink(item: shareURL) { Label(l.tradeShareLink, systemImage: "square.and.arrow.up") }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(shareURL.absoluteString, forType: .string)
+                    copiedFeedback = true
+                    Task { try? await Task.sleep(nanoseconds: 1_500_000_000); copiedFeedback = false }
+                } label: {
+                    Label(copiedFeedback ? l.tradeCopied : l.tradeCopyLink, systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: 340, alignment: .leading)
+        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
     }
 
     // MARK: In battle — laid out like the handheld games' own battle screen: sky-to-grass field,
@@ -729,8 +952,21 @@ struct BattleView: View {
             }
             .task(id: view.status) {
                 guard view.status == "completed" else { revealResult = false; return }
+                // The finishing blow's own beats (the move, a damage chip, a faint chip — however
+                // many the final turn produced) still need to play out at their normal pace first;
+                // a fixed sleep here raced them and could slam the win/loss screen up mid-sequence.
+                // `.onChange(of: log)` is what actually enqueues those beats, off the same log
+                // update that flipped `view.status` to "completed" — this brief head start gives it
+                // a chance to run first, so the wait loop below doesn't see an empty queue and
+                // finish immediately just because it happened to check before that handler did.
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                while isPlayingBeats || !pendingBeats.isEmpty {
+                    if Task.isCancelled { return }
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                }
                 // Long enough for battleSprite's hit-flash (~0.28s) and the faint fade/tilt (0.35s)
-                // to finish — see their .phaseAnimator/.animation durations.
+                // to finish once that very last beat has played — see their .phaseAnimator/.animation
+                // durations.
                 try? await Task.sleep(nanoseconds: 900_000_000)
                 if !Task.isCancelled { revealResult = true }
             }
@@ -745,7 +981,7 @@ struct BattleView: View {
             // Log overlay first, buttons last — overlays stack in call order, and the toggle button
             // has to stay clickable on TOP of the log panel once it's open, or there's no way to
             // close it again.
-            .overlay { if showMoveLog { moveLogOverlay(log: view.log ?? []) } }
+            .overlay { if showMoveLog { moveLogOverlay(log: view.log ?? [], you: you) } }
             .overlay(alignment: .topTrailing) { moveLogToggleButton }
         } else {
             statusView(message: l.battleWaitingForOpponent, showsSpinner: true)
@@ -796,17 +1032,20 @@ struct BattleView: View {
     }
 
     /// Off by default — the scene + action box already cover "what do I do now"; this is opt-in
-    /// detail for "what actually happened", the raw @pkmn/sim log lightly reworded into sentences
-    /// (formattedLogLines) rather than shown as raw protocol text.
-    private func moveLogOverlay(log: [String]) -> some View {
+    /// detail for "what actually happened", laid out like a two-participant chat log: my lines on
+    /// the right (my mon's real sprite, known exactly — see `ChatLogLine.Speaker.mine`), the
+    /// opponent's on the left (whichever mon actually said that line, not just their current
+    /// active one — see `opponentSpeciesIDByName`), field-wide lines (turn markers, the result)
+    /// centered between them with no sprite at all.
+    private func moveLogOverlay(log: [String], you: BattleClient.You) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(l.battleLogTitle).font(.system(size: 13, weight: .semibold))
                 .padding(10)
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(Self.formattedLogLines(log).enumerated()), id: \.offset) { _, line in
-                        Text(line).font(.system(size: 11)).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(Self.formattedLogLines(log, myDisplayName: you.displayName).enumerated()), id: \.offset) { _, line in
+                        chatLogRow(line, you: you)
                     }
                 }
                 .padding(10)
@@ -815,40 +1054,189 @@ struct BattleView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(.regularMaterial)
+        // Team preview reveals every mon's species name for *both* sides right at battle start
+        // (see `teamPreviewSpeciesNames`) — this resolves each opponent name to a real sprite id
+        // exactly once (`opponentSpeciesIDByName` doubles as the "already tried" cache), so a
+        // chat-log line about a mon that's since been switched out still shows its own sprite
+        // instead of whichever mon happens to be active *now*. Runs once per time the panel opens
+        // (no `id:`), which is enough — team preview data never changes mid-battle.
+        .task {
+            let names = Set(Self.teamPreviewSpeciesNames(log).values.flatMap { $0 })
+            for name in names where opponentSpeciesIDByName[name] == nil {
+                if let id = await companion.speciesID(name: name) { opponentSpeciesIDByName[name] = id }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func chatLogRow(_ line: ChatLogLine, you: BattleClient.You) -> some View {
+        switch line.speaker {
+        case .neutral:
+            Text(line.text)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+        case .mine(let index):
+            chatBubble(text: line.text, speciesID: you.roster[safeIndex: index]?.speciesID, isMine: true)
+        case .opponent(let speciesName):
+            chatBubble(text: line.text, speciesID: opponentSpeciesIDByName[speciesName], isMine: false)
+        }
+    }
+
+    private func chatBubble(text: String, speciesID: Int?, isMine: Bool) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            if !isMine { SpriteView(speciesID: speciesID, size: 24) }
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background((isMine ? Color.accentColor : Color.secondary).opacity(0.18),
+                             in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            if isMine { SpriteView(speciesID: speciesID, size: 24) }
+        }
+        .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
+    }
+
+    /// One recap line for the chat-style log overlay — `speaker` is who it's attributed to, so the
+    /// UI can put "my" lines on one side (with my mon's sprite) and the opponent's on the other,
+    /// the same left/right split a chat log uses for two participants.
+    struct ChatLogLine: Equatable {
+        enum Speaker: Equatable {
+            /// `index` is this mon's position in `you.roster` (stable regardless of switches — see
+            /// `monIndex`'s doc comment), letting the UI look up its real sprite exactly.
+            case mine(index: Int)
+            /// `speciesName` (not an index — the opponent's non-active roster stays hidden as
+            /// *structured* data server-side, see battles.ts's `battleView`) comes from team
+            /// preview, which reveals every mon's species name up front regardless of who's
+            /// currently active. The UI resolves it to a real sprite id over the network once
+            /// (`opponentSpeciesIDByName`) rather than falling back to "whichever mon is active
+            /// right now" for a line about one that's since been switched out.
+            case opponent(speciesName: String)
+            /// Field-wide lines with no single mon attached (a turn marker, weather, the result).
+            case neutral
+        }
+        let text: String
+        let speaker: Speaker
     }
 
     /// Reworks the handful of @pkmn/sim log line kinds a casual player would care about into plain
-    /// sentences; everything else (internal bookkeeping lines like |split|, |gametype|, |tier|) is
-    /// dropped rather than shown as raw protocol text. Not exhaustive — an unhandled line kind is
-    /// just omitted, not a functional problem for what's meant to be a readable recap.
-    static func formattedLogLines(_ log: [String]) -> [String] {
-        log.compactMap { line -> String? in
-            let parts = line.components(separatedBy: "|")
+    /// sentences, each attributed to a side; everything else (internal bookkeeping lines like
+    /// |split|, |gametype|, |tier|) is dropped rather than shown as raw protocol text. Not
+    /// exhaustive — an unhandled line kind is just omitted, not a functional problem for what's
+    /// meant to be a readable recap.
+    static func formattedLogLines(_ log: [String], myDisplayName: String) -> [ChatLogLine] {
+        let teamPreview = teamPreviewSpeciesNames(log)
+        func name(_ ident: String) -> String { displayName(for: ident, teamPreview: teamPreview) }
+        return log.compactMap { rawLine -> ChatLogLine? in
+            let parts = rawLine.components(separatedBy: "|")
             guard parts.count >= 2 else { return nil }
+            let speaker = parts.count >= 3 ? speakerFor(parts[2], myDisplayName: myDisplayName, teamPreview: teamPreview) : .neutral
             switch parts[1] {
-            case "move": return parts.count >= 4 ? "\(shortMonName(parts[2])) used \(parts[3])!" : nil
-            case "-damage": return parts.count >= 3 ? "\(shortMonName(parts[2])) took damage." : nil
-            case "-heal": return parts.count >= 3 ? "\(shortMonName(parts[2])) recovered HP." : nil
-            case "-boost": return parts.count >= 4 ? "\(shortMonName(parts[2]))'s \(parts[3]) rose!" : nil
-            case "-unboost": return parts.count >= 4 ? "\(shortMonName(parts[2]))'s \(parts[3]) fell!" : nil
-            case "-status": return parts.count >= 3 ? "\(shortMonName(parts[2])) was afflicted!" : nil
-            case "faint": return parts.count >= 3 ? "\(shortMonName(parts[2])) fainted!" : nil
-            case "win": return parts.count >= 3 ? "\(parts[2]) won the battle!" : nil
-            case "tie": return "The battle ended in a draw."
-            case "turn": return parts.count >= 3 ? "— Turn \(parts[2]) —" : nil
+            case "move": return parts.count >= 4 ? ChatLogLine(text: "\(name(parts[2])) used \(parts[3])!", speaker: speaker) : nil
+            case "switch", "drag": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2])) was sent out!", speaker: speaker) : nil
+            case "-damage": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2])) took damage. (\(hpText(parts)))", speaker: speaker) : nil
+            case "-heal": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2])) recovered HP. (\(hpText(parts)))", speaker: speaker) : nil
+            case "-boost": return parts.count >= 4 ? ChatLogLine(text: "\(name(parts[2]))'s \(parts[3]) rose!", speaker: speaker) : nil
+            case "-unboost": return parts.count >= 4 ? ChatLogLine(text: "\(name(parts[2]))'s \(parts[3]) fell!", speaker: speaker) : nil
+            case "-status": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2])) was afflicted!", speaker: speaker) : nil
+            case "-curestatus": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2]))'s status was cured!", speaker: speaker) : nil
+            case "-crit": return parts.count >= 3 ? ChatLogLine(text: "A critical hit on \(name(parts[2]))!", speaker: speaker) : nil
+            case "-supereffective": return parts.count >= 3 ? ChatLogLine(text: "It's super effective on \(name(parts[2]))!", speaker: speaker) : nil
+            case "-resisted": return parts.count >= 3 ? ChatLogLine(text: "It's not very effective on \(name(parts[2]))...", speaker: speaker) : nil
+            case "-immune": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2])) is unaffected!", speaker: speaker) : nil
+            case "-miss": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2]))'s attack missed!", speaker: speaker) : nil
+            case "-fail": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2]))'s move failed!", speaker: speaker) : nil
+            case "-ability": return parts.count >= 4 ? ChatLogLine(text: "\(name(parts[2]))'s Ability: \(parts[3])", speaker: speaker) : nil
+            case "-weather":
+                guard parts.count >= 3, parts[2] != "none", !rawLine.contains("[upkeep]") else { return nil }
+                return ChatLogLine(text: "The weather became \(parts[2])!", speaker: .neutral)
+            case "-mustrecharge": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2])) must recharge!", speaker: speaker) : nil
+            case "-terastallize": return parts.count >= 4 ? ChatLogLine(text: "\(name(parts[2])) terastallized into the \(parts[3]) type!", speaker: speaker) : nil
+            case "cant": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2])) couldn't move!", speaker: speaker) : nil
+            case "faint": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2])) fainted!", speaker: speaker) : nil
+            case "win": return parts.count >= 3 ? ChatLogLine(text: "\(parts[2]) won the battle!", speaker: .neutral) : nil
+            case "tie": return ChatLogLine(text: "The battle ended in a draw.", speaker: .neutral)
+            case "turn": return parts.count >= 3 ? ChatLogLine(text: "— Turn \(parts[2]) —", speaker: .neutral) : nil
             default: return nil
             }
         }
     }
 
-    /// "p1a: Ash-0" -> "Ash-0" — same identifier shape parseMoveEvents' identBelongsToMe reads.
+    private static func speakerFor(_ ident: String, myDisplayName: String, teamPreview: [String: [String]]) -> ChatLogLine.Speaker {
+        identBelongsToMe(ident, myDisplayName: myDisplayName)
+            ? .mine(index: monIndex(ident) ?? 0)
+            : .opponent(speciesName: displayName(for: ident, teamPreview: teamPreview))
+    }
+
+    /// "p1a: Ash-0" -> "Ash-0" — same identifier shape parseMoveEvents' identBelongsToMe reads. Only
+    /// a fallback now (see `displayName`) for the never-really-expected case team preview didn't
+    /// cover this identity.
     private static func shortMonName(_ ident: String) -> String {
         guard let colonRange = ident.range(of: ": ") else { return ident }
         return String(ident[colonRange.upperBound...])
     }
 
+    /// "p1a: Ash-0" -> 0 — the nickname's trailing index (`"{displayName}-{index}"`, pkmnAdapter.ts),
+    /// which is this mon's stable position in `you.roster` regardless of any switch since (the
+    /// server rebuilds a same-shaped index-stable array every poll — see battles.ts's `originalIndex`).
+    private static func monIndex(_ ident: String) -> Int? {
+        let name = shortMonName(ident)
+        guard let dashRange = name.range(of: "-", options: .backwards) else { return nil }
+        return Int(name[dashRange.upperBound...])
+    }
+
+    /// Team preview (`|poke|p1|Pikachu, L50|`, one line per roster slot, in roster order) reveals
+    /// every mon's species for *both* sides right at battle start — including bench mons never sent
+    /// out yet — which is exactly the same information a real Pokémon battle's own team preview
+    /// screen shows. Keyed by side ("p1"/"p2") to an ordered list of species names, so a nickname's
+    /// index (`monIndex`) looks its species straight up instead of needing this app's own dex/name
+    /// data (which is keyed by *ownership* — see `CompanionStore.speciesName` — and would show a
+    /// placeholder for an opponent species the player has never caught themselves).
+    private static func teamPreviewSpeciesNames(_ log: [String]) -> [String: [String]] {
+        var result: [String: [String]] = [:]
+        for line in log {
+            let parts = line.components(separatedBy: "|")
+            guard parts.count >= 4, parts[1] == "poke" else { continue }
+            let species = parts[3].components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? parts[3]
+            result[parts[2], default: []].append(species)
+        }
+        return result
+    }
+
+    /// "p1a: Ash-0" -> "Pikachu" via `teamPreviewSpeciesNames`; falls back to the raw nickname
+    /// (`shortMonName`) only if team preview data is missing for this identity — shouldn't happen in
+    /// practice (team preview always precedes turn 1 in this app's fixed `gen5customgame` format),
+    /// but a nickname is still a more useful fallback than an empty/broken line.
+    private static func displayName(for ident: String, teamPreview: [String: [String]]) -> String {
+        guard let colonRange = ident.range(of: ": ") else { return ident }
+        let side = String(ident[ident.startIndex..<colonRange.lowerBound].dropLast())
+        guard let index = monIndex(ident), let names = teamPreview[side], names.indices.contains(index) else {
+            return shortMonName(ident)
+        }
+        return names[index]
+    }
+
+    /// -damage/-heal lines carry the new HP as parts[3], e.g. "76/100" or "0 fnt" — shown as-is.
+    private static func hpText(_ parts: [String]) -> String {
+        parts.count >= 4 ? parts[3] : "?"
+    }
+
     private func battleScene(opponent: BattleClient.Opponent, you: BattleClient.You, log: [String]?) -> some View {
         let yourActive = you.roster[safeIndex: you.activeIndex]
+        // Falls back to live truth (`opponent.active`/`yourActive`) whenever the seed `.task` below
+        // hasn't landed yet — nil right after `resetBattleSceneState` at the very start of a fresh
+        // battle. Without this fallback, that gap between "scene appears" and "task's first await
+        // resumes" renders `battleSprite(speciesID: nil, ...)`, which is the 🥚 egg placeholder
+        // (much smaller than real sprite artwork) — reads as "the mon spawns in small, then gets
+        // big" the instant the real sprite pops in a frame later. The info cards never had this
+        // problem (they always read `opponent.active`/`yourActive` directly, not through this
+        // seeded/cached indirection).
+        let opponentSpeciesID = displayedOpponentSpeciesID ?? opponent.active?.speciesID
+        let opponentFainted = displayedOpponentSpeciesID == nil ? (opponent.active?.fainted ?? false) : displayedOpponentFainted
+        let opponentHPFraction = displayedOpponentHPFraction ?? opponent.active?.hpFraction
+        let yourSpeciesID = displayedYourSpeciesID ?? yourActive?.speciesID
+        let yourFainted = displayedYourSpeciesID == nil ? (yourActive?.fainted ?? false) : displayedYourFainted
+        let yourHPFraction = displayedYourHPFraction ?? yourActive?.hpFraction
         return ZStack {
             battleFieldBackground
             // chipStack is attached here, before the .frame(maxWidth: .infinity, ...) below — that
@@ -856,19 +1244,19 @@ struct BattleView: View {
             // buggy placement) anchors to the scene's own bounds, not the box's actual small footprint,
             // landing both sides' chips at the same top-center spot regardless of which mon they're
             // for. Attached here, `.top`/`.bottom` alignment is relative to the compact card itself.
-            pokemonInfoBox(name: opponent.displayName, active: opponent.active, benchCount: opponent.rosterSize)
+            pokemonInfoBox(name: opponent.displayName, active: opponent.active, hpFraction: opponentHPFraction, benchCount: opponent.rosterSize)
                 .overlay(alignment: .bottom) { chipStack(opponentChips).offset(y: 20) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(14)
             // Kept clear of the action-box overlay below (extra bottom padding) — unlike the plain
             // sprite artwork, this card is information (name/HP) and must never be the thing that's
             // partly hidden.
-            pokemonInfoBox(name: you.displayName, active: yourActive, benchCount: you.roster.count)
+            pokemonInfoBox(name: you.displayName, active: yourActive, hpFraction: yourHPFraction, benchCount: you.roster.count)
                 .overlay(alignment: .top) { chipStack(yourChips).offset(y: -20) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(.horizontal, 14).padding(.top, 14)
                 .padding(.bottom, BattleWindowMetrics.actionBoxHeight + 10)
-            battleSprite(speciesID: opponent.active?.speciesID, fainted: opponent.active?.fainted ?? false, size: 130, facing: .front, effect: opponentEffect)
+            battleSprite(speciesID: opponentSpeciesID, fainted: opponentFainted, size: 130, facing: .front, effect: opponentEffect)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .padding(.top, 16).padding(.trailing, 28)
             // .back (the real games' own convention: you see your own mon from behind, the
@@ -876,12 +1264,29 @@ struct BattleView: View {
             // to sit behind the action-box overlay the caller (battlingContent) draws in front of
             // this whole scene, the same way the real games' own message box covers the very bottom
             // of your Pokémon but never reaches the opponent's (too far up-screen to ever meet it).
-            battleSprite(speciesID: yourActive?.speciesID, fainted: yourActive?.fainted ?? false, size: 170, facing: .back, effect: yourEffect)
+            battleSprite(speciesID: yourSpeciesID, fainted: yourFainted, size: 170, facing: .back, effect: yourEffect)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 .padding(.bottom, 130).padding(.leading, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
+        // Seeds the displayed sprites from live truth once, the instant the scene first appears —
+        // see `displayedOpponentSpeciesID`'s doc comment for why this can't just start `nil` and
+        // wait for a `.switchIn` beat: reopening the window mid-battle would show an egg placeholder
+        // until catch-up replay reaches the first switch line, even though the info cards right next
+        // to it already show the correct mon immediately.
+        .task {
+            if displayedOpponentSpeciesID == nil {
+                displayedOpponentSpeciesID = opponent.active?.speciesID
+                displayedOpponentFainted = opponent.active?.fainted ?? false
+                displayedOpponentHPFraction = opponent.active?.hpFraction
+            }
+            if displayedYourSpeciesID == nil {
+                displayedYourSpeciesID = yourActive?.speciesID
+                displayedYourFainted = yourActive?.fainted ?? false
+                displayedYourHPFraction = yourActive?.hpFraction
+            }
+        }
         // Real max HP for whichever mon is active on our side — the opponent's equivalent is
         // permanently unknowable (their real stats are never sent to this client), but ours isn't;
         // recomputed whenever the active slot changes (a switch), not per-chip.
@@ -907,6 +1312,10 @@ struct BattleView: View {
             // to this side's stats) — both filled in here instead, from state this render has on hand.
             let resolvedBeats = result.beats.map { beat -> LogBeat in
                 switch beat {
+                case .switchIn(var event):
+                    event.speciesID = event.isMine ? yourActive?.speciesID : opponent.active?.speciesID
+                    event.hpFraction = event.isMine ? yourActive?.hpFraction : opponent.active?.hpFraction
+                    return .switchIn(event)
                 case .move(var event):
                     event.userName = event.userIsMine ? yourActive?.name : opponent.active?.name
                     return .move(event)
@@ -939,18 +1348,57 @@ struct BattleView: View {
         while !pendingBeats.isEmpty {
             let beat = pendingBeats.removeFirst()
             await play(beat)
-            try? await Task.sleep(nanoseconds: 450_000_000)
+            // Was 450ms — too quick to actually read a move/chip before the next one started
+            // overwriting it. 1.1s gives each beat real on-screen time without dragging out a long
+            // turn (several chips in a row, e.g. Leech Seed's damage+heal pair) too much.
+            try? await Task.sleep(nanoseconds: 1_100_000_000)
         }
         isPlayingBeats = false
     }
 
     private func play(_ beat: LogBeat) async {
         switch beat {
+        case .switchIn(let event):
+            withAnimation(.easeInOut(duration: 0.4)) {
+                if event.isMine {
+                    displayedYourSpeciesID = event.speciesID; displayedYourFainted = false
+                    displayedYourHPFraction = event.hpFraction
+                } else {
+                    displayedOpponentSpeciesID = event.speciesID; displayedOpponentFainted = false
+                    displayedOpponentHPFraction = event.hpFraction
+                }
+            }
+            // Long enough for the fade above to actually be seen before the next queued beat
+            // (drainBeats' own 1.1s gap already covers pacing between *different* beats, but a
+            // faster follow-up move within the same beat could otherwise start flashing before the
+            // cross-fade finishes).
+            try? await Task.sleep(nanoseconds: 400_000_000)
         case .move(let event):
             showMoveUsedText(event)
             await triggerMoveEffect(event)
         case .chip(let chip):
             addEffectChip(chip)
+            // The "faint" chip is what should actually trigger the downed pose — not live state,
+            // which already says `fainted: true` the instant the poll lands, before the fatal
+            // move's own flash/damage beats have even played (see `displayedOpponentFainted`'s doc
+            // comment for why a switch-in showing this immediately read as "it came in dead").
+            if chip.text == l.battleFainted {
+                if chip.isMine { displayedYourFainted = true } else { displayedOpponentFainted = true }
+            }
+            // Same reasoning, for the HP bar itself: apply this chip's own delta on top of whatever
+            // the bar is currently (paced) showing, animated (see pokemonInfoBox's `.animation`),
+            // instead of the bar having already silently jumped to the final value the moment the
+            // poll landed. Clamped defensively — a chip's delta shouldn't ever push it out of
+            // [0, 1], but floating-point accumulation across many chips is worth guarding anyway.
+            if let delta = chip.hpDeltaFraction {
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    if chip.isMine {
+                        displayedYourHPFraction = min(1, max(0, (displayedYourHPFraction ?? 1) + delta))
+                    } else {
+                        displayedOpponentHPFraction = min(1, max(0, (displayedOpponentHPFraction ?? 1) + delta))
+                    }
+                }
+            }
         }
     }
 
@@ -1092,6 +1540,14 @@ struct BattleView: View {
     private func battleSprite(speciesID: Int?, fainted: Bool, size: CGFloat, facing: SpriteFacing, effect: SpriteEffect) -> some View {
         VStack(spacing: -size * 0.16) {
             BattleSpriteFlash(speciesID: speciesID, size: size, facing: facing, effect: effect)
+                // `.id` forces a fresh view identity on every species change — without it, a switch
+                // is just a prop update on the *same* sprite view, which `.transition` never sees
+                // (nothing was inserted or removed for it to animate). With it, SwiftUI treats a
+                // switch as removing the old mon's sprite and inserting the new one, which the
+                // `.transition(.opacity)` below can actually cross-fade — see `play(_:)`'s
+                // `.switchIn` case, which wraps the state change in `withAnimation` to drive it.
+                .id(speciesID)
+                .transition(.opacity)
                 .opacity(fainted ? 0.35 : 1)
                 .rotationEffect(.degrees(fainted ? 90 : 0))
                 // VStack paints children in declaration order just like ZStack does (later = front)
@@ -1112,17 +1568,22 @@ struct BattleView: View {
     /// offered, which is the *entire scene width* once the call site's own alignment frame spans the
     /// full window. Bounding the card itself keeps it a compact card; the call site's frame still
     /// positions that bounded card wherever it wants within the larger area.
-    private func pokemonInfoBox(name: String, active: BattleClient.PublicMon?, benchCount: Int) -> some View {
+    private func pokemonInfoBox(name: String, active: BattleClient.PublicMon?, hpFraction: Double?, benchCount: Int) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(name).font(.system(size: 12, weight: .bold)).lineLimit(1)
                 Spacer(minLength: 4)
                 Text("×\(benchCount)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
             }
-            if let active {
+            if active != nil, let hpFraction {
                 HStack(spacing: 5) {
                     Text("HP").font(.system(size: 8, weight: .heavy)).italic().foregroundStyle(.orange)
-                    HPBar(fraction: active.hpFraction).frame(width: 92, height: 7)
+                    // No fixed width — fills whatever's left in the card (itself already bounded by
+                    // `pokemonInfoBox`'s own `maxWidth: 190` above) instead of a narrow fixed strip.
+                    // `hpFraction`, not `active.hpFraction` — see `displayedYourHPFraction`'s doc
+                    // comment for why the bar is paced to the beat queue instead of live state.
+                    HPBar(fraction: hpFraction).frame(maxWidth: .infinity).frame(height: 7)
+                        .animation(.easeInOut(duration: 0.4), value: hpFraction)
                 }
             } else {
                 Text("—").font(.caption2).foregroundStyle(.tertiary)
@@ -1152,13 +1613,13 @@ struct BattleView: View {
                     .transition(.opacity)
             }
             if voluntarySwitchOpen {
-                switchStrip(you.roster, activeIndex: you.activeIndex, forced: false)
-            } else if view.pendingChoice == "switch" {
+                switchStrip(you.roster, activeIndex: you.activeIndex, forced: false, turn: view.turn)
+            } else if view.pendingChoice == "switch" && choiceSubmittedForTurn != view.turn {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(l.battleForcedSwitchPrompt).font(.system(size: 12, weight: .semibold)).foregroundStyle(.orange)
-                    switchStrip(you.roster, activeIndex: you.activeIndex, forced: true)
+                    switchStrip(you.roster, activeIndex: you.activeIndex, forced: true, turn: view.turn)
                 }
-            } else if view.pendingChoice == "move" {
+            } else if view.pendingChoice == "move" && choiceSubmittedForTurn != view.turn {
                 moveGrid(you: you, turn: view.turn)
             } else {
                 HStack(spacing: 8) {
@@ -1181,7 +1642,14 @@ struct BattleView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(l.battleWaitingOnYouToChooseMove).font(.system(size: 12, weight: .semibold))
                     BattleMoveGrid(store: companion, mon: mon, turn: turn) { slot in
-                        Task { await battle.choose(BattleStore.moveChoice(slot)) }
+                        choiceSubmittedForTurn = turn
+                        Task {
+                            let accepted = await battle.choose(BattleStore.moveChoice(slot))
+                            // Rejected (bad slot, network hiccup) — undo the optimistic guess so the
+                            // grid comes back and the player can retry, instead of looking stuck on
+                            // "waiting for opponent" for a move that never actually went through.
+                            if !accepted, choiceSubmittedForTurn == turn { choiceSubmittedForTurn = nil }
+                        }
                     }
                     Button(l.battleSwitchButton) { voluntarySwitchOpen = true }
                         .buttonStyle(.bordered).controlSize(.small)
@@ -1190,26 +1658,43 @@ struct BattleView: View {
         }
     }
 
-    private func switchStrip(_ roster: [BattleClient.PublicMon], activeIndex: Int, forced: Bool) -> some View {
+    /// 3 columns, same `LazyVGrid`/`GridItem(.flexible())` convention `BattleMoveGrid` already uses
+    /// for moves — a max-6-mon roster reads as up to 2 rows of 3 cards instead of a tall scrolling
+    /// list, closer to the real games' own party-switch screen.
+    private func switchStrip(_ roster: [BattleClient.PublicMon], activeIndex: Int, forced: Bool, turn: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(roster.enumerated()), id: \.offset) { index, mon in
-                Button {
-                    voluntarySwitchOpen = false
-                    Task { await battle.choose(BattleStore.switchChoice(index + 1)) }
-                } label: {
-                    HStack(spacing: 8) {
-                        SpriteView(speciesID: mon.speciesID, size: 32)
-                        Text(mon.name).font(.caption)
-                        Spacer()
-                        HPBar(fraction: mon.hpFraction).frame(width: 60, height: 6)
-                        if mon.fainted { Image(systemName: "xmark.circle").font(.caption2).foregroundStyle(.red) }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                ForEach(Array(roster.enumerated()), id: \.offset) { index, mon in
+                    Button {
+                        voluntarySwitchOpen = false
+                        choiceSubmittedForTurn = turn
+                        Task {
+                            let accepted = await battle.choose(BattleStore.switchChoice(index + 1))
+                            // Rejected — undo the optimistic guess so a forced switch can be retried
+                            // instead of stranding the player on "waiting for opponent" with no way
+                            // to act. (A rejected voluntary switch just stays closed, same as before.)
+                            if !accepted, choiceSubmittedForTurn == turn { choiceSubmittedForTurn = nil }
+                        }
+                    } label: {
+                        VStack(spacing: 4) {
+                            ZStack(alignment: .topTrailing) {
+                                SpriteView(speciesID: mon.speciesID, size: 36)
+                                    .opacity(mon.fainted ? 0.4 : 1)
+                                if mon.fainted {
+                                    Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(.red)
+                                }
+                            }
+                            Text(mon.name).font(.caption2).lineLimit(1)
+                            HPBar(fraction: mon.hpFraction).frame(height: 5)
+                        }
+                        .padding(6)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.secondary.opacity(index == activeIndex ? 0.16 : 0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
-                    .padding(6)
-                    .background(Color.secondary.opacity(index == activeIndex ? 0.16 : 0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .buttonStyle(.plain)
+                    .disabled(mon.fainted || index == activeIndex)
                 }
-                .buttonStyle(.plain)
-                .disabled(mon.fainted || index == activeIndex)
             }
             if !forced {
                 Button(l.tradeCancelButton) { voluntarySwitchOpen = false }.buttonStyle(.borderless)
@@ -1230,28 +1715,73 @@ struct BattleView: View {
         case "loss": ("xmark.circle.fill", .red)
         default: ("equal.circle.fill", .secondary)
         }
-        return VStack {
-            Spacer()
-            // A solid, theme-adaptive card — not colored text sitting directly on the light pastel
-            // sky/grass gradient behind it, which read as low-contrast (green title text over a
-            // green-tinted background especially). Same fix pokemonInfoBox/actionBox already use for
-            // the same underlying problem: guarantee contrast against a busy/variable background by
-            // putting text on a solid surface instead. The icon alone keeps the win/loss tint — a
-            // small shape reads fine in color; a whole line of text needs the safer `.primary`.
-            VStack(spacing: 14) {
-                Image(systemName: icon).font(.system(size: 36)).foregroundStyle(tint)
-                Text(title).font(.system(size: 22, weight: .bold)).foregroundStyle(.primary)
-                Button(l.battleDoneButton) { Task { await battle.cancel() }; onClose() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+        return ZStack {
+            VStack {
+                Spacer()
+                // A solid, theme-adaptive card — not colored text sitting directly on the light pastel
+                // sky/grass gradient behind it, which read as low-contrast (green title text over a
+                // green-tinted background especially). Same fix pokemonInfoBox/actionBox already use for
+                // the same underlying problem: guarantee contrast against a busy/variable background by
+                // putting text on a solid surface instead. The icon alone keeps the win/loss tint — a
+                // small shape reads fine in color; a whole line of text needs the safer `.primary`.
+                VStack(spacing: 14) {
+                    Image(systemName: icon).font(.system(size: 36)).foregroundStyle(tint)
+                    Text(title).font(.system(size: 22, weight: .bold)).foregroundStyle(.primary)
+                    // Populated by BattleStore.scoreCompletionIfNeeded — only ever non-empty right
+                    // after a win, so this never shows on a loss/draw result card.
+                    if !battle.newlyEarnedBadges.isEmpty {
+                        newBadgesBanner
+                    }
+                    // Equal-weight with Done — the log was only ever reachable mid-battle before
+                    // (the small floating toggle in battlingContent's corner), so once the result
+                    // screen takes over there was no way back to "what actually happened" short of
+                    // forfeiting the win/loss screen entirely and losing the session. A full-size
+                    // button here, not the same small icon, since this is now a primary action on
+                    // this screen, not an optional overlay toggle.
+                    HStack(spacing: 12) {
+                        Button { showMoveLog = true } label: {
+                            Label(l.battleLogTitle, systemImage: "list.bullet.rectangle.fill")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                        Button(l.battleDoneButton) { Task { await battle.cancel() }; onClose() }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                    }
+                }
+                .padding(28)
+                .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+                Spacer()
             }
-            .padding(28)
-            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
-            Spacer()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(battleFieldBackground)
+            // Same "log panel first, toggle last" stacking battlingContent already uses — the small
+            // floating toggle (now serving as the close affordance) has to paint on top of the panel
+            // to stay tappable. `view.you` is technically optional on the model but always present on
+            // a completed view in practice; `if let` degrades to "no log available" rather than a
+            // force-unwrap crash on the (unreachable in this app) alternative.
+            if showMoveLog, let you = view.you {
+                moveLogOverlay(log: view.log ?? [], you: you)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(battleFieldBackground)
+        .overlay(alignment: .topTrailing) { if showMoveLog { moveLogToggleButton } }
+    }
+
+    /// One row per newly earned badge — sorted for a stable order across renders (`Set` has none of
+    /// its own), since a single clean sweep can plausibly clear more than one at once (see
+    /// GymBadgeTests.testACleanSweepCanEarnMultipleBadgesAtOnceAcrossRegions).
+    private var newBadgesBanner: some View {
+        VStack(spacing: 4) {
+            Text(l.gymBadgeEarnedBannerTitle).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ForEach(battle.newlyEarnedBadges.sorted { $0.rawValue < $1.rawValue }, id: \.self) { badge in
+                HStack(spacing: 5) {
+                    BadgeGlyph(badge: badge, earned: true, size: 16)
+                    Text(badge.info.title).font(.system(size: 12, weight: .medium))
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     // MARK: Status messages
@@ -1410,10 +1940,15 @@ private struct HPBar: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.2))
+                // A fixed dark track (not `.secondary.opacity`, which is theme/backdrop-dependent
+                // and can wash out against the battle scene's own art or a translucent card) plus a
+                // hairline border — together they keep the bar's own edges legible regardless of
+                // what's behind it, instead of relying on contrast that isn't guaranteed.
+                RoundedRectangle(cornerRadius: 3).fill(Color.black.opacity(0.35))
                 RoundedRectangle(cornerRadius: 3).fill(color)
                     .frame(width: max(0, geo.size.width * fraction))
             }
+            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Color.black.opacity(0.4), lineWidth: 0.75))
         }
     }
 }

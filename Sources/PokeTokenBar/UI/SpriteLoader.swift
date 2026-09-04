@@ -11,6 +11,7 @@ actor SpriteStore {
     static let shared = SpriteStore()
     private let base = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon"
     private let itemBase = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items"
+    private let badgeBase = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/badges"
     private var mem: [String: Data] = [:]
     private var memOrder: [String] = []   // LRU 순서(최근 접근이 뒤). 상한 초과 시 앞(오래된 것)부터 evict
     // in-memory 스프라이트 캐시 상한 — 세션 중 종 변경 누적 무한증가 방지(#H1).
@@ -101,6 +102,21 @@ actor SpriteStore {
         return d
     }
 
+    /// 체육관 배지 스프라이트(정적, badges/{n}.png — 번호는 GymBadge.artworkSpriteNumber). 아이템과
+    /// 같은 메모리/디스크 캐시(키 "badge-<n>", 포켓몬/아이템 파일명과 안 겹침). 미제공(404)/오프라인이면
+    /// nil → 뷰가 seal 글리프로 폴백.
+    func data(badgeSpriteNumber: Int) async -> Data? {
+        let key = "badge-\(badgeSpriteNumber)"
+        if let d = mem[key] { touch(key); return d }
+        let file = dir.appendingPathComponent("\(key).png")
+        if let d = try? Data(contentsOf: file) { remember(key, d); return d }
+        guard let url = URL(string: "\(badgeBase)/\(badgeSpriteNumber).png"),
+              let d = await Self.fetchImageData(url) else { return nil }
+        try? d.write(to: file, options: .atomic)
+        remember(key, d)
+        return d
+    }
+
     /// 알 스프라이트(정적, pokemon/egg.png) — 애니메이션 알은 없음. 포켓몬/아이템과 같은 메모리·디스크 캐시(키 "egg").
     func eggData() async -> Data? {
         let key = "egg"
@@ -174,6 +190,19 @@ enum SpriteLoader {
     /// 아이템 스프라이트 — 런타임 로드(+캐시). 미제공/실패면 nil(뷰가 이모지로 폴백).
     static func itemImage(name: String) async -> NSImage? {
         guard let d = await SpriteStore.shared.data(itemName: name), let img = NSImage(data: d) else { return nil }
+        return img
+    }
+
+    /// 체육관 배지 스프라이트 — 디스크 캐시 동기 조회(없으면 nil). 아이콘 즉시 표시용(재렌더 플래시 방지).
+    static func cachedBadgeImage(spriteNumber: Int) -> NSImage? {
+        let f = cacheDir.appendingPathComponent("badge-\(spriteNumber).png")
+        if let d = try? Data(contentsOf: f), let img = NSImage(data: d) { return img }
+        return nil
+    }
+
+    /// 체육관 배지 스프라이트 — 런타임 로드(+캐시). 미제공/실패면 nil(뷰가 seal 글리프로 폴백).
+    static func badgeImage(spriteNumber: Int) async -> NSImage? {
+        guard let d = await SpriteStore.shared.data(badgeSpriteNumber: spriteNumber), let img = NSImage(data: d) else { return nil }
         return img
     }
 
