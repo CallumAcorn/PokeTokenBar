@@ -386,6 +386,17 @@ struct CandyWindow: Sendable {
     let name: String         // 표시용(알림 "왜 받는지")
     let kind: WindowClass    // session=1개 · weekly=5개
     let utilization: Double  // 0~100+
+    /// 이 창이 다음에 리셋되는 시각. **key 에는 절대 넣지 않는다**(휘발 필드) — 대신 지급 시점의 값을
+    /// 따로 기억해 두고, 나중에 값이 달라져 있으면 "그 사이 창이 한 번 갱신됐다"는 증거로 쓴다.
+    ///
+    /// 왜 필요한가: 지급 판정은 엣지 트리거(100% 미만으로 내려갔다 다시 올라올 때)인데, 한도 조회가
+    /// 끊긴 동안에는 그 '내려감'을 관측하지 못한다. Claude Code 가 키체인 항목을 다시 쓰면 승인이
+    /// 사라져 며칠씩 관측이 끊기므로(사용자 리포트), 창이 리셋되고 다시 100% 가 돼도 tier=1 이 남아
+    /// 지급이 조용히 누락된다. 리셋 시각은 그 누락을 추측이 아니라 **증거**로 메울 수 있게 해준다.
+    ///
+    /// 서버가 준 문자열 그대로 둔다(Date 왕복 안 함) — 비교는 동일성만 보면 되고, 파싱·재포맷은
+    /// 자릿수·타임존 표기가 달라지며 같은 시각이 다르게 보일 여지를 만든다.
+    var resetsAt: String? = nil
 }
 
 /// 사탕 지급 1건(순수 판정 결과) — 부수효과(인벤토리·알림)와 분리해 테스트 가능하게.
@@ -1016,6 +1027,10 @@ struct CompanionState: Codable, Sendable {
     var gymBadges: Set<GymBadge> = []
     // 사탕 지급 엣지 상태(창 key → 지급한 tier). ★영속 — notifiedTier(인메모리)와 달리 재시작 무한지급 방지.
     var candyGrantTier: [String: Int] = [:]
+    /// 지급 당시 그 창의 리셋 시각(ISO8601). 나중에 같은 창의 리셋 시각이 달라져 있으면 그 사이 창이
+    /// 갱신된 것이므로, 100% 미만으로 내려가는 순간을 못 봤더라도 재무장해 다시 지급한다.
+    /// `candyGrantTier` 와 같은 부류(계정 장부)라 이전 시 함께 따라간다.
+    var candyGrantResetAt: [String: String] = [:]
     // 사탕 지급 첫 실행 시드 완료 — 업데이트 직후 이미 100%였던 창의 소급 지급 차단.
     var candyFeatureSeeded = false
     // One-time auto-learn migration complete — fills every party member with up to 4 level-up moves
