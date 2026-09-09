@@ -929,6 +929,31 @@ struct L {
           "Impossible de récupérer les limites Claude. Réessaie dans un instant.",
           "Não foi possível obter os limites do Claude. Tente de novo daqui a pouco.")
     }
+    /// Manual Retry refused because the **server** is rate-limiting us, not the Keychain.
+    func limitRefreshBackoffRemaining(_ minutes: Int) -> String {
+        t("서버가 조회를 제한 중이라 약 \(minutes)분 뒤에 다시 시도할 수 있어요. 지금 누르면 제한만 길어집니다.",
+          "The server is rate-limiting these checks. Try again in about \(minutes) min; retrying now only extends the limit.",
+          "サーバー側で取得が制限されています。約\(minutes)分後に再試行できます。今押しても制限が延びるだけです。",
+          "El servidor está limitando estas consultas. Vuelve a intentarlo en unos \(minutes) min; reintentar ahora solo alarga el límite.",
+          "Le serveur limite ces vérifications. Réessayez dans environ \(minutes) min ; réessayer maintenant ne fait que prolonger la limite.",
+          "O servidor está limitando estas consultas. Tente de novo em cerca de \(minutes) min; tentar agora só prolonga o limite.")
+    }
+    var limitsGrantRevokedTitle: String {
+        t("Claude Code 가 자격증명을 갱신했어요",
+          "Claude Code renewed its credentials",
+          "Claude Code が資格情報を更新しました",
+          "Claude Code renovó sus credenciales",
+          "Claude Code a renouvelé ses identifiants",
+          "O Claude Code renovou as credenciais")
+    }
+    var limitsGrantRevokedHint: String {
+        t("그때 키체인 항목이 다시 쓰이면서 이 앱에 준 '항상 허용'이 함께 사라집니다. 갱신을 누르고 다시 허용하면 복구돼요. Claude Code 를 자주 쓰면 반복될 수 있습니다.",
+          "That rewrites the Keychain item, which clears the \"Always Allow\" you gave this app. Press refresh and allow it again to restore limits. Expect this to recur if you use Claude Code often.",
+          "その際にキーチェーン項目が書き換えられ、このアプリに与えた「常に許可」も消えます。更新を押して再度許可すると復旧します。Claude Code をよく使う場合は再発します。",
+          "Eso reescribe el elemento del llavero y borra el \"Permitir siempre\" que diste a esta app. Pulsa actualizar y vuelve a permitirlo. Se repetirá si usas Claude Code a menudo.",
+          "Cela réécrit l'élément du trousseau et efface le « Toujours autoriser » accordé à cette app. Appuyez sur actualiser et autorisez à nouveau. Cela se reproduira si vous utilisez souvent Claude Code.",
+          "Isso reescreve o item das chaves e apaga o \"Permitir sempre\" dado a este app. Toque em atualizar e permita novamente. Vai repetir se usar o Claude Code com frequência.")
+    }
     var limitRefreshRateLimited: String {
         t("Claude 한도 조회가 일시 제한됐어요 (429). 잠시 쉬었다가 자동으로 재시도합니다.",
           "Claude limit checks are temporarily rate-limited (429). Backing off and retrying automatically.",

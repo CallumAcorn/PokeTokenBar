@@ -25,6 +25,13 @@ final class UsageStore {
     /// Claude 한도 조회가 401/403(세션 만료)로 실패한 상태 — UI 에서 명확한 안내+재시도 노출용.
     /// 성공 시 해제. 자동 폴링은 무프롬프트라 만료 토큰을 스스로 못 고치므로 사용자 액션 유도가 필요.
     private(set) var limitsAuthExpired = false
+    /// The "Always Allow" grant stopped applying because Claude Code rewrote its Keychain item.
+    /// See `updateGrantRevoked` for why this is separate from `limitsAuthExpired` (that one is the
+    /// server rejecting a token; this one is the Keychain refusing to hand one over).
+    private(set) var limitsGrantRevoked = false
+    /// Whether a silent read has ever worked in this process. Distinguishes "your grant was
+    /// revoked" from "you have never granted access", which need different words.
+    private var hadWorkingSilentRead = false
     /// providerID → 프로바이더 상태 페이지 인시던트 지표(표시 전용). 조회 실패 시 이전 값 유지.
     private(set) var statuses: [String: ProviderStatus] = [:]
     private(set) var lastUpdated: Date?
@@ -755,12 +762,15 @@ final class UsageStore {
                 limitsAvailable = true
                 limitsUpdatedAt = Date()
                 limitsAuthExpired = false
+                limitsGrantRevoked = false
+                hadWorkingSilentRead = true
                 resetLimitsBackoff()
                 AppLog.write("limits refreshed fiveHour=\(limits?.fiveHour?.utilization?.description ?? "nil") sevenDay=\(limits?.sevenDay?.utilization?.description ?? "nil")")
             } catch {
                 // 비공식 endpoint 실패 → 섹션 숨김, 토큰 표시는 무영향
                 if limits == nil { limitsAvailable = false }
                 updateAuthExpired(from: error)
+                updateGrantRevoked(from: error)
                 applyLimitsBackoffIfRateLimited(error)
                 AppLog.write("limits unavailable: \(error)")
             }
@@ -807,12 +817,24 @@ final class UsageStore {
         isRefreshingLimitToken = true
         defer { isRefreshingLimitToken = false }
 
+        // 사용자 액션이 백오프를 우회하는 건 **키체인** 문제에 한해 옳다: 그건 로컬 문제고 재승인이 곧
+        // 해결이라 즉시 시도할 가치가 있다. 429 는 반대다 — **서버가** 건 제한이라 재시도가 상황을
+        // 악화시킨다. 리포트 실측: 아무 일도 안 일어나는 것처럼 보여 사용자가 Retry 를 몇 번 누르는
+        // 사이 retryAfter=3600 이 걸려 한 시간을 통째로 잠갔다. 남은 시간을 알려주고 멈춘다.
+        if let until = claudeLimitsBackoffUntil, Date() < until {
+            let minutes = max(1, Int(until.timeIntervalSinceNow / 60))
+            limitTokenRefreshError = L(localizationLanguage).limitRefreshBackoffRemaining(minutes)
+            AppLog.write("manual limits refresh refused: server backoff \(Int(until.timeIntervalSinceNow))s left")
+            return
+        }
+
         do {
-            // 명시적 사용자 액션은 백오프를 우회해 1회 시도 — 성공하면 백오프 해제
             limits = try await limitsProvider.fetch(allowKeychainPrompt: true)
             limitsAvailable = true
             limitsUpdatedAt = Date()
             limitsAuthExpired = false
+            limitsGrantRevoked = false
+            hadWorkingSilentRead = true
             limitTokenRefreshError = nil
             resetLimitsBackoff()
             AppLog.write("limits refreshed by user action fiveHour=\(limits?.fiveHour?.utilization?.description ?? "nil") sevenDay=\(limits?.sevenDay?.utilization?.description ?? "nil")")
@@ -859,6 +881,25 @@ final class UsageStore {
         if case LimitsError.httpStatus(let status) = error, status == 401 || status == 403 {
             limitsAuthExpired = true
         }
+    }
+
+    /// Claude Code rewrites its own Keychain item whenever it refreshes its OAuth token, and the
+    /// rewrite resets that item's ACL, so the "Always Allow" this app was granted stops applying.
+    /// We cannot prevent it: Claude Code owns the item. What we can stop is it being **invisible**.
+    ///
+    /// Measured on two machines: silent reads work for a few hours after a grant, then fail
+    /// indefinitely, with no rebuild in between (so this is not the `binaryFingerprint` case). One
+    /// log ran 2449 refusals against 814 successes, including two consecutive days with zero
+    /// successes. Until now the only symptom was the generic refresh row, which says nothing about
+    /// why it came back or that it will keep coming back.
+    ///
+    /// Only counts as revocation if a silent read had previously been observed to work. A machine
+    /// that has never granted access is not "revoked", it is simply not set up yet, and conflating
+    /// the two would tell every new user their grant had expired.
+    private func updateGrantRevoked(from error: any Error) {
+        guard case LimitsError.keychainInteractionNotAllowed = error else { return }
+        guard hadWorkingSilentRead else { return }
+        limitsGrantRevoked = true
     }
 
     // MARK: Claude 한도 429 백오프

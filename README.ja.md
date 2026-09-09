@@ -205,6 +205,7 @@ swift test                   # ユニットテスト
 
 - **オンデバイス。** トークン使用量はローカルの Claude Code・Codex・Gemini CLI・Antigravity・OpenCode・Hermes Agent・Cursor・Grok CLI・Copilot CLI・Kiro CLI・Pi Agent データから直接読み取ります。使用量のアップロードも、モデルの推論実行も行いません。
 - **外部リクエスト。** 本アプリは完全オフラインではありません。10のホストに接続します — `pokeapi.co`・`graphql.pokeapi.co`（種・進化）、`raw.githubusercontent.com`（スプライト）、`api.anthropic.com`（Claude 公式の上限）、`cloudcode-pa.googleapis.com`・`daily-cloudcode-pa.googleapis.com`（Antigravity 公式の上限）と `oauth2.googleapis.com`（トークン更新）、`status.claude.com`・`status.openai.com`（障害バナー — 設定でオフ可）、`api.github.com`（アップデート確認）。**いずれのリクエストにも使用量・トークン・プロンプト・プロジェクトのパスは含まれません** — 送られるのはリクエストそのものだけです。
+- **Claude Code がトークンを更新すると許可が消えます。** Claude Code は OAuth トークンを更新するたびに自分の Keychain 項目を書き換え、そのときこのアプリに与えた「常に許可」も消えます。以後、更新ボタンを押して再度許可するまで公式の上限は止まります。Claude Code をよく使うほど更新が多く、繰り返し発生します。これまでは黙って止まっていましたが、画面で知らせるようになりました。アプリ側では防げません（その項目の所有者は Claude Code です）。
 - **Keychain（任意）。** Claude OAuth 資格情報は**更新ボタンを押した時のみ**読み取ります（設定、またはポップオーバーの上限行）。自動更新では Keychain に触れないためパスワードのプロンプトは表示されず、`~/.claude/.credentials.json` があればそちらから取得します。トークンはメモリ上にのみ保持し、**アプリ自身の Keychain 項目は作成しません。** トークンが期限切れになると、上限は更新するまで以前の値（stale）として表示されます。設定でオフにすると上限セクションが非表示になります。
 - **交換・バトル（既定でオフ）。** 既定ではサーバーが設定されておらず、自分で設定するまで何も端末から出ません。設定すると、提示または出場させるポケモンが**そのサーバーへ**送信されます（バトルでは種・レベル・性格・特性・個体値・努力値・技と表示名）。使用量・トークン・プロンプト・プロジェクトのパスは含まれません。招待リンクは別のサーバーを指定できるため、参加前に必ず確認します。
 - **ポケモンのアセット** はランタイムに PokéAPI から取得し、`~/Library/Application Support/PokeTokenBar/` にのみキャッシュされます。アプリのバイナリおよびリリース成果物にポケモンのアセットは含まれません。

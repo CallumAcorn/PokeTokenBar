@@ -172,6 +172,7 @@ Four things make that conversation easier:
   level, nature, ability, IVs, EVs, moves) plus each move you choose. Both send a display name you
   type and a random client id. No usage data and no credential. Leave the field empty and both
   features are inert.
+- The Keychain permission **needs renewing from time to time**. Claude Code rewrites its credential item on every token refresh, which clears the grant, so official limits stop updating until you allow it again. The app tells you when this happens.
 - It registers the `poketokenbar://` URL scheme for trade and battle invites. Any web page can open
   such a link, so the app names the server and asks before connecting to it.
 
