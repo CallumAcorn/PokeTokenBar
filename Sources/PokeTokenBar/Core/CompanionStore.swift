@@ -660,16 +660,28 @@ final class CompanionStore {
     /// A relaunch simply restarts the accumulation.
     private var lastExternalPercent: Double?
     private var lastExternalLocalTokens: Int?
-    /// Polls since the last weekly-window tick, split by whether local token counts moved. The
-    /// window ticks in whole percents roughly every six hours, so attribution has to accumulate
-    /// across that gap rather than judge the single poll the tick lands in.
+    /// Polls since the last five-hour-window tick, split by whether local token counts moved. The
+    /// window ticks in whole percents far more often than the seven-day window used to, but
+    /// attribution still accumulates across the gap rather than judging the single poll the tick
+    /// lands in.
     private var quietPolls = 0
     private var activePolls = 0
 
+    /// Quiet-attributed percentage points accrued since launch — accumulates whenever limits are
+    /// ready, regardless of whether growth credit is enabled, so a display can acknowledge
+    /// unexplained usage exists even for users who haven't opted into growth from it.
+    private(set) var externalUsagePointsSinceLaunch: Double = 0
+    /// XP actually credited to the companion since launch. Only accrues while
+    /// `ExternalUsageCredit.isEnabled` — the opt-in choice that turns acknowledgement into growth.
+    private(set) var externalUsageXPSinceLaunch = 0
+
     /// Credit growth for usage that produced no local tokens. Called once per refresh, right
-    /// alongside `grantCandies`, so it sees the same freshly-loaded limit windows.
-    func creditExternalUsage(weeklyPercent: Double?, localTokenTotal: Int, limitsReady: Bool) {
-        guard ExternalUsageCredit.isEnabled, limitsReady, let weeklyPercent else { return }
+    /// alongside `grantCandies`, so it sees the same freshly-loaded limit windows. `rate` is the
+    /// tokens-per-percent to convert with — pass a self-calibrated one
+    /// (`CalibrationLog.selfCalibratedTokensPerPercent`) when enough history exists, else the
+    /// hardcoded `ExternalUsageCredit.tokensPerPercent`.
+    func creditExternalUsage(percent: Double?, localTokenTotal: Int, limitsReady: Bool, rate: Double) {
+        guard limitsReady, let percent else { return }
 
         // Classify this poll before judging the tick — a tick is only meaningful against the
         // period that produced it.
@@ -678,22 +690,32 @@ final class CompanionStore {
         }
         lastExternalLocalTokens = localTokenTotal
 
-        let xp = ExternalUsageCredit.credit(
-            previousPercent: lastExternalPercent,
-            currentPercent: weeklyPercent,
-            quietPolls: quietPolls,
-            activePolls: activePolls)
+        // Snapshot before the tick resets them below — both the point tally and the XP conversion
+        // must judge the same accumulated period.
+        let previousPercent = lastExternalPercent
+        let quiet = quietPolls
+        let active = activePolls
 
         // A rise closes the accumulation period whether or not it paid out; a fall or a flat
         // reading leaves it open so the next tick still sees the whole span.
-        if let previous = lastExternalPercent, weeklyPercent > previous {
+        if let previousPercent, percent > previousPercent {
             quietPolls = 0
             activePolls = 0
         }
-        lastExternalPercent = weeklyPercent
+        lastExternalPercent = percent
 
-        guard let xp, xp > 0 else { return }
-        AppLog.write("external usage credit: +\(xp) xp from weekly limit movement")
+        if let points = ExternalUsageCredit.quietWeightedPercentDelta(
+            previousPercent: previousPercent, currentPercent: percent, quietPolls: quiet, activePolls: active),
+           points > 0 {
+            externalUsagePointsSinceLaunch += points
+        }
+
+        guard ExternalUsageCredit.isEnabled,
+              let xp = ExternalUsageCredit.credit(previousPercent: previousPercent, currentPercent: percent,
+                                                   quietPolls: quiet, activePolls: active, rate: rate),
+              xp > 0 else { return }
+        externalUsageXPSinceLaunch += xp
+        AppLog.write("external usage credit: +\(xp) xp from five-hour limit movement")
         applyUsage(xp)
     }
 

@@ -120,6 +120,62 @@ final class InventoryDecodeTests: XCTestCase {
     }
 }
 
+// MARK: 외부 사용량 크레딧 (creditExternalUsage — store 결합, 순수 규칙은 ExternalUsageCreditTests)
+
+@MainActor
+final class ExternalUsageCreditStoreTests: XCTestCase {
+    private func store(seed: UInt64 = 1) -> CompanionStore {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("euc-\(UUID().uuidString).json")
+        return CompanionStore(provider: StubProvider(value: rcLinear3), clock: { rcNow }, fileURL: url, rng: SeededRNG(seed: seed))
+    }
+
+    private func setToggle(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: ExternalUsageCredit.defaultsKey)
+    }
+
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: ExternalUsageCredit.defaultsKey)
+        super.tearDown()
+    }
+
+    /// Percentage points must accrue for display even with the opt-in toggle off — this is what
+    /// answers "at least acknowledge the usage exists" without requiring the user to opt into growth.
+    func testPercentPointsAccrueWhileToggleIsOff() async {
+        setToggle(false)
+        let s = store()
+        await s.hatch(baseID: 1)
+        s.creditExternalUsage(percent: 10, localTokenTotal: 0, limitsReady: true, rate: 500_000)   // 기준선
+        s.creditExternalUsage(percent: 11, localTokenTotal: 0, limitsReady: true, rate: 500_000)   // 조용한 상승
+        XCTAssertEqual(s.externalUsagePointsSinceLaunch, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 0, "toggle off 이면 성장엔 반영 안 됨")
+    }
+
+    /// With the toggle on, the same rise both accrues points and grows the companion, using the
+    /// caller-supplied (self-calibrated-or-fallback) rate.
+    func testGrowthAppliesOnlyWhileToggleIsOn() async {
+        setToggle(true)
+        let s = store()
+        await s.hatch(baseID: 1)
+        s.creditExternalUsage(percent: 10, localTokenTotal: 0, limitsReady: true, rate: 500_000)
+        s.creditExternalUsage(percent: 11, localTokenTotal: 0, limitsReady: true, rate: 500_000)
+        XCTAssertEqual(s.externalUsagePointsSinceLaunch, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 500_000)
+        XCTAssertEqual(s.externalUsageXPSinceLaunch, 500_000)
+    }
+
+    /// `limitsReady: false` must not accrue anything, toggle state aside — same gate `grantCandies`
+    /// already respects for its own seed step.
+    func testNothingAccruesWhileLimitsNotReady() async {
+        setToggle(true)
+        let s = store()
+        await s.hatch(baseID: 1)
+        s.creditExternalUsage(percent: 10, localTokenTotal: 0, limitsReady: false, rate: 500_000)
+        s.creditExternalUsage(percent: 11, localTokenTotal: 0, limitsReady: false, rate: 500_000)
+        XCTAssertEqual(s.externalUsagePointsSinceLaunch, 0)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 0)
+    }
+}
+
 // MARK: 지급 (grantCandies — 시드·영속) + 사용 (useRareCandy)
 
 @MainActor
