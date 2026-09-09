@@ -227,9 +227,9 @@ enum Vitamin {
 /// **20.69x spread** — not good enough to subtract with.
 ///
 /// So attribution avoids the constant entirely and uses **how much of the elapsed time was quiet**
-/// instead. Every poll records whether local token counts moved. When the weekly window finally
-/// ticks up, the award is scaled by the share of that accumulated period in which the CLIs were
-/// idle: all quiet earns the full point, half quiet earns half, never quiet earns nothing.
+/// instead. Every poll records whether local token counts moved. When the window finally ticks up,
+/// the award is scaled by the share of that accumulated period in which the CLIs were idle: all
+/// quiet earns the full point, half quiet earns half, never quiet earns nothing.
 ///
 /// The first version demanded local tokens be flat **in the same poll** as the tick, and measured
 /// on real data that fires almost never — 1 interval in 619 over five days. Not because quiet
@@ -237,6 +237,15 @@ enum Vitamin {
 /// 20 times in five days, and the odds of a tick landing inside a quiet two-minute slice are tiny.
 /// The cause is spread over hours; the signal is instantaneous. Requiring them to coincide made
 /// the feature dead by construction.
+///
+/// **Signal: five-hour (session) window, not seven-day.** The five-hour window rolls — it nets new
+/// usage against usage aging out — which is exactly why the seven-day window was chosen originally
+/// (a rolling window "would read as movement when nothing happened"). In practice a rolling window
+/// cannot rise without new consumption arriving; aging out only ever lowers it. So a rise still
+/// implies real usage, it merely understates it — an acceptable direction of error for a feature
+/// that only ever credits rises observed while local providers were idle. The seven-day window ticks
+/// too rarely to register light Chat/Design sessions at all (8 ticks vs. 69 over the same period in
+/// one measurement), which made the feature invisible for exactly the users it exists for.
 enum ExternalUsageCredit {
     static let defaultsKey = "creditExternalUsage"
 
@@ -245,36 +254,35 @@ enum ExternalUsageCredit {
         UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
     }
 
-    /// Conversion from a weekly-window percentage point to growth XP.
+    /// Fallback conversion from a percentage point to growth XP, used until this account has built
+    /// up enough calibration history (`CalibrationLog.selfCalibratedTokensPerPercent`) to replace it.
     ///
-    /// Replaces a provisional 1_280_000, which was wrong twice over: it came from only 9 intervals,
-    /// and it was measured on the **five-hour** window while this feature reads the **seven-day**
-    /// one. Calibrating on a different instrument from the one in use is not an approximation, it
-    /// is a mismatch.
+    /// This is the median of 18 seven-day intervals over 119 hours of real data, one account
+    /// (`scripts/analyse-calibration.py`): p10 389k, median 3.60M, p90 8.04M per 1%. **That spread is
+    /// 20.69x** — the reason a token figure was never displayed anywhere, and still not tight enough
+    /// to trust for a single account. Self-calibration reads the five-hour window this feature now
+    /// uses and fits a rate from the account's own history instead, which one measurement put at
+    /// 5.33x — still wide, but a different order of confidence, and per-plan rather than borrowed
+    /// from the author's. Cache-heavy intervals run ~1.9x the ratio of cache-light ones, which is a
+    /// large part of the variance and the reason the study logs token kinds separately.
     ///
-    /// This is the median of 18 seven-day intervals over 119 hours of real data
-    /// (`scripts/analyse-calibration.py`): p10 389k, median 3.60M, p90 8.04M per 1%.
-    ///
-    /// **That spread is 20.69x, and it is why no token figure is displayed anywhere.** The Phase 1
-    /// gate failed decisively, so the estimate drives growth only, where being roughly right is
-    /// enough and being wrong costs a pet growing at the wrong speed rather than a number that
-    /// lies. Cache-heavy intervals run ~1.9x the ratio of cache-light ones, which is a large part
-    /// of the variance and the reason the study logs token kinds separately.
+    /// A number derived from either source is wide enough that it is shown, when shown at all,
+    /// labelled as a rough estimate — never folded into the precise, transcript-backed token counts
+    /// the rest of the app displays.
     static let tokensPerPercent = 3_600_000
 
     /// A single percentage point is large, so cap one interval's award. Without this, a window
     /// reset misread as a rise, or a plan change, could graduate a companion in one poll.
     static let maxCreditPerInterval = 5 * tokensPerPercent
 
-    /// XP to award when the weekly window ticks up, or nil when nothing is due.
-    ///
-    /// `quietPolls`/`activePolls` count the polls accumulated since the last tick, split by whether
-    /// local token counts moved. The award is scaled by the quiet share, which attributes the
-    /// movement without needing a tokens-per-percent constant to subtract with.
+    /// Quiet-weighted percent-point rise since the last tick — the attribution math on its own,
+    /// with no tokens-per-percent conversion. This is what a display that only ever shows
+    /// percentage points (never an invented token count) reads from. Same guards as `credit`,
+    /// which is built on top of this.
     ///
     /// Pure so the rules are testable without a store, a clock or a network.
-    static func credit(previousPercent: Double?, currentPercent: Double?,
-                       quietPolls: Int, activePolls: Int) -> Int? {
+    static func quietWeightedPercentDelta(previousPercent: Double?, currentPercent: Double?,
+                                          quietPolls: Int, activePolls: Int) -> Double? {
         guard let previousPercent, let currentPercent else { return nil }   // no baseline yet
         let delta = currentPercent - previousPercent
         guard delta > 0, delta.isFinite else { return nil }        // reset, idle, or garbage
@@ -282,8 +290,27 @@ enum ExternalUsageCredit {
         guard observed > 0 else { return nil }                     // nothing observed to attribute
         let quietShare = Double(quietPolls) / Double(observed)
         guard quietShare > 0 else { return nil }                   // CLIs were busy throughout
-        let xp = Int(delta * Double(tokensPerPercent) * quietShare)
-        return min(max(0, xp), maxCreditPerInterval)
+        return delta * quietShare
+    }
+
+    /// XP to award when the window ticks up, or nil when nothing is due.
+    ///
+    /// `rate` defaults to the hardcoded `tokensPerPercent` but the caller may pass a self-calibrated
+    /// one (`CalibrationLog.selfCalibratedTokensPerPercent`) — the cap scales with it too, so a
+    /// looser or tighter rate never changes how many points' worth one interval can pay.
+    static func credit(previousPercent: Double?, currentPercent: Double?,
+                       quietPolls: Int, activePolls: Int,
+                       rate: Double = Double(tokensPerPercent)) -> Int? {
+        guard let points = quietWeightedPercentDelta(previousPercent: previousPercent,
+                                                     currentPercent: currentPercent,
+                                                     quietPolls: quietPolls,
+                                                     activePolls: activePolls) else { return nil }
+        // `rate` now comes from a file on disk (CalibrationLog), so it is outside-the-app input by
+        // the same rule the save file is. `Int(Double)` traps on NaN, infinity and out-of-range, so
+        // clamp in Double space and only then convert. Same SIGTRAP class as the usage-log parsers.
+        let capped = min(points * rate, 5 * rate)
+        guard capped.isFinite, capped > 0 else { return nil }
+        return Int(min(capped, Double(SaveTransfer.maxTokenValue)))
     }
 }
 

@@ -44,6 +44,7 @@ struct PopoverView: View {
     @Environment(TradeStore.self) private var trade
     @Environment(BattleStore.self) private var battle
     @Environment(PopoverNavigation.self) private var nav
+    @AppStorage(ExternalUsageCredit.defaultsKey) private var creditExternalUsage = false
 
     /// Shown from the update banner. The app cannot install an update, so the button opens
     /// instructions rather than starting anything.
@@ -137,6 +138,20 @@ struct PopoverView: View {
         .padding(PopoverMetrics.padding)
     }
 
+    /// Claude Code 밖(웹·디자인·코워크) 사용량 — 조용한 구간의 세션 한도 상승분. toggle off 여도
+    /// 최소 백분율 포인트만 보여줘("최소 존재는 인정") toggle on 이면 자기보정 추정 토큰수까지 보여준다.
+    /// 아무것도 안 쌓였으면(라이브러리 크레딧 대상 없음) 조용히 숨는다.
+    @ViewBuilder
+    private var externalUsageRow: some View {
+        if creditExternalUsage, companion.externalUsageXPSinceLaunch > 0 {
+            Text(l.externalUsageEstimateRow(TokenFormatter.compact(companion.externalUsageXPSinceLaunch)))
+                .font(.caption2).foregroundStyle(.tertiary)
+        } else if companion.externalUsagePointsSinceLaunch > 0 {
+            Text(l.externalUsagePointsRow(String(format: "%.1f", companion.externalUsagePointsSinceLaunch)))
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
+    }
+
     // MARK: 헤더 — 오늘 합계 + provider/토큰타입 분해
 
     private var header: some View {
@@ -159,6 +174,8 @@ struct PopoverView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            externalUsageRow
 
             // 주간/월간 누적 (전 서비스 합산 — 오늘 합계와 함께 통합 통계)
             if store.weekTotalTokens > 0 || store.monthTotalTokens > 0 {

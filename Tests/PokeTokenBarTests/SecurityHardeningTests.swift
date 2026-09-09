@@ -300,6 +300,54 @@ final class CalibrationLogTests: XCTestCase {
         defer { if let previous { UserDefaults.standard.set(previous, forKey: key) } }
         XCTAssertTrue(CalibrationLog.isEnabled)
     }
+
+    /// A sample must survive a round trip through the exact bytes `record` writes — self-calibration
+    /// reads its own JSONL back, so encode-only would silently break the read path.
+    func testSampleRoundTripsThroughDecoding() throws {
+        let original = sample()
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(CalibrationLog.Sample.self, from: data)
+        XCTAssertEqual(decoded.fh, original.fh)
+        XCTAssertEqual(decoded.providers.first?.total, original.providers.first?.total)
+        XCTAssertEqual(decoded.scoped.first?.model, original.scoped.first?.model)
+    }
+
+    private func calSample(fh: Double, total: Int) -> CalibrationLog.Sample {
+        CalibrationLog.Sample(t: 0, plan: nil, tier: nil, fh: fh, sd: nil, sdOpus: nil, sdSonnet: nil,
+                              scoped: [],
+                              providers: [.init(id: "claude_code", date: "2026-09-08", input: 0, output: 0,
+                                                cacheWrite: 0, cacheRead: 0, total: total)])
+    }
+
+    /// Fewer usable (percent-rise, token-rise) pairs than the trust threshold must fall back to nil
+    /// rather than calibrate off a handful of noisy points.
+    /// Counts derive from the constant so raising the threshold cannot leave a test asserting the
+    /// old rule while still passing.
+    func testSelfCalibratedRateNeedsMinimumUsableIntervals() {
+        let justUnder = CalibrationLog.minCalibrationPairs   // n samples yield n-1 pairs
+        let samples = (0..<justUnder).map { calSample(fh: Double($0) * 2, total: $0 * 1_000_000) }
+        XCTAssertNil(CalibrationLog.selfCalibratedTokensPerPercent(samples: samples),
+                     "\(justUnder - 1) pairs is below the threshold and must fall back")
+    }
+
+    /// Clean 500k-tokens-per-2-points intervals must calibrate to the same 250k ratio, once there
+    /// are enough of them to clear the threshold.
+    func testSelfCalibratedRateIsMedianOfExplainedRises() {
+        let n = CalibrationLog.minCalibrationPairs + 1
+        let samples = (0..<n).map { calSample(fh: Double($0) * 2, total: $0 * 500_000) }
+        XCTAssertEqual(CalibrationLog.selfCalibratedTokensPerPercent(samples: samples), 250_000)
+    }
+
+    /// A percent rise with no local token movement (external usage, or the window just ticking) must
+    /// not count as an "explained" interval — it would understate the true rate, not calibrate it.
+    func testSelfCalibratedRateExcludesIntervalsLocalDoesNotExplain() {
+        let n = CalibrationLog.minCalibrationPairs + 1
+        var samples = (0..<n).map { calSample(fh: Double($0) * 2, total: $0 * 500_000) }
+        let last = samples.count * 2
+        // fh rose, tokens flat: the external-usage case, which must be dropped rather than fitted.
+        samples.append(calSample(fh: Double(last), total: (n - 1) * 500_000))
+        XCTAssertEqual(CalibrationLog.selfCalibratedTokensPerPercent(samples: samples), 250_000)
+    }
 }
 
 /// Attribution rules for crediting growth to work that leaves no local transcript.
@@ -377,6 +425,54 @@ final class ExternalUsageCreditTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: key)
         defer { if let previous { UserDefaults.standard.set(previous, forKey: key) } }
         XCTAssertFalse(ExternalUsageCredit.isEnabled)
+    }
+
+    /// A self-calibrated rate must actually change the award — a plan-specific rate that never
+    /// reaches the conversion would be self-calibration in name only.
+    func testCreditUsesProvidedRateInsteadOfHardcodedConstant() {
+        let xp = ExternalUsageCredit.credit(previousPercent: 10, currentPercent: 11,
+                                            quietPolls: 180, activePolls: 0, rate: 500_000)
+        XCTAssertEqual(xp, 500_000)
+    }
+
+    /// The cap must scale with the rate in use, not stay pinned to the hardcoded constant's cap —
+    /// otherwise a lower self-calibrated rate could still award more than 5 points' worth.
+    func testAwardCapScalesWithProvidedRate() {
+        let xp = ExternalUsageCredit.credit(previousPercent: 0, currentPercent: 100,
+                                            quietPolls: 100, activePolls: 0, rate: 500_000)
+        XCTAssertEqual(xp, 5 * 500_000)
+    }
+
+    /// `rate` is now derived from a file on disk, so it is outside-the-app input by the same rule the
+    /// save file is. `Int(Double)` traps on NaN, infinity and out-of-range, so a corrupt or
+    /// hand-edited calibration log must clamp rather than kill the process. Injection-checked:
+    /// converting before clamping crashes this test instead of failing it.
+    func testCreditClampsAnAbsurdRateInsteadOfTrapping() {
+        for rate in [Double.greatestFiniteMagnitude, 1e300, Double.infinity, Double.nan] {
+            let xp = ExternalUsageCredit.credit(previousPercent: 0, currentPercent: 100,
+                                                quietPolls: 100, activePolls: 0, rate: rate)
+            if let xp {
+                XCTAssertLessThanOrEqual(xp, SaveTransfer.maxTokenValue, "rate=\(rate) escaped the clamp")
+                XCTAssertGreaterThan(xp, 0)
+            }
+        }
+    }
+
+    /// The percent-only attribution (option 3's display row) must be available without any rate —
+    /// it is the same quiet-share math `credit` uses, stopping before the token conversion.
+    func testQuietWeightedPercentDeltaMatchesCreditsInput() throws {
+        let points = ExternalUsageCredit.quietWeightedPercentDelta(
+            previousPercent: 10, currentPercent: 11, quietPolls: 150, activePolls: 50)
+        // Optional: nil means "no attributable movement", which must not silently read as 0.
+        XCTAssertEqual(try XCTUnwrap(points), 0.75, accuracy: 0.0001)
+    }
+
+    /// Same guards as `credit` — a busy period must not read as unexplained-usage points either.
+    func testQuietWeightedPercentDeltaAppliesSameGuardsAsCredit() {
+        XCTAssertNil(ExternalUsageCredit.quietWeightedPercentDelta(
+            previousPercent: 10, currentPercent: 11, quietPolls: 0, activePolls: 200))
+        XCTAssertNil(ExternalUsageCredit.quietWeightedPercentDelta(
+            previousPercent: 96, currentPercent: 0, quietPolls: 100, activePolls: 0))
     }
 }
 

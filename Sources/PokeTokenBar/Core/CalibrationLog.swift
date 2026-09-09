@@ -48,7 +48,8 @@ enum CalibrationLog {
     private static let maxBytes = 4 * 1024 * 1024
 
     /// One observation. Field names are short because they repeat on every line.
-    struct Sample: Encodable {
+    /// `Decodable` too — self-calibration (`selfCalibratedTokensPerPercent`) reads this log back.
+    struct Sample: Codable {
         var t: Int                       // epoch seconds
         var plan: String?                // subscription tier, for interpreting window size
         var tier: String?
@@ -59,14 +60,14 @@ enum CalibrationLog {
         var scoped: [ScopedWindow]
         var providers: [ProviderTokens]
 
-        struct ScopedWindow: Encodable {
+        struct ScopedWindow: Codable {
             var kind: String?
             var group: String?
             var model: String?
             var percent: Double?
         }
 
-        struct ProviderTokens: Encodable {
+        struct ProviderTokens: Codable {
             var id: String
             var date: String
             var input: Int
@@ -132,5 +133,59 @@ enum CalibrationLog {
                     cacheRead: today.cacheReadTokens,
                     total: today.totalTokens)
             })
+    }
+
+    /// Trust threshold for `selfCalibratedTokensPerPercent`. Below this many usable pairs the
+    /// hardcoded `ExternalUsageCredit.tokensPerPercent` is a safer bet than a noisy per-account fit.
+    ///
+    /// **20, not 5.** Real data says 5 is not enough: measured against one account's 87 usable pairs
+    /// (median 2.44M/point, raw ratios spanning 538x), a median over 5 randomly drawn pairs has a
+    /// p10→p90 spread of **5.6x in the estimate itself**, which is as wide as the 5.33x spread that
+    /// self-calibration was adopted to beat. At 5 pairs the fit is not an improvement on the
+    /// constant, it is a differently-wrong number. The same account's first 5 pairs in chronological
+    /// order (what a new user actually gets, since early samples cluster) land at 0.17x the
+    /// full-history value.
+    ///
+    /// At 20 pairs that spread tightens to 2.1x, which is a real improvement. This matters more now
+    /// that the rate also drives a **displayed** estimate, not only growth: a number on screen has to
+    /// clear a higher bar than a pet growing at the wrong speed.
+    static let minCalibrationPairs = 20
+
+    /// Median tokens-per-percent from this account's own history, or `nil` when there isn't enough
+    /// data yet (the caller falls back to the hardcoded constant). Pure — testable without touching
+    /// the filesystem; `loadRecentSamples` is the impure counterpart that feeds it.
+    ///
+    /// Only pairs where the five-hour window rose **and** local provider tokens rose are used — a
+    /// percent rise with flat local tokens is exactly the external-usage case this whole feature
+    /// exists to attribute, and folding it into the calibration would teach the fit to explain away
+    /// the thing it is supposed to measure.
+    static func selfCalibratedTokensPerPercent(samples: [Sample]) -> Double? {
+        var ratios: [Double] = []
+        for (prev, next) in zip(samples, samples.dropFirst()) {
+            guard let prevFH = prev.fh, let nextFH = next.fh else { continue }
+            let deltaPercent = nextFH - prevFH
+            guard deltaPercent > 0, deltaPercent.isFinite else { continue }
+            let deltaTokens = next.providers.reduce(0) { $0 + $1.total }
+                             - prev.providers.reduce(0) { $0 + $1.total }
+            guard deltaTokens > 0 else { continue }
+            ratios.append(Double(deltaTokens) / deltaPercent)
+        }
+        guard ratios.count >= minCalibrationPairs else { return nil }
+        ratios.sort()
+        let mid = ratios.count / 2
+        return ratios.count.isMultiple(of: 2) ? (ratios[mid - 1] + ratios[mid]) / 2 : ratios[mid]
+    }
+
+    /// Read this account's own calibration samples back for `selfCalibratedTokensPerPercent`.
+    /// Reads only the live file, not the rotated `.old.jsonl` — missing at most a day or two of
+    /// history, never wrong data. Skips any line that fails to decode (a torn final line costs one
+    /// sample, same tolerance `record`'s rotation already assumes).
+    static func loadRecentSamples() -> [Sample] {
+        guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8)
+        else { return [] }
+        let decoder = JSONDecoder()
+        return text.split(separator: "\n").compactMap {
+            try? decoder.decode(Sample.self, from: Data($0.utf8))
+        }
     }
 }

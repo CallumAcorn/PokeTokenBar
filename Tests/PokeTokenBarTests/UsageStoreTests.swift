@@ -592,6 +592,20 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(s2.animationQuality, .smooth, "같은 defaults 재로드 → 유지")
     }
 
+    // MARK: 외부 사용량 크레딧 신호 (Claude Web/Design/Cowork 성장 반영)
+
+    /// External-usage credit reads the five-hour (session) window now, not the seven-day one — the
+    /// seven-day window ticks too rarely (~8 times over a typical multi-day period vs. ~69 for the
+    /// five-hour window) to register light Chat/Design sessions at all.
+    func testExternalCreditPercentReflectsFiveHourWindow() async throws {
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(1_000))
+        let store = makeStore(providers: [claude], claude: claudeLimits(fiveHourUtil: 42))
+        await store.refresh(scheduleEmptyRetry: false)
+        // Optional: nil means the five-hour window never loaded, which is a different failure from
+        // reading the wrong window. Unwrap so the two cannot be confused.
+        XCTAssertEqual(try XCTUnwrap(store.externalCreditPercent), 42, accuracy: 0.01)
+    }
+
     // MARK: 집계
 
     func testAggregatesTodayTokensAcrossProviders() async {

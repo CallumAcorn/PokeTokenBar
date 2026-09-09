@@ -230,6 +230,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    /// Self-calibrated external-usage rate, resolved once per launch. The calibration file is capped
+    /// at 4MB and its fit changes meaningfully only over hours, so re-reading and re-decoding it on
+    /// every refresh (as often as every couple of minutes) would be pure waste for no better a number.
+    private lazy var externalUsageRate: Double =
+        CalibrationLog.selfCalibratedTokensPerPercent(samples: CalibrationLog.loadRecentSamples())
+            ?? Double(ExternalUsageCredit.tokensPerPercent)
+
     /// UsageStore 값 → CompanionStore (사용량 적립 + 표시 상태). 매 관찰 변경 시 호출.
     private func updateCompanion() {
         companion.update(
@@ -246,9 +253,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func onStoreRefreshed() {
         updateCompanion()
         companion.grantCandies(from: store.candyEligibleWindows, limitsReady: store.limitsReady)
-        companion.creditExternalUsage(weeklyPercent: store.weeklyLimitPercent,
+        companion.creditExternalUsage(percent: store.externalCreditPercent,
                                       localTokenTotal: store.todayTotalTokens,
-                                      limitsReady: store.limitsReady)
+                                      limitsReady: store.limitsReady,
+                                      rate: externalUsageRate)
     }
 
     // MARK: 메뉴바 애니메이션
