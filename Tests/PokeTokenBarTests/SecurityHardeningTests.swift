@@ -321,22 +321,31 @@ final class CalibrationLogTests: XCTestCase {
 
     /// Fewer usable (percent-rise, token-rise) pairs than the trust threshold must fall back to nil
     /// rather than calibrate off a handful of noisy points.
+    /// Counts derive from the constant so raising the threshold cannot leave a test asserting the
+    /// old rule while still passing.
     func testSelfCalibratedRateNeedsMinimumUsableIntervals() {
-        let samples = (0..<4).map { calSample(fh: Double($0) * 2, total: $0 * 1_000_000) }
-        XCTAssertNil(CalibrationLog.selfCalibratedTokensPerPercent(samples: samples))
+        let justUnder = CalibrationLog.minCalibrationPairs   // n samples yield n-1 pairs
+        let samples = (0..<justUnder).map { calSample(fh: Double($0) * 2, total: $0 * 1_000_000) }
+        XCTAssertNil(CalibrationLog.selfCalibratedTokensPerPercent(samples: samples),
+                     "\(justUnder - 1) pairs is below the threshold and must fall back")
     }
 
-    /// Five clean 500k-tokens-per-2-points intervals must calibrate to the same 250k ratio.
+    /// Clean 500k-tokens-per-2-points intervals must calibrate to the same 250k ratio, once there
+    /// are enough of them to clear the threshold.
     func testSelfCalibratedRateIsMedianOfExplainedRises() {
-        let samples = (0..<6).map { calSample(fh: Double($0) * 2, total: $0 * 500_000) }
+        let n = CalibrationLog.minCalibrationPairs + 1
+        let samples = (0..<n).map { calSample(fh: Double($0) * 2, total: $0 * 500_000) }
         XCTAssertEqual(CalibrationLog.selfCalibratedTokensPerPercent(samples: samples), 250_000)
     }
 
     /// A percent rise with no local token movement (external usage, or the window just ticking) must
     /// not count as an "explained" interval — it would understate the true rate, not calibrate it.
     func testSelfCalibratedRateExcludesIntervalsLocalDoesNotExplain() {
-        var samples = (0..<6).map { calSample(fh: Double($0) * 2, total: $0 * 500_000) }
-        samples.append(calSample(fh: 20, total: 2_500_000))   // fh rose, tokens flat — must be dropped
+        let n = CalibrationLog.minCalibrationPairs + 1
+        var samples = (0..<n).map { calSample(fh: Double($0) * 2, total: $0 * 500_000) }
+        let last = samples.count * 2
+        // fh rose, tokens flat: the external-usage case, which must be dropped rather than fitted.
+        samples.append(calSample(fh: Double(last), total: (n - 1) * 500_000))
         XCTAssertEqual(CalibrationLog.selfCalibratedTokensPerPercent(samples: samples), 250_000)
     }
 }
@@ -434,12 +443,28 @@ final class ExternalUsageCreditTests: XCTestCase {
         XCTAssertEqual(xp, 5 * 500_000)
     }
 
+    /// `rate` is now derived from a file on disk, so it is outside-the-app input by the same rule the
+    /// save file is. `Int(Double)` traps on NaN, infinity and out-of-range, so a corrupt or
+    /// hand-edited calibration log must clamp rather than kill the process. Injection-checked:
+    /// converting before clamping crashes this test instead of failing it.
+    func testCreditClampsAnAbsurdRateInsteadOfTrapping() {
+        for rate in [Double.greatestFiniteMagnitude, 1e300, Double.infinity, Double.nan] {
+            let xp = ExternalUsageCredit.credit(previousPercent: 0, currentPercent: 100,
+                                                quietPolls: 100, activePolls: 0, rate: rate)
+            if let xp {
+                XCTAssertLessThanOrEqual(xp, SaveTransfer.maxTokenValue, "rate=\(rate) escaped the clamp")
+                XCTAssertGreaterThan(xp, 0)
+            }
+        }
+    }
+
     /// The percent-only attribution (option 3's display row) must be available without any rate —
     /// it is the same quiet-share math `credit` uses, stopping before the token conversion.
-    func testQuietWeightedPercentDeltaMatchesCreditsInput() {
+    func testQuietWeightedPercentDeltaMatchesCreditsInput() throws {
         let points = ExternalUsageCredit.quietWeightedPercentDelta(
             previousPercent: 10, currentPercent: 11, quietPolls: 150, activePolls: 50)
-        XCTAssertEqual(points, 0.75, accuracy: 0.0001)
+        // Optional: nil means "no attributable movement", which must not silently read as 0.
+        XCTAssertEqual(try XCTUnwrap(points), 0.75, accuracy: 0.0001)
     }
 
     /// Same guards as `credit` — a busy period must not read as unexplained-usage points either.

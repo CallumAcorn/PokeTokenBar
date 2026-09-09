@@ -135,10 +135,21 @@ enum CalibrationLog {
             })
     }
 
-    /// Trust threshold for `selfCalibratedTokensPerPercent` — below this many usable pairs, the
+    /// Trust threshold for `selfCalibratedTokensPerPercent`. Below this many usable pairs the
     /// hardcoded `ExternalUsageCredit.tokensPerPercent` is a safer bet than a noisy per-account fit.
-    /// ponytail: fixed count, not adaptive to sample variance — raise it if real data shows it's too low.
-    static let minCalibrationPairs = 5
+    ///
+    /// **20, not 5.** Real data says 5 is not enough: measured against one account's 87 usable pairs
+    /// (median 2.44M/point, raw ratios spanning 538x), a median over 5 randomly drawn pairs has a
+    /// p10→p90 spread of **5.6x in the estimate itself**, which is as wide as the 5.33x spread that
+    /// self-calibration was adopted to beat. At 5 pairs the fit is not an improvement on the
+    /// constant, it is a differently-wrong number. The same account's first 5 pairs in chronological
+    /// order (what a new user actually gets, since early samples cluster) land at 0.17x the
+    /// full-history value.
+    ///
+    /// At 20 pairs that spread tightens to 2.1x, which is a real improvement. This matters more now
+    /// that the rate also drives a **displayed** estimate, not only growth: a number on screen has to
+    /// clear a higher bar than a pet growing at the wrong speed.
+    static let minCalibrationPairs = 20
 
     /// Median tokens-per-percent from this account's own history, or `nil` when there isn't enough
     /// data yet (the caller falls back to the hardcoded constant). Pure — testable without touching

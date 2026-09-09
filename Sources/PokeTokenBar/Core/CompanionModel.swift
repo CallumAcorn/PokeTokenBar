@@ -305,8 +305,12 @@ enum ExternalUsageCredit {
                                                      currentPercent: currentPercent,
                                                      quietPolls: quietPolls,
                                                      activePolls: activePolls) else { return nil }
-        let xp = Int(points * rate)
-        return min(max(0, xp), Int(5 * rate))
+        // `rate` now comes from a file on disk (CalibrationLog), so it is outside-the-app input by
+        // the same rule the save file is. `Int(Double)` traps on NaN, infinity and out-of-range, so
+        // clamp in Double space and only then convert. Same SIGTRAP class as the usage-log parsers.
+        let capped = min(points * rate, 5 * rate)
+        guard capped.isFinite, capped > 0 else { return nil }
+        return Int(min(capped, Double(SaveTransfer.maxTokenValue)))
     }
 }
 
