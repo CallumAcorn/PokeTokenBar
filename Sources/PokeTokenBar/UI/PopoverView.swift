@@ -306,6 +306,10 @@ struct PopoverView: View {
                 .foregroundStyle(.secondary)
             if selectedSnapshot?.providerID == "claude_code", store.limitsAuthExpired {
                 claudeAuthExpiredNotice
+            } else if selectedSnapshot?.providerID == "claude_code", store.limitsGrantRevoked {
+                // 회수된 승인은 "아직 승인 안 함"과 화면상 구분되지 않아, 사용자는 왜 다시 눌러야 하는지
+                // 모른 채 같은 버튼을 반복해 누른다. 이유를 말해 주는 쪽이 유일하게 할 수 있는 일이다.
+                claudeGrantRevokedNotice
             } else if selectedSnapshot?.providerID == "claude_code",
                       !store.disableKeychainAccess,
                       store.limits == nil || store.claudeLimitsStale {
@@ -539,6 +543,37 @@ struct PopoverView: View {
     /// Claude 세션 만료(401) 안내 — 자동 폴링은 만료 토큰을 스스로 못 고치므로,
     /// "왜 어제 값에 멈췄는지 + 원탭 재시도 + Claude Code 실행 시 자동 갱신" 을 눈에 띄게 노출.
     @ViewBuilder
+    private var claudeGrantRevokedNotice: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "key.slash.fill")
+                    .foregroundStyle(.orange)
+                Text(l.limitsGrantRevokedTitle)
+                    .font(.caption).fontWeight(.semibold)
+                Spacer()
+                Button {
+                    Task { await store.refreshLimitTokenFromKeychain() }
+                } label: {
+                    if store.isRefreshingLimitToken {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(l.retry)
+                    }
+                }
+                .controlSize(.small)
+                .disabled(store.isRefreshingLimitToken)
+            }
+            Text(l.limitsGrantRevokedHint)
+                .font(.caption2).foregroundStyle(.secondary)
+            if let err = store.limitTokenRefreshError {
+                // 429 로 거절된 재시도의 남은 시간이 여기 들어온다 — 버튼을 계속 누르지 않도록.
+                Text(err).font(.caption2).foregroundStyle(.orange)
+            }
+        }
+        .padding(8)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    }
+
     private var claudeAuthExpiredNotice: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {

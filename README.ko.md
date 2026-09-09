@@ -204,6 +204,7 @@ swift test                   # 단위 테스트
 
 - **온디바이스.** 토큰 사용량은 로컬 Claude Code·Codex·Gemini CLI·Antigravity·OpenCode·Hermes Agent·Cursor·Grok CLI·Copilot CLI·Kiro CLI·Pi Agent 데이터에서 직접 읽습니다. 사용량을 업로드하거나 모델 turn을 실행하지 않습니다.
 - **외부 요청.** 앱은 완전 오프라인이 아닙니다. 10개 호스트에 접속합니다 — `pokeapi.co`·`graphql.pokeapi.co`(종·진화), `raw.githubusercontent.com`(스프라이트), `api.anthropic.com`(Claude 공식 한도), `cloudcode-pa.googleapis.com`·`daily-cloudcode-pa.googleapis.com`(Antigravity 공식 한도)와 `oauth2.googleapis.com`(토큰 갱신), `status.claude.com`·`status.openai.com`(장애 배너 — 설정에서 끌 수 있음), `api.github.com`(업데이트 확인). **어느 요청에도 사용량·토큰·프롬프트·프로젝트 경로는 담기지 않습니다** — 요청 자체만 나갑니다.
+- **Claude Code 가 토큰을 갱신하면 승인이 사라집니다.** Claude Code 는 OAuth 토큰을 갱신할 때마다 자기 Keychain 항목을 다시 쓰고, 그때 이 앱에 준 '항상 허용'도 함께 지워집니다. 그러면 갱신 버튼을 눌러 다시 허용할 때까지 공식 한도가 멈춥니다. Claude Code 를 많이 쓸수록 갱신이 잦아 더 자주 반복됩니다. 이제 앱이 조용히 멈추는 대신 화면으로 알려줍니다. 앱이 막을 수는 없습니다 — 그 항목의 주인은 Claude Code 입니다.
 - **Keychain(선택).** Claude OAuth 자격증명은 **갱신 버튼을 누를 때만** 읽습니다(설정, 또는 팝오버의 한도 행). 자동 폴링은 Keychain 을 건드리지 않으므로 비밀번호 프롬프트가 뜨지 않고, `~/.claude/.credentials.json` 이 있으면 그쪽에서 가져옵니다. 토큰은 메모리에만 두며 **앱 자체 Keychain 항목은 만들지 않습니다.** 토큰이 만료되면 한도는 갱신 전까지 이전 값(stale)으로 표시됩니다. 설정에서 끄면 한도 섹션만 숨겨집니다.
 - **교환·배틀(기본 꺼짐).** 기본 상태에서는 서버가 설정돼 있지 않아, 직접 설정하기 전까지는 아무것도 기기를 떠나지 않습니다. 설정하면 내보내거나 출전시키는 포켓몬이 **그 서버로** 전송됩니다(배틀은 종·레벨·성격·특성·개체값·노력치·기술과 표시 이름). 사용량·토큰·프롬프트·프로젝트 경로는 포함되지 않습니다. 초대 링크는 다른 서버를 지정할 수 있으며, 참가 전에 항상 확인을 받습니다.
 - **포켓몬 에셋**은 런타임에 PokéAPI에서 받아오며 `~/Library/Application Support/PokeTokenBar/`에만 캐시됩니다. 앱 바이너리와 릴리스 아티팩트에는 포켓몬 에셋이 포함되지 않습니다.

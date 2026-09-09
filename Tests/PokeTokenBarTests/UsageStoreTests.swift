@@ -1035,4 +1035,75 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(store.menuLines, [TokenFormatter.compact(50_000)],
                        "Cursor-only must not render $0.00 / $0.0 in the menu bar")
     }
+
+    // MARK: Keychain 승인 회수 (Claude Code 토큰 갱신이 ACL 을 리셋한다)
+
+    /// 승인이 살아있다가 죽은 것과, 애초에 승인한 적이 없는 것은 화면상 구분되지 않는다. 전자만
+    /// "갱신됐어요" 라고 말해야 한다 — 신규 사용자에게 "승인이 만료됐다"고 하면 거짓말이다.
+    func testGrantRevokedOnlyAfterASilentReadHasWorked() async {
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(1_000))
+        let limits = SuccessThenFailClaude(success: claudeLimits(fiveHourUtil: 10),
+                                           thenError: LimitsError.keychainInteractionNotAllowed)
+        let store = UsageStore(providers: [claude],
+                               claudeLimitsProvider: limits,
+                               codexLimitsProvider: FakeCodexLimits(status: nil),
+                               antigravityLimitsProvider: FakeAntigravityLimits(status: nil),
+                               autoRefresh: false, defaults: testDefaults)
+
+        await store.refresh(scheduleEmptyRetry: false)          // silent read works
+        XCTAssertFalse(store.limitsGrantRevoked, "성공 직후엔 회수가 아니다")
+
+        await store.refresh(scheduleEmptyRetry: false)          // Claude Code rewrote the item
+        XCTAssertTrue(store.limitsGrantRevoked, "동작하던 승인이 거절되면 회수로 표시해야 한다")
+    }
+
+    /// A machine that has never granted access must not be told its grant was revoked.
+    func testNeverGrantedIsNotReportedAsRevoked() async {
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(1_000))
+        let store = makeStore(providers: [claude], claude: nil)  // always throws interactionNotAllowed
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertFalse(store.limitsGrantRevoked, "한 번도 승인된 적 없는 기기는 '회수'가 아니다")
+    }
+
+    /// 429 는 서버가 건 제한이라 수동 Retry 가 우회하면 상황이 악화된다(리포트 실측: retryAfter=3600).
+    /// 키체인 백오프 우회는 유지하되, 서버 백오프 중에는 요청을 보내지 않고 남은 시간을 알려야 한다.
+    func testManualRefreshDoesNotBypassAServerBackoff() async {
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(1_000))
+        let limits = CountingRateLimitedClaude()
+        let store = UsageStore(providers: [claude],
+                               claudeLimitsProvider: limits,
+                               codexLimitsProvider: FakeCodexLimits(status: nil),
+                               antigravityLimitsProvider: FakeAntigravityLimits(status: nil),
+                               autoRefresh: false, defaults: testDefaults)
+
+        await store.refresh(scheduleEmptyRetry: false)           // 429 → backoff armed
+        let afterAuto = limits.calls
+        XCTAssertGreaterThan(afterAuto, 0)
+
+        await store.refreshLimitTokenFromKeychain()
+        XCTAssertEqual(limits.calls, afterAuto, "서버 백오프 중에 수동 재시도가 요청을 또 보냈다")
+        XCTAssertNotNil(store.limitTokenRefreshError, "남은 시간을 사용자에게 알려야 한다")
+    }
+}
+
+/// 첫 호출은 성공, 이후 지정 오류 — 살아있던 승인이 죽는 경로 재현용.
+private final class SuccessThenFailClaude: ClaudeLimitsProviding, @unchecked Sendable {
+    nonisolated(unsafe) var success: LimitStatus
+    nonisolated(unsafe) var thenError: any Error
+    nonisolated(unsafe) var call = 0
+    init(success: LimitStatus, thenError: any Error) { self.success = success; self.thenError = thenError }
+    func fetch(allowKeychainPrompt: Bool) async throws -> LimitStatus {
+        defer { call += 1 }
+        if call == 0 { return success }
+        throw thenError
+    }
+}
+
+/// 항상 429 를 던지고 호출 횟수를 센다 — 수동 재시도가 실제로 요청을 보냈는지 확인용.
+private final class CountingRateLimitedClaude: ClaudeLimitsProviding, @unchecked Sendable {
+    nonisolated(unsafe) var calls = 0
+    func fetch(allowKeychainPrompt: Bool) async throws -> LimitStatus {
+        calls += 1
+        throw LimitsError.rateLimited(retryAfter: 3600)
+    }
 }
