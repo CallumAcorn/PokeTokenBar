@@ -32,20 +32,23 @@ private struct RCLineThrows: PokeProviding {
 final class CandyGrantEvaluationTests: XCTestCase {
     func testSessionGrantsOne() {
         var tier: [String: Int] = [:]
-        let grants = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 100)], grantTier: &tier)
+        var resets: [String: String] = [:]
+        let grants = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 100)], grantTier: &tier, grantResetAt: &resets)
         XCTAssertEqual(grants.map(\.count), [1])
         XCTAssertEqual(tier["s"], 1)
     }
 
     func testWeeklyGrantsFive() {
         var tier: [String: Int] = [:]
-        let grants = CompanionStore.evaluateCandyGrants(windows: [w("wk", .weekly, 100)], grantTier: &tier)
+        var resets: [String: String] = [:]
+        let grants = CompanionStore.evaluateCandyGrants(windows: [w("wk", .weekly, 100)], grantTier: &tier, grantResetAt: &resets)
         XCTAssertEqual(grants.map(\.count), [RareCandy.weeklyGrant])
     }
 
     func testBelow100NoGrant() {
         var tier: [String: Int] = [:]
-        let grants = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 99.9)], grantTier: &tier)
+        var resets: [String: String] = [:]
+        let grants = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 99.9)], grantTier: &tier, grantResetAt: &resets)
         XCTAssertTrue(grants.isEmpty)
         XCTAssertNil(tier["s"])
     }
@@ -53,37 +56,41 @@ final class CandyGrantEvaluationTests: XCTestCase {
     /// 같은 tier 유지 중엔 재지급 안 함(80·81·84… 억제의 사탕 버전).
     func testNoDoubleGrantWhileAt100() {
         var tier: [String: Int] = [:]
-        _ = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 100)], grantTier: &tier)
-        let again = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 100)], grantTier: &tier)
+        var resets: [String: String] = [:]
+        _ = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 100)], grantTier: &tier, grantResetAt: &resets)
+        let again = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 100)], grantTier: &tier, grantResetAt: &resets)
         XCTAssertTrue(again.isEmpty, "이미 지급한 창은 재지급 안 함")
     }
 
     /// 100% 아래로 내려가면 재무장(맵에서 제거) → 다시 채우면 재지급.
     func testRearmAfterDropBelow100() {
         var tier: [String: Int] = [:]
-        _ = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 100)], grantTier: &tier)
-        _ = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 40)], grantTier: &tier)
+        var resets: [String: String] = [:]
+        _ = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 100)], grantTier: &tier, grantResetAt: &resets)
+        _ = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 40)], grantTier: &tier, grantResetAt: &resets)
         XCTAssertNil(tier["s"], "경고선 아래 → 제거(재무장)")
-        let regrant = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 100)], grantTier: &tier)
+        let regrant = CompanionStore.evaluateCandyGrants(windows: [w("s", .session, 100)], grantTier: &tier, grantResetAt: &resets)
         XCTAssertEqual(regrant.map(\.count), [1], "리셋 후 다시 채우면 재지급")
     }
 
     /// 세션+주간+미달 혼합 — 세션 1 + 주간 5, 미달 창은 무시.
     func testMixedWindows() {
         var tier: [String: Int] = [:]
+        var resets: [String: String] = [:]
         let grants = CompanionStore.evaluateCandyGrants(windows: [
             w("claude.fiveHour", .session, 100),
             w("claude.sevenDay", .weekly, 100),
             w("codex.codex.primary", .session, 50),
-        ], grantTier: &tier)
+        ], grantTier: &tier, grantResetAt: &resets)
         XCTAssertEqual(grants.reduce(0) { $0 + $1.count }, 1 + RareCandy.weeklyGrant)
     }
 
     /// 지급 grant 는 발화 창 이름을 담는다(알림 "왜 받는지").
     func testGrantCarriesWindowName() {
         var tier: [String: Int] = [:]
+        var resets: [String: String] = [:]
         let grants = CompanionStore.evaluateCandyGrants(
-            windows: [w("claude.fiveHour", .session, 100, name: "Claude 5시간 세션")], grantTier: &tier)
+            windows: [w("claude.fiveHour", .session, 100, name: "Claude 5시간 세션")], grantTier: &tier, grantResetAt: &resets)
         XCTAssertEqual(grants.first?.windowName, "Claude 5시간 세션")
     }
 
@@ -212,12 +219,62 @@ final class RareCandyStoreTests: XCTestCase {
         XCTAssertEqual(s.rareCandyCount, 0)
     }
 
-    /// 한도 미로딩(limitsReady=false)이면 시드조차 하지 않는다(다음 refresh 재시도).
-    func testNoSeedWhenLimitsNotReady() {
+    /// [규칙 변경] 예전엔 `limitsReady=false` 면 시드조차 미뤘다. 그 규칙이 사용자 리포트의 손실을
+    /// 만들었다: Claude Code 가 키체인 항목을 다시 써서 승인이 사라지면 한도 조회가 며칠씩 끊기고,
+    /// 그동안 시드가 밀린다. 그러다 조회가 처음 성공하는 순간 마침 100% 라면, 그 **정당한 지급 한 번이
+    /// 시드에 먹힌다**(리포트 실측: candyGrantTier·inventory 모두 빈 상태).
+    ///
+    /// 지금은 관측 가능한 창만 시드하고 시드 자체는 끝낸다. 한도가 없으면 시드할 창도 없으므로 Claude
+    /// 창은 미시드로 남고, 나중에 처음 관측되는 100% 가 제대로 엣지로 잡혀 지급된다.
+    func testSeedCompletesEvenWhenLimitsAreUnavailable() {
         let s = store(rcLinear3)
-        s.grantCandies(from: [w("claude.fiveHour", .session, 100)], limitsReady: false)
-        XCTAssertFalse(s.state.candyFeatureSeeded)
+        s.grantCandies(from: [], limitsReady: false)     // 한도 조회 실패 → 볼 수 있는 창이 없다
+        XCTAssertTrue(s.state.candyFeatureSeeded, "시드를 미루면 다음 정당한 지급이 시드에 먹힌다")
         XCTAssertEqual(s.rareCandyCount, 0)
+
+        // 승인을 되살린 뒤 처음 관측된 100% 는 시드가 아니라 지급이어야 한다.
+        s.grantCandies(from: [w("claude.fiveHour", .session, 100)], limitsReady: true)
+        XCTAssertEqual(s.rareCandyCount, 1, "끊겼다 돌아온 뒤 첫 100% 가 지급되지 않았다")
+    }
+
+    /// [회귀] 지급 판정은 엣지 트리거라 "100% 미만으로 내려갔다"를 **관측**해야 재무장한다. 한도 조회가
+    /// 끊긴 동안에는 그 하강을 못 본다: 창이 리셋되고 새 주기에 다시 100% 가 돼도 tier=1 이 남아 지급이
+    /// 조용히 누락된다. 이게 이미 시드가 끝난 사용자(리포트 제출자가 아니라 이 저장소 소유자 쪽)의
+    /// 주된 손실 경로였다.
+    ///
+    /// 서버가 주는 리셋 시각이 그 하강을 대신 증언한다 — 지급 당시와 값이 다르면 그 사이 창이 갱신된
+    /// 것이므로 추측 없이 재무장할 수 있다.
+    func testUnobservedWindowRollStillGrantsOnTheNextPeriod() {
+        var tier: [String: Int] = [:]
+        var resets: [String: String] = [:]
+        let first = CandyWindow(key: "claude.fiveHour", name: "5h", kind: .session,
+                                utilization: 100, resetsAt: "2026-09-08T10:00:00Z")
+        XCTAssertEqual(CompanionStore.evaluateCandyGrants(windows: [first], grantTier: &tier,
+                                                          grantResetAt: &resets).count, 1)
+
+        // 같은 주기를 다시 봐도 재지급은 없다.
+        XCTAssertTrue(CompanionStore.evaluateCandyGrants(windows: [first], grantTier: &tier,
+                                                         grantResetAt: &resets).isEmpty)
+
+        // 조회가 끊긴 사이 창이 리셋됐다(리셋 시각이 다음 주기로 이동). 하강은 관측하지 못했다.
+        let nextPeriod = CandyWindow(key: "claude.fiveHour", name: "5h", kind: .session,
+                                     utilization: 100, resetsAt: "2026-09-08T15:00:00Z")
+        XCTAssertEqual(CompanionStore.evaluateCandyGrants(windows: [nextPeriod], grantTier: &tier,
+                                                          grantResetAt: &resets).count, 1,
+                       "리셋 시각이 바뀌었는데 재무장하지 않아 지급이 누락됐다")
+    }
+
+    /// 리셋 시각을 주지 않는 프로바이더는 종전대로 관측된 하강에만 의존한다 — 없는 증거를 지어내
+    /// 재지급하면 안 된다.
+    func testWindowWithoutResetTimeDoesNotRegrant() {
+        var tier: [String: Int] = [:]
+        var resets: [String: String] = [:]
+        let w1 = CandyWindow(key: "codex.5h", name: "5h", kind: .session, utilization: 100)
+        XCTAssertEqual(CompanionStore.evaluateCandyGrants(windows: [w1], grantTier: &tier,
+                                                          grantResetAt: &resets).count, 1)
+        XCTAssertTrue(CompanionStore.evaluateCandyGrants(windows: [w1], grantTier: &tier,
+                                                         grantResetAt: &resets).isEmpty,
+                      "리셋 시각이 없으면 재지급 근거도 없다")
     }
 
     /// 시드 후 새 창이 100%를 새로 넘으면 지급 — 세션 1개.

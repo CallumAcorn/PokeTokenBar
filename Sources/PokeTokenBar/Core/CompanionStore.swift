@@ -1250,14 +1250,26 @@ final class CompanionStore {
     /// - 이미 지급한 창(tier≥1)은 재지급 안 함. session=1개·weekly=weeklyGrant.
     /// - 부수효과(인벤토리·알림)와 분리해 xctest 가능. (evaluateLimitAlerts 자매)
     static func evaluateCandyGrants(
-        windows: [CandyWindow], grantTier: inout [String: Int]
+        windows: [CandyWindow], grantTier: inout [String: Int], grantResetAt: inout [String: String]
     ) -> [CandyGrant] {
         var grants: [CandyGrant] = []
         for w in windows {
-            guard w.utilization >= 100 else { grantTier[w.key] = nil; continue }
+            let stamp = w.resetsAt
+            guard w.utilization >= 100 else {
+                grantTier[w.key] = nil
+                grantResetAt[w.key] = nil
+                continue
+            }
             let previous = grantTier[w.key] ?? 0
-            guard previous < 1 else { continue }
+            // 이미 지급한 창이라도, 지급 당시와 **리셋 시각이 다르면** 그 사이 창이 한 번 갱신된 것이다.
+            // 100% 미만으로 내려가는 순간을 관측하지 못한 경우(한도 조회가 끊겨 있던 동안)에도 재무장이
+            // 필요한데, 그 근거를 추측이 아니라 서버가 준 리셋 시각에서 가져온다. 시각을 모르는
+            // 프로바이더(nil)는 종전대로 관측된 하강에만 의존한다 — 없는 증거를 지어내지 않는다.
+            let rolledUnobserved: Bool
+            if let stamp, let seen = grantResetAt[w.key] { rolledUnobserved = stamp != seen } else { rolledUnobserved = false }
+            guard previous < 1 || rolledUnobserved else { continue }
             grantTier[w.key] = 1
+            grantResetAt[w.key] = stamp
             let count = w.kind == .weekly ? RareCandy.weeklyGrant : 1
             grants.append(CandyGrant(windowKey: w.key, windowName: w.name, count: count))
         }
@@ -1268,7 +1280,10 @@ final class CompanionStore {
     /// - 첫 실행: 현재 100% 창을 지급 없이 tier 시드만 → 이후 "새로 넘어서는" 순간부터 지급(소급 차단).
     /// - limitsReady=false(한도 미로딩)면 시드/지급 모두 대기(다음 refresh 에 재시도).
     func grantCandies(from windows: [CandyWindow], limitsReady: Bool) {
-        guard limitsReady else { return }
+        // `limitsReady` 로 시드를 미루지 않는다. 미루면 한도 조회가 끊긴 사용자는 **몇 주 뒤** 조회가
+        // 처음 성공하는 순간에 시드가 돌고, 그때 마침 100% 였다면 정당한 지급 한 번이 시드에 먹힌다
+        // (사용자 리포트 실측: candyGrantTier·inventory 가 모두 비어 있었다). 관측 가능한 창만 시드하고
+        // 나머지는 미시드로 남겨 두면, 그 창의 첫 100% 관측이 제대로 엣지로 잡힌다.
         if !state.candyFeatureSeeded {
             // 한계(수용): 첫 refresh 에 한 프로바이더 한도만 로드되면 그 프로바이더 창만 시드된다.
             // 이후 다른 프로바이더가 이미 100%인 채 로드되면 소급 지급될 수 있으나, 1회·소수 캔디라
@@ -1280,7 +1295,14 @@ final class CompanionStore {
             return
         }
         let before = state.candyGrantTier
-        let grants = Self.evaluateCandyGrants(windows: windows, grantTier: &state.candyGrantTier)
+        let beforeReset = state.candyGrantResetAt
+        // 로컬로 뽑아 넘긴다 — `state` 는 계산 프로퍼티라 inout 인자 두 개가 같은 저장소를 겨냥하면
+        // 컴파일러가 aliasing 으로 거절한다.
+        var tier = state.candyGrantTier
+        var resets = state.candyGrantResetAt
+        let grants = Self.evaluateCandyGrants(windows: windows, grantTier: &tier, grantResetAt: &resets)
+        state.candyGrantTier = tier
+        state.candyGrantResetAt = resets
         for g in grants {
             state.inventory[ItemKind.rareCandy.rawValue, default: 0] += g.count
             // 지급 자체는 알림 여부와 무관(상태 변경). 알림은 "왜 받는지"(그 창 한도를 다 채운 수고) 명시.
@@ -1289,7 +1311,7 @@ final class CompanionStore {
         }
         // 지급이 없어도 재무장(창이 100%→아래로 내려가며 grantTier 에서 제거)은 영속해야 한다 —
         // 안 하면 재시작 시 stale tier=1 로 다음 100% 도달이 "이미 지급"으로 오판돼 지급 누락(회귀).
-        if !grants.isEmpty || state.candyGrantTier != before { save() }
+        if !grants.isEmpty || state.candyGrantTier != before || state.candyGrantResetAt != beforeReset { save() }
     }
 
     /// companion 이벤트 시스템 알림(.app + 토글 ON 일 때만). 한도 알림과 독립.

@@ -418,11 +418,13 @@ final class UsageStore {
         var windows: [CandyWindow] = []
         if let u = limits?.fiveHour?.utilization {
             windows.append(CandyWindow(key: "claude.fiveHour", name: l.claudeFiveHour,
-                                       kind: .session, utilization: u))
+                                       kind: .session, utilization: u,
+                                       resetsAt: limits?.fiveHour?.resetsAt))
         }
         if let u = limits?.sevenDay?.utilization {
             windows.append(CandyWindow(key: "claude.sevenDay", name: l.claudeWeekly,
-                                       kind: .weekly, utilization: u))
+                                       kind: .weekly, utilization: u,
+                                       resetsAt: limits?.sevenDay?.resetsAt))
         }
         for bucket in codexLimits?.visibleSnapshots ?? [] {
             let bucketKey = bucket.limitId ?? bucket.limitName ?? "codex"

@@ -670,7 +670,10 @@ final class SaveTransferTests: XCTestCase {
                                      "dex", "collectedFinals", "inventory", "representativeSpeciesID", "ownedTMs",
                                      "gymBadges"]
         let deviceLedger: Set<String> = ["installBaselineSet", "claimedTodayTokensByProvider", "lastDate"]
-        let accountLedger: Set<String> = ["candyGrantTier", "candyFeatureSeeded", "movesFeatureSeeded"]
+        // candyGrantResetAt = candyGrantTier 와 한 쌍(같은 창의 지급 상태) — 분류가 갈리면 이전 후
+        // tier 만 남아 재무장 증거가 사라진다.
+        let accountLedger: Set<String> = ["candyGrantTier", "candyGrantResetAt", "candyFeatureSeeded",
+                                          "movesFeatureSeeded"]
         let devicePreference: Set<String> = ["language"]
 
         let classified = progress.union(deviceLedger).union(accountLedger).union(devicePreference)
