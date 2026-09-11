@@ -93,6 +93,13 @@ final class GeminiUsageTests: XCTestCase {
     /// Gemini 단가 — 정확 매칭 + pro/flash 패밀리 폴백 + 미지 변형은 0.
     func testGeminiPricing() {
         XCTAssertEqual(ModelPricing.rate(for: "gemini-2.5-pro"), .perMillion(1.25, 10, 0, 0.3125))
+        // Fable 5.1 은 기본 단가가 Fable 5 와 같아 패밀리 폴백(`contains("fable")`)이 "맞는 것처럼"
+        // 통과하지만, cache read 만 $1.00 → $0.25 로 내려가 있다. 명시 행이 없으면 캐시 비용을
+        // **4배** 부풀린다 — 캐시 읽기가 대부분인 실사용에서 총액이 눈에 띄게 틀어진다(상류 #277).
+        XCTAssertEqual(ModelPricing.rate(for: "claude-fable-5-1"), .perMillion(10, 50, 12.5, 0.25))
+        XCTAssertEqual(ModelPricing.cost(model: "claude-fable-5-1", input: 0, output: 0,
+                                         cacheWrite: 0, cacheRead: 1_000_000), 0.25,
+                       accuracy: 0.0001, "패밀리 폴백으로 새면 1.00 이 된다")
         XCTAssertEqual(ModelPricing.rate(for: "gemini-2.5-flash"), .perMillion(0.30, 2.5, 0, 0.075))
         XCTAssertEqual(ModelPricing.rate(for: "gemini-3.1-pro-preview"), .perMillion(1.25, 10, 0, 0.3125))
         XCTAssertEqual(ModelPricing.rate(for: "gemini-3-flash-lite"), .perMillion(0.30, 2.5, 0, 0.075))
