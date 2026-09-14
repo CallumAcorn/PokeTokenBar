@@ -33,10 +33,23 @@ enum BattleClient {
         let fainted: Bool
         let hpFraction: Double
     }
+    /// Gen 5 move audit, Fix B: the server's live per-slot move state for this side's active mon
+    /// (id/PP/disabled, post-Disable/Taunt/Encore/Torment/Imprison/Mimic/Sketch/charge-turn) — see
+    /// `activeMoveSlots` in `battles.ts`. `moveSlug` is a PokéAPI-style hyphenated slug
+    /// (`move.name` lowercased, spaces to hyphens), matched against `moveDetail(name:)`.
+    struct ActiveMoveSlot: Codable, Equatable {
+        let moveSlug: String
+        let pp: Int
+        let maxPP: Int
+        let disabled: Bool
+    }
     struct You: Codable, Equatable {
         let displayName: String
         let roster: [PublicMon]
         let activeIndex: Int
+        /// `nil` while it isn't this side's move choice (switch/team-preview/wait) — same states
+        /// `pendingChoice` distinguishes.
+        let activeMoves: [ActiveMoveSlot]?
     }
     struct Opponent: Codable, Equatable {
         let displayName: String

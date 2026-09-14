@@ -1337,6 +1337,10 @@ private struct MonDetailView: View {
             VStack(alignment: .leading, spacing: 10) {
                 header
                 hero
+                // Right below the normal level/evolution progress bar (in `hero`) — the two
+                // "progress toward something" displays for this mon read together, rather than
+                // hyper training's bar being buried down past stats/IV-EV/vitamins.
+                hyperTrainingSection
                 EvoLineView(nodes: lineNodes, mysteryLabel: store.l.unknownNextEvolution,
                             shiny: mon.isShiny, maxWidth: PopoverMetrics.contentWidth)
                 statsSection
@@ -1378,21 +1382,28 @@ private struct MonDetailView: View {
                                             level: mon.level, nature: mon.nature)
             VStack(alignment: .leading, spacing: 3) {
                 Text(store.l.pcStatsTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                statRow(store.l.statHP, computed.hp)
-                statRow(store.l.statAttack, computed.attack)
-                statRow(store.l.statDefense, computed.defense)
-                statRow(store.l.statSpecialAttack, computed.specialAttack)
-                statRow(store.l.statSpecialDefense, computed.specialDefense)
-                statRow(store.l.statSpeed, computed.speed)
+                statRow(store.l.statHP, computed.hp, hyperTrained: mon.hyperTrainedStats.contains(.hp))
+                statRow(store.l.statAttack, computed.attack, hyperTrained: mon.hyperTrainedStats.contains(.attack))
+                statRow(store.l.statDefense, computed.defense, hyperTrained: mon.hyperTrainedStats.contains(.defense))
+                statRow(store.l.statSpecialAttack, computed.specialAttack, hyperTrained: mon.hyperTrainedStats.contains(.specialAttack))
+                statRow(store.l.statSpecialDefense, computed.specialDefense, hyperTrained: mon.hyperTrainedStats.contains(.specialDefense))
+                statRow(store.l.statSpeed, computed.speed, hyperTrained: mon.hyperTrainedStats.contains(.speed))
             }
         }
     }
 
-    private func statRow(_ label: String, _ value: Int) -> some View {
+    /// `hyperTrained` reads as different the way the real games do — a distinct color on the value,
+    /// not just a number that happens to be as high as a natural 31 IV would produce (a maxed
+    /// display must be visibly attributable to hyper training, not indistinguishable from luck).
+    private func statRow(_ label: String, _ value: Int, hyperTrained: Bool = false) -> some View {
         HStack(spacing: 6) {
             Text(label).font(.caption2).foregroundStyle(.secondary).frame(width: 34, alignment: .leading)
             ProgressView(value: min(1, Double(value) / Self.statBarMax)).controlSize(.small)
-            Text("\(value)").font(.caption2.monospacedDigit()).frame(width: 26, alignment: .trailing)
+                .tint(hyperTrained ? .blue : nil)
+            Text(hyperTrained ? "\(value)H" : "\(value)")
+                .font(.caption2.monospacedDigit()).foregroundStyle(hyperTrained ? .blue : .primary)
+                .frame(width: 34, alignment: .trailing)
+                .help(hyperTrained ? store.l.pcHyperTrainTitle : "")
         }
     }
 
@@ -1455,6 +1466,120 @@ private struct MonDetailView: View {
         .buttonStyle(.bordered).controlSize(.small)
         .disabled(!store.canUseVitamin(kind, on: mon.id))
         .help(store.l.itemName(kind))
+    }
+
+    // MARK: Hyper Training — bottlecaps. Same "PC detail picks the target" principle as vitamins
+    // (BagView.useControls' `useFromPcDetail` hint), but the target isn't just "this mon" — silver
+    // also needs a stat pick, so this section owns its own inline picker rather than reusing
+    // vitaminButton's one-tap shape.
+
+    @ViewBuilder
+    private var hyperTrainingSection: some View {
+        if let target = mon.hyperTrainTarget {
+            let fraction = target.threshold > 0 ? Double(mon.hyperTrainProgress) / Double(target.threshold) : 1
+            VStack(alignment: .leading, spacing: 4) {
+                Text(store.l.pcHyperTrainTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(hyperTrainTargetLabel(target)).font(.caption2)
+                    ProgressView(value: min(1, fraction)).controlSize(.small)
+                    Text(store.l.hyperTrainProgressLabel(TokenFormatter.compact(mon.hyperTrainProgress),
+                                                          TokenFormatter.compact(target.threshold)))
+                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+        } else {
+            let owned = ItemKind.allCases.filter { $0.isBottlecap && store.itemCount($0) > 0 }
+            if !owned.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(store.l.pcHyperTrainTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    if mon.hyperTrainedStats.count == StatKind.allCases.count {
+                        Text(store.l.hyperTrainAllDone).font(.caption2).foregroundStyle(.tertiary)
+                    } else {
+                        ForEach(owned, id: \.self) { kind in bottlecapRow(kind) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func hyperTrainTargetLabel(_ target: HyperTrainTarget) -> String {
+        switch target {
+        case .stat(let stat): return statLabel(stat)
+        case .all: return store.l.itemName(.bottlecapGold)
+        }
+    }
+
+    private func statLabel(_ stat: StatKind) -> String {
+        switch stat {
+        case .hp: return store.l.statHP
+        case .attack: return store.l.statAttack
+        case .defense: return store.l.statDefense
+        case .specialAttack: return store.l.statSpecialAttack
+        case .specialDefense: return store.l.statSpecialDefense
+        case .speed: return store.l.statSpeed
+        }
+    }
+
+    @State private var pickingStatFor: ItemKind?
+
+    /// The up-front cost hint — shown next to the button/picker so it's known before spending the
+    /// item, not just discovered mid-grind via the progress bar.
+    private func costLabel(_ target: HyperTrainTarget) -> some View {
+        Text(store.l.hyperTrainCostLabel(TokenFormatter.compact(target.threshold)))
+            .font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+    }
+
+    @ViewBuilder
+    private func bottlecapRow(_ kind: ItemKind) -> some View {
+        if kind == .bottlecapGold {
+            HStack(spacing: 6) {
+                Button {
+                    store.startHyperTraining(kind, target: .all, on: mon.id)
+                } label: {
+                    HStack(spacing: 3) {
+                        ItemIconView(kind: kind, size: 16)
+                        Text("×\(store.itemCount(kind))").font(.caption2.weight(.bold)).monospacedDigit()
+                    }
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .disabled(!store.canStartHyperTraining(kind, target: .all, on: mon.id))
+                .help(store.l.itemName(kind))
+                costLabel(.all)
+            }
+        } else if pickingStatFor == kind {
+            HStack(spacing: 4) {
+                Text(store.l.hyperTrainPickStat).font(.caption2).foregroundStyle(.secondary)
+                ForEach(StatKind.allCases, id: \.self) { stat in
+                    Button(statLabel(stat)) {
+                        store.startHyperTraining(kind, target: .stat(stat), on: mon.id)
+                        pickingStatFor = nil
+                    }
+                    .buttonStyle(.bordered).controlSize(.mini)
+                    .disabled(!store.canStartHyperTraining(kind, target: .stat(stat), on: mon.id))
+                }
+                costLabel(.stat(.hp))   // same threshold regardless of which stat is picked
+                Button(store.l.cancel) { pickingStatFor = nil }
+                    .buttonStyle(.borderless).controlSize(.mini)
+            }
+        } else {
+            // Reachable only when at least one stat still isn't hyper-trained on this mon (the
+            // caller hides this whole section once `hyperTrainedStats` covers all six) and this
+            // bottlecap is owned (the `owned` filter above) — so opening the picker is always valid;
+            // the per-stat buttons inside it are what actually gate on which stats remain.
+            HStack(spacing: 6) {
+                Button {
+                    pickingStatFor = kind
+                } label: {
+                    HStack(spacing: 3) {
+                        ItemIconView(kind: kind, size: 16)
+                        Text("×\(store.itemCount(kind))").font(.caption2.weight(.bold)).monospacedDigit()
+                    }
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .help(store.l.itemName(kind))
+                costLabel(.stat(.hp))
+            }
+        }
     }
 
     // MARK: Moves — the 4 known slots + level-up moves learnable right now + teaching from owned TMs.
@@ -1550,22 +1675,49 @@ private struct MonDetailView: View {
         }
     }
 
+    /// Same 2×2 layout as `knownMovesTable` — this picker *is* those same 4 slots, so it should look
+    /// like them, not like a generic list. Each cell shows the move it would overwrite (red border +
+    /// swap badge, `KnownMoveCell(replacing: true)`) rather than the move being learned — the thing
+    /// that's about to disappear is the useful thing to see before tapping.
     private func slotPicker(moveID: Int, isTM: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(store.l.moveFullPickSlot).font(.caption2).foregroundStyle(.secondary)
-            HStack(spacing: 4) {
-                ForEach(0..<mon.knownMoves.count, id: \.self) { slot in
-                    Button {
-                        performLearn(moveID: moveID, isTM: isTM, slot: slot)
-                    } label: {
-                        MoveRow(store: store, moveID: mon.knownMoves[slot])
-                    }
-                    .buttonStyle(.bordered).controlSize(.small)
-                }
-                Button(store.l.cancel) { pendingLearn = nil }
-                    .buttonStyle(.borderless).controlSize(.small)
+            // Names the incoming move — the row that used to show it (learnRow) is gone once this
+            // picker takes over, so without this the picker names nothing that's actually new.
+            VStack(alignment: .leading, spacing: 2) {
+                Text(store.l.moveLearningLabel).font(.system(size: 9, weight: .bold)).foregroundStyle(.green)
+                MoveRow(store: store, moveID: moveID)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(6)
+            .background(Color.green.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            Image(systemName: "arrow.down").font(.caption2).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+            Text(store.l.moveFullPickSlot).font(.caption2).foregroundStyle(.secondary)
+            VStack(spacing: 4) {
+                HStack(spacing: 4) { replaceSlotCell(0, newMoveID: moveID, isTM: isTM); replaceSlotCell(1, newMoveID: moveID, isTM: isTM) }
+                HStack(spacing: 4) { replaceSlotCell(2, newMoveID: moveID, isTM: isTM); replaceSlotCell(3, newMoveID: moveID, isTM: isTM) }
+            }
+            Button(store.l.cancel) { pendingLearn = nil }
+                .buttonStyle(.borderless).controlSize(.small)
         }
+        // The whole picker is one pending action (replacing a move is as committal as evolving) —
+        // an outer border encloses the incoming move, the arrow, and the 4-slot grid as a single
+        // unit, distinct from the plain list rows around it, the same way `confirming` states
+        // elsewhere (BagView's ItemCard) visually set themselves apart before a commit.
+        .padding(8)
+        .background(Color.secondary.opacity(0.05))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange, lineWidth: 1.5))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func replaceSlotCell(_ slot: Int, newMoveID: Int, isTM: Bool) -> some View {
+        Button {
+            performLearn(moveID: newMoveID, isTM: isTM, slot: slot)
+        } label: {
+            KnownMoveCell(store: store, moveID: slot < mon.knownMoves.count ? mon.knownMoves[slot] : nil, replacing: true)
+        }
+        .buttonStyle(.plain)
     }
 
     private func performLearn(moveID: Int, isTM: Bool, slot: Int?) {
@@ -1730,6 +1882,10 @@ private struct MoveRow: View {
 private struct KnownMoveCell: View {
     let store: CompanionStore
     let moveID: Int?
+    /// True when this cell is rendered inside the full-moveset slot picker (`slotPicker`) — tapping
+    /// it overwrites whatever's shown, so the border goes red instead of by-type and a swap badge
+    /// overlays the corner, instead of relying on position in the grid alone to imply "replace."
+    var replacing: Bool = false
     @State private var move: Move?
 
     var body: some View {
@@ -1765,8 +1921,17 @@ private struct KnownMoveCell: View {
         .background(Color.secondary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
-            if let move {
-                RoundedRectangle(cornerRadius: 8).strokeBorder(typeColor(move.type), lineWidth: 1.5)
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(replacing ? Color.red : (move.map { typeColor($0.type) } ?? .clear), lineWidth: 1.5)
+        }
+        .overlay(alignment: .topTrailing) {
+            if replacing {
+                Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                    .font(.system(size: 13))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .red)
+                    .background(Circle().fill(.white))
+                    .offset(x: 5, y: -5)
             }
         }
         .task(id: moveID) {

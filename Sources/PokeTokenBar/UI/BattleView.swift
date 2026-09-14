@@ -1641,7 +1641,7 @@ struct BattleView: View {
             if let mon = battle.myRoster[safeIndex: you.activeIndex] {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(l.battleWaitingOnYouToChooseMove).font(.system(size: 12, weight: .semibold))
-                    BattleMoveGrid(store: companion, mon: mon, turn: turn) { slot in
+                    BattleMoveGrid(store: companion, mon: mon, activeMoves: you.activeMoves, turn: turn) { slot in
                         choiceSubmittedForTurn = turn
                         Task {
                             let accepted = await battle.choose(BattleStore.moveChoice(slot))
@@ -1856,38 +1856,48 @@ private struct BattleSpriteFlash: View {
 }
 
 /// A mon's up-to-4 known moves as tappable buttons — loaded from `CompanionStore.moveDetail`, the
-/// same source the PC detail screen's known-move list already uses. Local data only (see
-/// `BattleStore.myRoster`'s doc comment for why the server's own response can't supply this).
+/// same source the PC detail screen's known-move list already uses. Prefers `activeMoves` — the
+/// server's live per-slot PP/disabled state (Gen 5 move audit, Fix B: `activeMoveSlots` in
+/// `battles.ts`) — falling back to `mon.knownMoves` with no PP tracking only if the server ever
+/// omits it (not expected once both sides run this fix, but cheap to keep as a safety net).
 private struct BattleMoveGrid: View {
     let store: CompanionStore
     let mon: MonState
+    let activeMoves: [BattleClient.ActiveMoveSlot]?
     /// Only used to reset `selectedSlot` between turns (see .onChange below) — the active mon
     /// usually stays the same across several turns in a row, so keying the reset on `mon.id` alone
     /// would leave the previous turn's highlight stuck showing on a move you already used.
     let turn: Int
     let onChoose: (Int) -> Void
 
-    @State private var moves: [Move?] = []
+    private struct Slot {
+        let move: Move?
+        let fallbackID: Int?
+        let pp: Int?
+        let maxPP: Int?
+        let disabled: Bool
+    }
+
+    @State private var slots: [Slot] = []
     /// Set the instant a move is tapped — immediate feedback while the request round-trips, rather
     /// than the button looking completely inert until the next poll shows something changed.
     @State private var selectedSlot: Int?
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-            ForEach(Array(mon.knownMoves.enumerated()), id: \.offset) { index, moveID in
-                let move = moves[safeIndex: index] ?? nil
+            ForEach(Array(slots.enumerated()), id: \.offset) { index, info in
                 let slot = index + 1
                 Button {
                     selectedSlot = slot
                     onChoose(slot)
                 } label: {
                     HStack(spacing: 6) {
-                        Text(move?.localizedName(store.language) ?? "#\(moveID)")
+                        Text(info.move?.localizedName(store.language) ?? "#\(info.fallbackID ?? 0)")
                             .font(.system(size: 12, weight: .medium))
                             .lineLimit(1)
                         Spacer(minLength: 2)
-                        if let move {
-                            Text("\(store.l.battlePP) \(move.pp)")
+                        if let move = info.move {
+                            Text("\(store.l.battlePP) \(info.pp ?? move.pp)" + (info.maxPP.map { "/\($0)" } ?? ""))
                                 .font(.system(size: 8, weight: .semibold))
                                 .foregroundStyle(.secondary)
                             // Same type-badge convention CompanionView's MoveRow already uses —
@@ -1905,7 +1915,11 @@ private struct BattleMoveGrid: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(selectedSlot != nil && selectedSlot != slot)
+                // A Disabled/Taunted/locked-out slot must read as unusable, not just quietly reject
+                // the tap on submit — dimmed + non-interactive, same as the other slots go inert
+                // once a slot is picked.
+                .opacity(info.disabled ? 0.4 : 1)
+                .disabled(info.disabled || (selectedSlot != nil && selectedSlot != slot))
                 // On the button itself, not nested inside the label content — that inner rectangle
                 // never actually lined up with the real button chrome `.buttonStyle(.bordered)`
                 // draws (different padding/corner radius), so it read as an outline on some random
@@ -1917,10 +1931,22 @@ private struct BattleMoveGrid: View {
                         .strokeBorder(selectedSlot == slot ? Color.green : Color.clear, lineWidth: 2))
             }
         }
-        .task(id: mon.id) {
-            var loaded: [Move?] = []
-            for id in mon.knownMoves { loaded.append(await store.moveDetail(id: id)) }
-            moves = loaded
+        .task(id: "\(mon.id)#\(turn)") {
+            if let activeMoves, !activeMoves.isEmpty {
+                var loaded: [Slot] = []
+                for m in activeMoves {
+                    loaded.append(Slot(move: await store.moveDetail(name: m.moveSlug), fallbackID: nil,
+                                        pp: m.pp, maxPP: m.maxPP, disabled: m.disabled))
+                }
+                slots = loaded
+            } else {
+                var loaded: [Slot] = []
+                for id in mon.knownMoves {
+                    loaded.append(Slot(move: await store.moveDetail(id: id), fallbackID: id,
+                                        pp: nil, maxPP: nil, disabled: false))
+                }
+                slots = loaded
+            }
         }
         .onChange(of: turn) { selectedSlot = nil }
     }

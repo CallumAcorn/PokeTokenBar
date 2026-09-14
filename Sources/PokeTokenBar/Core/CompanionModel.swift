@@ -149,6 +149,10 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
     case shinyCharm
     case moveReroll
     case hpUp, protein, iron, calcium, zinc, carbos
+    /// 은/금 병뚜껑(Bottle Cap) — 소비형. 은은 스탯 1개, 금은 6개 전부를 하이퍼트레이닝 대상으로 삼는다.
+    /// 실제 효과(IV 31 취급)는 즉시가 아니라 CompanionStore.startHyperTraining 이 시작하는 그라인드가
+    /// 끝나야 붙는다 — see MonState.hyperTrainTarget.
+    case bottlecapSilver, bottlecapGold
 
     /// PokéAPI 아이템 스프라이트 파일명(.../sprites/items/{name}.png). nil = 스프라이트 없음(이모지 폴백만).
     var spriteName: String? {
@@ -163,6 +167,9 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .calcium: return "calcium"
         case .zinc: return "zinc"
         case .carbos: return "carbos"
+        // 본가 PokéAPI /item/{name} 슬러그와 일치 (bottle-cap / gold-bottle-cap).
+        case .bottlecapSilver: return "bottle-cap"
+        case .bottlecapGold: return "gold-bottle-cap"
         }
     }
     /// 스프라이트 로딩 전/미제공/실패 시 폴백 이모지.
@@ -173,6 +180,7 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .shinyCharm: return "✨"
         case .moveReroll: return "🔀"
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return "💊"
+        case .bottlecapSilver, .bottlecapGold: return "🧢"
         }
     }
     /// 상점 판매가(재화 = 사용한 토큰). nil = 상점 미판매.
@@ -183,12 +191,15 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .shinyCharm: return ShinyCharm.price
         case .moveReroll: return MoveReroll.price
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return Vitamin.price
+        case .bottlecapSilver: return Bottlecap.silverPrice
+        case .bottlecapGold: return Bottlecap.goldPrice
         }
     }
     /// 보유형(패시브) 아이템 — 소비하지 않고 보유하는 동안 상시 효과. 1회 구매(재구매 불가), 가방엔 "적용 중" 표시.
     var isPassive: Bool {
         switch self {
-        case .rareCandy, .mint, .moveReroll, .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return false
+        case .rareCandy, .mint, .moveReroll, .hpUp, .protein, .iron, .calcium, .zinc, .carbos,
+             .bottlecapSilver, .bottlecapGold: return false
         case .shinyCharm: return true
         }
     }
@@ -201,9 +212,59 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .calcium: return \.specialAttack
         case .zinc: return \.specialDefense
         case .carbos: return \.speed
-        case .rareCandy, .mint, .shinyCharm, .moveReroll: return nil
+        case .rareCandy, .mint, .shinyCharm, .moveReroll, .bottlecapSilver, .bottlecapGold: return nil
         }
     }
+    /// 이 병뚜껑이 여는 하이퍼트레이닝 대상 종류 — 병뚜껑이 아니면 nil. 실제 대상 스탯(은)은 시작 시점에
+    /// 플레이어가 고른다(CompanionStore.startHyperTraining), 여기선 "은/금이냐"만 구분한다.
+    var isBottlecap: Bool {
+        self == .bottlecapSilver || self == .bottlecapGold
+    }
+}
+
+/// 6개 스탯 식별자 — 하이퍼트레이닝 대상을 저장할 때 쓴다(WritableKeyPath 는 Codable 이 아니라 값으로
+/// 저장해야 함). RadarChartView 등 기존 화면은 여전히 StatSpread 필드에 직접 접근하므로, 이 enum 은
+/// keyPath 를 통해 그 필드들과 다리를 놓는 용도로만 쓰인다.
+enum StatKind: String, Codable, Sendable, CaseIterable, Hashable {
+    case hp, attack, defense, specialAttack, specialDefense, speed
+
+    var keyPath: WritableKeyPath<StatSpread, Int> {
+        switch self {
+        case .hp: return \.hp
+        case .attack: return \.attack
+        case .defense: return \.defense
+        case .specialAttack: return \.specialAttack
+        case .specialDefense: return \.specialDefense
+        case .speed: return \.speed
+        }
+    }
+}
+
+/// 하이퍼트레이닝 진행 중인 대상 — 은 병뚜껑은 스탯 1개, 금은 6개 전부.
+enum HyperTrainTarget: Codable, Sendable, Equatable {
+    case stat(StatKind)
+    case all
+
+    /// 이 대상이 요구하는 누적 사용량(토큰) — Bottlecap.thresholdPerStat/thresholdAll 참고.
+    var threshold: Int {
+        switch self {
+        case .stat: return Bottlecap.thresholdPerStat
+        case .all: return Bottlecap.thresholdAll
+        }
+    }
+}
+
+/// 병뚜껑 밸런스 상수. 알 부화(5M, PokemonBalance.eggHatchThreshold)와 같은 "누적 사용량" 축이지만,
+/// 하이퍼트레이닝은 영구 최댓값 보정이라 훨씬 크게 잡는다 — "huge amounts of tokens" 요청 그대로.
+/// 상점 구매가는 별개 축(RareCandy 류와 같은 spentTokens 재화)이다.
+enum Bottlecap {
+    /// 은(스탯 1개) — 알 부화 임계의 100배. 2026-09-14 확정(사용자 요청) — 처음 값(50M)이 너무 낮았다.
+    static let thresholdPerStat = 500_000_000
+    /// 금(스탯 6개 전부) — 은 4개분(6개분이 아니라 묶음 할인).
+    static let thresholdAll = thresholdPerStat * 4
+    /// 상점 구매가 — 사탕/비타민보다 훨씬 비싼 프리미엄대. 금은 은 5개분 가격(2026-09-14 확정, 사용자 요청).
+    static let silverPrice = 750_000_000
+    static let goldPrice = silverPrice * 5
 }
 
 /// 비타민(EV 증가 아이템) 밸런스 상수 — 본가 규칙: 1개당 +10 EV, 스탯당 252·합계 510 상한.
@@ -767,6 +828,16 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     var ivs: StatSpread?
     /// 노력치(EV, 스탯당 0~252) — 아이템(비타민)으로 누적, 부화 시 전부 0.
     var evs = StatSpread()
+    /// 하이퍼트레이닝으로 확정 완료된 스탯 — `effectiveIVs`가 여기 포함된 스탯을 31로 보정해 보여준다.
+    /// 진짜 `ivs` 롤은 절대 건드리지 않는다(요청 원문: "must not affect the actual base IV but
+    /// provide the maxed when hypertraining is complete"). 이 기능 도입 전 개체는 빈 Set.
+    var hyperTrainedStats: Set<StatKind> = []
+    /// 진행 중인 하이퍼트레이닝 — nil 이면 없음. 병뚜껑은 시작 시점에 이미 소비했으므로(선택 확정),
+    /// 취소/환불 경로가 없다 — CompanionStore.startHyperTraining 참고.
+    var hyperTrainTarget: HyperTrainTarget?
+    /// hyperTrainTarget 을 향한 누적 사용량 — eggUsage/usedAtStage 와 같은 사용량 델타를 그대로 같이
+    /// 받는다(별도 재화가 아니라 같은 델타의 추가 관측자). 목표 없으면 0 유지.
+    var hyperTrainProgress = 0
     // 메타몽 위장 — nil=일반. 값=정체 메타몽, 이 종으로 위장 중(위장 구간엔 baseID 와 동일, 리빌 후에도 원 위장체 보존).
     var dittoDisguise: Int?
     var dittoRevealed = false       // 위장 → 리빌(정체 공개) 전환 여부
@@ -797,8 +868,14 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     var currentID: Int { pathIDs.isEmpty ? baseID : pathIDs[min(stageIndex, pathIDs.count - 1)] }
     /// 표시 전용 레벨(Lv.1~100) — PokemonBalance.level 참고.
     var level: Int { PokemonBalance.level(rarity: rarity, totalForms: totalForms, stageIndex: stageIndex, usedAtStage: usedAtStage) }
-    /// 화면/계산에 실제로 쓸 IV — 진짜 부화 롤(ivs)이 있으면 그것, 없으면(구버전 개체) id 로 결정적 대체.
-    var effectiveIVs: StatSpread { ivs ?? StatCalc.legacyIVs(monID: id) }
+    /// 화면/계산에 실제로 쓸 IV — 진짜 부화 롤(ivs)이 있으면 그것, 없으면(구버전 개체) id 로 결정적
+    /// 대체, 그 위에 하이퍼트레이닝 완료 스탯을 31로 덮어쓴다. 이 결과만 스탯 계산(StatCalc.compute)과
+    /// 배틀 전송(BattleClient.primitive)에 쓰인다 — `ivs` 자체는 절대 안 바뀐다.
+    var effectiveIVs: StatSpread {
+        var spread = ivs ?? StatCalc.legacyIVs(monID: id)
+        for stat in hyperTrainedStats { spread[keyPath: stat.keyPath] = 31 }
+        return spread
+    }
     /// 화면에 실제로 보여줄 특성 — 진짜 부화 롤(ability)이 있으면 그것, 없으면(특성 도입 전 개체)
     /// 종의 실제 특성 후보에서 id 로 결정적 대체. candidates 는 호출부가 이미 들고 있는
     /// baseStats.abilities(그 종의 진짜 후보 목록)를 그대로 넘긴다 — effectiveIVs 와 달리 이건
@@ -812,7 +889,8 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
          nature: PokemonNature? = nil, ability: String? = nil, ivs: StatSpread? = nil, evs: StatSpread = StatSpread(),
          dittoDisguise: Int? = nil, dittoRevealed: Bool = false,
          acquiredAt: Date = Date(), acquiredVia: AcquisitionSource = .egg, evolutionLocked: Bool = false,
-         isFloating: Bool = false, isBackFacing: Bool = false, isMirrored: Bool = false, knownMoves: [Int] = []) {
+         isFloating: Bool = false, isBackFacing: Bool = false, isMirrored: Bool = false, knownMoves: [Int] = [],
+         hyperTrainedStats: Set<StatKind> = [], hyperTrainTarget: HyperTrainTarget? = nil, hyperTrainProgress: Int = 0) {
         self.id = id
         self.baseID = baseID
         self.pathIDs = pathIDs
@@ -839,6 +917,9 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         self.isBackFacing = isBackFacing
         self.isMirrored = isMirrored
         self.knownMoves = knownMoves
+        self.hyperTrainedStats = hyperTrainedStats
+        self.hyperTrainTarget = hyperTrainTarget
+        self.hyperTrainProgress = hyperTrainProgress
     }
 
     // 하위호환 디코딩: shiny/nature/id/acquiredAt/acquiredVia 는 구버전 저장에 없음 → 기본값.
@@ -876,6 +957,9 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         isBackFacing = (try? c.decodeIfPresent(Bool.self, forKey: .isBackFacing)) ?? false
         isMirrored = (try? c.decodeIfPresent(Bool.self, forKey: .isMirrored)) ?? false
         knownMoves = (try? c.decodeIfPresent([Int].self, forKey: .knownMoves)) ?? []
+        hyperTrainedStats = (try? c.decodeIfPresent(Set<StatKind>.self, forKey: .hyperTrainedStats)) ?? []
+        hyperTrainTarget = (try? c.decodeIfPresent(HyperTrainTarget.self, forKey: .hyperTrainTarget)) ?? nil
+        hyperTrainProgress = (try? c.decodeIfPresent(Int.self, forKey: .hyperTrainProgress)) ?? 0
     }
 }
 

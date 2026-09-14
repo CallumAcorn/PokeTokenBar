@@ -629,6 +629,31 @@ final class SaveTransferTests: XCTestCase {
         XCTAssertTrue((0...Vitamin.evCapPerStat).contains(roundTripped?.evs.attack ?? -1))
     }
 
+    /// [하이퍼트레이닝 후속] `hyperTrainProgress` 는 매 usage tick마다 `applyHyperTrainProgress`에서
+    /// unchecked `+= delta`를 받는다 — `usedAtStage`/`ivs`/`evs`와 같은 부류의 오버플로 트랩 위험이라
+    /// 같은 신뢰경계(sanitizedMon)에서 막혀야 한다. `hyperTrainedStats`/`hyperTrainTarget`은 산술에
+    /// 쓰이지 않으므로(Set 멤버십·enum) 클램프 대상이 아니다 — `ivs`/`nature` 자체가 이미 "정말 땄는가"는
+    /// 검증하지 않는 것과 같은 신뢰 모델(오버플로만 막지, 위조는 이 앱의 범위 밖).
+    func testExtremeHyperTrainProgressIsClampedAtTheTrustBoundary() throws {
+        let evilMon = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1],
+                               stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1,
+                               hyperTrainTarget: .stat(.attack), hyperTrainProgress: Int.max)
+
+        let cleaned = SaveTransfer.sanitizedMon(evilMon)
+
+        XCTAssertLessThanOrEqual(cleaned.hyperTrainProgress, SaveTransfer.maxTokenValue)
+        // 정규화된 값 위에 실제 산술 경로(applyHyperTrainProgress의 `+= delta`)를 태워도 트랩이 안 나는지 확인.
+        let afterTick = cleaned.hyperTrainProgress + 1_000_000
+        XCTAssertGreaterThan(afterTick, cleaned.hyperTrainProgress)
+
+        // 세이브 파일 전체 왕복(encode→decode)에서도 같은 클램프가 걸리는지 확인.
+        var evil = CompanionState()
+        evil.party = [evilMon]
+        let data = try SaveTransfer.encode(state: evil, appVersion: "2.5.0", deviceName: "Corrupt", now: transferNow)
+        let roundTripped = try XCTUnwrap(SaveTransfer.decode(data).state.party.first)
+        XCTAssertLessThanOrEqual(roundTripped.hyperTrainProgress, SaveTransfer.maxTokenValue)
+    }
+
     /// [PR #20 후속] knownMoves 의 4개 상한은 teach/learn 경로마다 `count < 4` 가드로만 걸려 있다.
     /// 거래·세이브 임포트로 들어온 개체는 그 가드를 한 번도 통과하지 않으므로 상한을 넘긴 채 자리잡고,
     /// 넘긴 값이 그대로 저장된 뒤 PC 상세가 `ForEach(0..<count)` 로 전부 그린다. 재기동해도 같은 값을

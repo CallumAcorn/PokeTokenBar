@@ -162,6 +162,13 @@ enum SaveTransfer {
         m.knownMoves = m.knownMoves.filter { seen.insert($0).inserted }.prefix(MonState.maxKnownMoves).map { $0 }
         m.ivs = m.ivs.map { clampedSpread($0, to: 0...31) }
         m.evs = clampedSpread(m.evs, to: 0...Vitamin.evCapPerStat)
+        // Same overflow-trap shape as usedAtStage — applyHyperTrainProgress does an unchecked
+        // `+= delta` on this every usage tick, so a maliciously/corrupt-large value from a traded
+        // or imported mon would crash on the very next tick instead of just being a display quirk.
+        // `hyperTrainedStats`/`hyperTrainTarget` aren't touched: they're not arithmetic inputs (a Set
+        // membership and an enum can't overflow), and this app's trust model — same as `ivs`/`nature`
+        // already being taken as-is — only guards against overflow traps, not "did you earn this."
+        m.hyperTrainProgress = clampToken(m.hyperTrainProgress)
         return m
     }
 

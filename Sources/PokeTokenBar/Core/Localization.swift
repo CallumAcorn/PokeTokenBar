@@ -580,6 +580,18 @@ struct L {
     var pcIvEvTitle: String { t("개체값 · 노력치", "IVs & EVs", "個体値・努力値", "IVs y EVs") }
     var ivLabel: String { t("개체값", "IV", "個体値", "IV") }
     var evLabel: String { t("노력치", "EV", "努力値", "EV") }
+    var pcHyperTrainTitle: String { t("하이퍼트레이닝", "Hyper Training", "ハイパートレーニング", "Hiperentrenamiento") }
+    var hyperTrainPickStat: String { t("올릴 스탯을 골라주세요", "Pick a stat to train", "きたえるステータスを選んでください", "Elige una estadística para entrenar") }
+    /// `progress`/`total` are already-formatted token counts (TokenFormatter.compact) — e.g. "12.5M / 50M".
+    func hyperTrainProgressLabel(_ progress: String, _ total: String) -> String {
+        t("\(progress) / \(total) 토큰", "\(progress) / \(total) tokens", "\(progress) / \(total) トークン", "\(progress) / \(total) tokens")
+    }
+    /// Shown on the bottlecap button/picker before starting, so the cost is known up front, not only
+    /// discovered mid-grind.
+    func hyperTrainCostLabel(_ total: String) -> String {
+        t("\(total) 토큰 필요", "Costs \(total) tokens", "\(total) トークン必要", "Cuesta \(total) tokens")
+    }
+    var hyperTrainAllDone: String { t("모든 스탯이 이미 최댓값이에요", "Every stat is already maxed", "すべてのステータスがすでに最大です", "Todas las estadísticas ya están al máximo") }
 
     // MARK: Moves (PC detail screen — known moves + level-up/TM learning)
     var pcMovesTitle: String { t("기술", "Moves", "わざ", "Movimientos") }
@@ -594,6 +606,9 @@ struct L {
     var moveNoTMsOwned: String { t("가르칠 수 있는 TM이 없어요", "No teachable TMs owned", "教えられるわざマシンがありません", "No tienes ninguna MT que pueda enseñar") }
     var moveNoneLearnableNow: String { t("지금 배울 수 있는 기술이 없어요", "No moves to learn right now", "今覚えられるわざがありません", "No hay movimientos que aprender ahora") }
     var moveFullPickSlot: String { t("이미 4개를 알아요 — 바꿀 기술을 골라주세요", "Already knows 4 — pick a move to replace", "すでに4つ覚えています。入れ替えるわざを選んでください", "Ya conoce 4 — elige cuál reemplazar") }
+    /// Labels the incoming move at the top of the slot picker — without this, once the picker
+    /// replaces the learn/teach row, nothing on screen still names which move was chosen.
+    var moveLearningLabel: String { t("배우는 중", "Learning", "覚えるわざ", "Aprendiendo") }
     var movePowerLabel: String { t("위력", "Power", "威力", "Potencia") }
     var moveAccuracyLabel: String { t("명중률", "Accuracy", "命中率", "Precisión") }
     var movePPLabel: String { t("PP", "PP", "PP", "PP") }
@@ -891,6 +906,8 @@ struct L {
     func notifShinyDittoRevealBody(_ disguise: String) -> String { t("\(disguise)인 줄 알았는데 — 이로치 메타몽이었어요! (1/64)", "You thought it was \(disguise) — it was a shiny Ditto! (1 in 64)", "\(disguise) だと思ってた… 色違いのメタモンでした！(1/64)", "Pensabas que era \(disguise) — ¡era un Ditto variocolor! (1 entre 64)", "Tu croyais que c'était \(disguise) — c'était un Métamorph chromatique ! (1 sur 64)", "Você achava que era \(disguise) — era um Ditto shiny! (1 em 64)") }
     var notifGraduateTitle: String { t("🎓 졸업!", "🎓 Graduated!", "🎓 卒業！", "🎓 ¡Graduado!", "🎓 Diplômé !", "🎓 Formatura!") }
     func notifGraduateBody(_ name: String) -> String { t("\(name) — 도감에 보존! 새 알이 도착했어요.", "\(name) — saved to your Pokédex! A new egg has arrived.", "\(name) — 図鑑に保存！新しいタマゴが届きました。", "\(name) — ¡guardado en tu Pokédex! Ha llegado un nuevo huevo.", "\(name) — conservé dans ton Pokédex ! Un nouvel œuf est arrivé.", "\(name) — guardado na sua Pokédex! Chegou um novo ovo.") }
+    var notifHyperTrainDoneTitle: String { t("🧢 하이퍼트레이닝 완료!", "🧢 Hyper Training complete!", "🧢 ハイパートレーニング完了！", "🧢 ¡Hiperentrenamiento completo!") }
+    func notifHyperTrainDoneBody(_ name: String) -> String { t("\(name)의 스탯이 최댓값으로 보정됐어요.", "\(name)'s stat is now shown at its maximum.", "\(name)のステータスが最大値で表示されるようになりました。", "La estadística de \(name) ahora se muestra al máximo.") }
 
     // MARK: Claude 한도 토큰 갱신 오류 (친절 안내)
     func limitRefreshHTTPError(_ status: Int) -> String {
@@ -1062,6 +1079,8 @@ struct L {
         case .calcium: return t("리보플라빈", "Calcium", "リゾチウム", "Calcio")
         case .zinc:    return t("키토산", "Zinc", "キトサン", "Zinc")
         case .carbos:  return t("알칼로이드", "Carbos", "インドメタシン", "Carburante")
+        case .bottlecapSilver: return t("은 병뚜껑", "Silver Bottle Cap", "ぎんのおうかん", "Tapón Plateado")
+        case .bottlecapGold:   return t("금 병뚜껑", "Gold Bottle Cap", "きんのおうかん", "Tapón Dorado")
         }
     }
     func itemDescription(_ kind: ItemKind) -> String {
@@ -1094,6 +1113,16 @@ struct L {
                      "Feed it to any Pokémon from its PC detail screen to raise its \(stat) EVs by \(ev).",
                      "PC詳細画面で好きなポケモンに与えて\(stat)の努力値(EV)を\(ev)上げます。",
                      "Dáselo a un Pokémon desde su pantalla de detalle en el PC para subir sus EVs de \(stat) en \(ev).")
+        case .bottlecapSilver:
+            return t("PC 상세 화면에서 포켓몬 1마리와 스탯 1개를 골라 하이퍼트레이닝을 시작해요. 진짜 개체값은 그대로 두고, 완료되면 그 스탯만 최댓값으로 보정돼요.",
+                     "Start Hyper Training from a Pokémon's PC detail screen — pick this Pokémon and one stat. The real IV never changes; once it finishes, that stat is shown at its maximum instead.",
+                     "PC詳細画面でポケモン1匹とステータス1つを選んでハイパートレーニングを開始します。本当の個体値は変わらず、完了するとそのステータスだけ最大値で表示されます。",
+                     "Inicia el Hiperentrenamiento desde la pantalla de detalle del Pokémon — elige este Pokémon y una estadística. El IV real nunca cambia; al terminar, esa estadística se muestra al máximo.")
+        case .bottlecapGold:
+            return t("은 병뚜껑과 같지만 6개 스탯 전부를 한 번에 하이퍼트레이닝해요.",
+                     "Same as the Silver Bottle Cap, but Hyper Trains all six stats at once.",
+                     "ぎんのおうかんと同じですが、6つのステータス全てを一度にハイパートレーニングします。",
+                     "Igual que el Tapón Plateado, pero Hiperentrena las seis estadísticas a la vez.")
         }
     }
     /// itemDescription 에서 쓰는 스탯 이름 — pcStats* 라벨(HP/공격/…)을 그대로 재사용.
