@@ -768,6 +768,9 @@ struct L {
     }
     var battleForcedSwitchPrompt: String { t("포켓몬이 쓰러졌어요 — 교체할 포켓몬을 골라주세요", "Your Pokémon fainted — choose a replacement", "ポケモンがひんしになりました — 交代するポケモンを選んでください", "Tu Pokémon se debilitó — elige un reemplazo") }
     var battleSwitchButton: String { t("교체", "Switch", "交代", "Cambiar") }
+    /// Gen 5 move audit, "partial trap" category — shown next to the disabled Switch button while
+    /// Wrap/Bind/Fire Spin/etc. is holding this mon in.
+    var battleTrappedHint: String { t("도망칠 수 없다!", "Can't escape!", "にげられない！", "¡No puede escapar!") }
     /// `name` is the raw move name straight off the battle log (@pkmn/sim's own English display
     /// name, e.g. "Tail Whip") — not run through this app's own localization, since the server
     /// never sends a move id back, only the name it already resolved. Only the surrounding template

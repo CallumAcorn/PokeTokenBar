@@ -234,20 +234,90 @@ actor PokeAPIClient: PokeProviding {
     /// 스프라이트 없이 지나간다.)
     static func slug(fromDisplayName name: String) -> String {
         let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
-        return name.lowercased()
+        let slug = name.lowercased()
             .replacingOccurrences(of: "'", with: "")
             .replacingOccurrences(of: " ", with: "-")
             .filter { allowed.contains($0) }
+        return slugAliases[slug] ?? slug
     }
+
+    /// The one known case (of all 458 real Gen<=5 moves, checked 2026-09-14) where the generic
+    /// lowercase-and-hyphenate slug doesn't match PokéAPI: Game Freak's official spelling is "Vise
+    /// Grip" (what `@pkmn/sim`'s battle log actually says), but PokéAPI never updated its slug from
+    /// the old "Vice Grip" spelling.
+    private static let slugAliases: [String: String] = ["vise-grip": "vice-grip"]
 
     private static func move(from dto: MoveDTO, id: Int, langCodes: [String]) -> Move {
         var byLang: [String: String] = [:]
         for n in dto.names where langCodes.contains(n.language.name) { byLang[n.language.name] = n.name }
-        return Move(id: id, name: dto.name, type: PokemonType(rawValue: dto.type.name) ?? .normal,
-                   power: dto.power, accuracy: dto.accuracy, pp: dto.pp,
+        let override = gen5MoveOverrides[id]
+        return Move(id: id, name: dto.name,
+                   type: gen5MoveTypeOverrides[id] ?? PokemonType(rawValue: dto.type.name) ?? .normal,
+                   power: override?.power ?? dto.power, accuracy: override?.accuracy ?? dto.accuracy,
+                   pp: override?.pp ?? dto.pp,
                    damageClass: MoveDamageClass(rawValue: dto.damage_class.name) ?? .status,
                    names: byLang)
     }
+
+    /// PokéAPI's `power`/`accuracy`/`pp` reflect the CURRENT games, not Black/White's numbers — this
+    /// app never resolves PokéAPI's `past_values` history (a deliberate non-goal: it pins one
+    /// generation forever rather than reconciling drift across them, same call moves-shop.md already
+    /// made for TM numbering). Exhaustively cross-checked all 458 real Gen<=5 moves against
+    /// `@pkmn/sim`'s authoritative gen5-modded dex (2026-09-14) — every entry below is one that
+    /// actually differs, mostly Gen 6's "weak move" rebalance pass (Tackle, the recovery moves' PP,
+    /// the binding moves' power/accuracy, the "rampage" moves' power/PP). Keyed by PokéAPI's numeric
+    /// move id (stable across languages, unlike the slug). `nil` mirrors `Move`'s own meaning (nil
+    /// power = status move, nil accuracy = never misses) — not "no override."
+    private static let gen5MoveOverrides: [Int: (power: Int?, accuracy: Int?, pp: Int)] = [
+        20: (15, 85, 20),      // Bind
+        33: (50, 100, 35),     // Tackle
+        35: (15, 90, 20),      // Wrap
+        37: (120, 100, 10),    // Thrash
+        50: (nil, 100, 20),    // Disable
+        74: (nil, nil, 40),    // Growth
+        80: (120, 100, 10),    // Petal Dance
+        83: (35, 85, 15),      // Fire Spin
+        92: (nil, 90, 10),     // Toxic
+        105: (nil, nil, 10),   // Recover
+        135: (nil, nil, 10),   // Soft-Boiled
+        136: (130, 90, 10),    // High Jump Kick
+        137: (nil, 90, 30),    // Glare
+        139: (nil, 80, 40),    // Poison Gas
+        152: (90, 90, 10),     // Crabhammer
+        156: (nil, nil, 10),   // Rest
+        174: (nil, nil, 10),   // Curse
+        178: (nil, 100, 40),   // Cotton Spore
+        184: (nil, 100, 10),   // Scary Face
+        198: (25, 90, 10),     // Bone Rush
+        200: (120, 100, 10),   // Outrage
+        202: (75, 100, 10),    // Giga Drain
+        208: (nil, nil, 10),   // Milk Drink
+        210: (20, 95, 20),     // Fury Cutter
+        248: (100, 100, 10),   // Future Sight
+        250: (35, 85, 15),     // Whirlpool
+        251: (nil, 100, 10),   // Beat Up — Gen 5 made its power dynamic (per-ally-Attack); no fixed
+                               // number captures that, so this is a best-effort "not a fixed 10" fix
+        253: (90, 100, 10),    // Uproar
+        295: (70, 100, 5),     // Luster Purge
+        303: (nil, nil, 10),   // Slack Off
+        328: (35, 85, 15),     // Sand Tomb
+        331: (25, 100, 30),    // Bullet Seed
+        333: (25, 100, 30),    // Icicle Spear
+        343: (60, 100, 40),    // Covet
+        350: (25, 90, 10),     // Rock Blast
+        353: (140, 100, 5),    // Doom Desire
+        355: (nil, nil, 10),   // Roost
+        364: (30, 100, 10),    // Feint
+        387: (140, 100, 5),    // Last Resort
+        409: (75, 100, 10),    // Drain Punch
+        463: (120, 75, 5),     // Magma Storm
+    ]
+
+    /// Curse is still "???"(unknown)-typed at the top level in PokéAPI even today — it was never
+    /// formally reclassified in the actual games, unlike other historically-???-typed moves.
+    /// `@pkmn/sim` treats it as Ghost (needed for its user-type-dependent effect), which is also the
+    /// more useful thing to show than an "Unknown" badge this app's `PokemonType` doesn't model.
+    private static let gen5MoveTypeOverrides: [Int: PokemonType] = [174: .ghost]
 
     // MARK: TM catalog (the full TM list for the version group)
 

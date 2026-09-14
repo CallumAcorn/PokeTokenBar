@@ -1651,8 +1651,18 @@ struct BattleView: View {
                             if !accepted, choiceSubmittedForTurn == turn { choiceSubmittedForTurn = nil }
                         }
                     }
-                    Button(l.battleSwitchButton) { voluntarySwitchOpen = true }
-                        .buttonStyle(.bordered).controlSize(.small)
+                    // Gen 5 move audit, "partial trap" category (Wrap/Bind/Fire Spin/...) — the
+                    // server already rejects an illegal switch attempt on its own (`@pkmn/sim`'s
+                    // `Battle.choose` validates `trapped` internally), but offering a button that's
+                    // guaranteed to silently fail is a worse experience than not offering it.
+                    HStack(spacing: 6) {
+                        Button(l.battleSwitchButton) { voluntarySwitchOpen = true }
+                            .buttonStyle(.bordered).controlSize(.small)
+                            .disabled(you.trapped == true)
+                        if you.trapped == true {
+                            Text(l.battleTrappedHint).font(.caption2).foregroundStyle(.orange)
+                        }
+                    }
                 }
             }
         }
@@ -1872,7 +1882,10 @@ private struct BattleMoveGrid: View {
 
     private struct Slot {
         let move: Move?
-        let fallbackID: Int?
+        /// Shown when `move` fetch fails — either the network, or (Hyper Beam's "recharge" turn)
+        /// there's genuinely no such PokéAPI move to fetch, since it's a synthetic pseudo-move
+        /// `@pkmn/sim` injects rather than something any mon actually knows.
+        let fallbackLabel: String
         let pp: Int?
         let maxPP: Int?
         let disabled: Bool
@@ -1892,7 +1905,7 @@ private struct BattleMoveGrid: View {
                     onChoose(slot)
                 } label: {
                     HStack(spacing: 6) {
-                        Text(info.move?.localizedName(store.language) ?? "#\(info.fallbackID ?? 0)")
+                        Text(info.move?.localizedName(store.language) ?? info.fallbackLabel)
                             .font(.system(size: 12, weight: .medium))
                             .lineLimit(1)
                         Spacer(minLength: 2)
@@ -1935,14 +1948,15 @@ private struct BattleMoveGrid: View {
             if let activeMoves, !activeMoves.isEmpty {
                 var loaded: [Slot] = []
                 for m in activeMoves {
-                    loaded.append(Slot(move: await store.moveDetail(name: m.moveSlug), fallbackID: nil,
+                    let fallback = m.moveSlug.replacingOccurrences(of: "-", with: " ").capitalized
+                    loaded.append(Slot(move: await store.moveDetail(name: m.moveSlug), fallbackLabel: fallback,
                                         pp: m.pp, maxPP: m.maxPP, disabled: m.disabled))
                 }
                 slots = loaded
             } else {
                 var loaded: [Slot] = []
                 for id in mon.knownMoves {
-                    loaded.append(Slot(move: await store.moveDetail(id: id), fallbackID: id,
+                    loaded.append(Slot(move: await store.moveDetail(id: id), fallbackLabel: "#\(id)",
                                         pp: nil, maxPP: nil, disabled: false))
                 }
                 slots = loaded

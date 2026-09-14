@@ -50,6 +50,11 @@ enum BattleClient {
         /// `nil` while it isn't this side's move choice (switch/team-preview/wait) — same states
         /// `pendingChoice` distinguishes.
         let activeMoves: [ActiveMoveSlot]?
+        /// Gen 5 move audit, "partial trap" category (Wrap/Bind/Fire Spin/...) — true while a
+        /// partial-trap (or other switch-blocking) volatile is active on this side's mon. Optional,
+        /// not defaulted server-side to `false`, purely so an older server that predates this field
+        /// decodes fine too (missing key → `nil`) — treat `nil` the same as `false` at call sites.
+        let trapped: Bool?
     }
     struct Opponent: Codable, Equatable {
         let displayName: String
