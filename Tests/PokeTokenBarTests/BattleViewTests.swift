@@ -389,13 +389,155 @@ final class BattleViewActionBoxStateTests: XCTestCase {
     }
 
     /// The server can't tell the client *why* it's requesting a switch — a real faint and a
-    /// self-switch move (U-turn, Volt Switch, Baton Pass, Parting Shot, Flip Turn, Teleport…) both
-    /// arrive as the identical `pendingChoice == "switch"` under the same turn number as the move
-    /// that caused them. `isPending` doesn't special-case the reason, so the same fix that unblocked
-    /// the fainted case covers this whole self-switch move family too — reported as "u-turn doesn't
-    /// work" alongside the fainting bug.
+    /// self-switch move (U-turn, Volt Switch, Baton Pass — the Gen 5-legal members of this family;
+    /// see the Movedex audit's §0 note on Parting Shot/Flip Turn/Teleport not qualifying in Gen 5)
+    /// both arrive as the identical `pendingChoice == "switch"` under the same turn number as the
+    /// move that caused them. `isPending` doesn't special-case the reason, so the same fix that
+    /// unblocked the fainted case covers this whole self-switch move family too — reported as
+    /// "u-turn doesn't work" alongside the fainting bug.
     func testTheSameFixCoversSelfSwitchMovesLikeUTurnNotJustFainting() {
         let submitted = BattleView.SubmittedChoice(turn: 5, kind: "move")
         XCTAssertTrue(BattleView.isPending("switch", pendingChoice: "switch", turn: 5, submitted: submitted))
+    }
+}
+
+/// [Movedex audit, §3] Regression tests for the six coverage gaps the audit found: Protect/Endure/
+/// Substitute producing no feedback at all when they correctly block or absorb a hit, entry hazards
+/// and screens having no on-field indicator, charge moves giving no "why is nothing happening" cue,
+/// multi-hit's missing closing tally, and volatile-status onset flavor (Leech Seed, confusion,
+/// Ingrain, Aqua Ring, Perish Song, Substitute's own creation).
+@MainActor
+final class BattleViewMovedexAuditGapTests: XCTestCase {
+    private let ash = "Ash"
+    private let l = L(.en)
+
+    private func chips(_ log: [String]) -> [BattleView.EffectChip] {
+        var fractions: [String: Double] = [:]
+        return BattleView.parseLogBeats(from: log, previouslySeenCount: 0, myDisplayName: ash,
+                                         l: l, hpFractions: &fractions).beats.chips
+    }
+
+    // MARK: Protect family / Endure / Substitute (-activate)
+
+    func testProtectDetectWideGuardAndQuickGuardAllProduceTheSameBlockedChip() {
+        for move in ["Protect", "Detect", "Wide Guard", "Quick Guard", "Mat Block", "Crafty Shield"] {
+            XCTAssertEqual(chips(["|-activate|p2a: Gary-0|move: \(move)"]),
+                           [BattleView.EffectChip(text: l.battleProtected, isMine: false, isPositive: true)],
+                           "move: \(move)")
+        }
+    }
+
+    func testEndureProducesItsOwnDistinctChip() {
+        XCTAssertEqual(chips(["|-activate|p1a: Ash-0|move: Endure"]),
+                       [BattleView.EffectChip(text: l.battleEndured, isMine: true, isPositive: true)])
+    }
+
+    func testSubstituteAbsorbingAHitProducesAChip() {
+        XCTAssertEqual(chips(["|-activate|p2a: Gary-0|Substitute"]),
+                       [BattleView.EffectChip(text: l.battleSubstituteAbsorbed, isMine: false, isPositive: true)])
+    }
+
+    /// `-activate` covers many unrelated triggers (abilities, items, Mimic…) — only the ones the
+    /// audit called out get a chip; anything else stays silently ignored rather than guessed at.
+    func testAnUnrecognizedActivateEffectProducesNoChip() {
+        XCTAssertEqual(chips(["|-activate|p2a: Gary-0|move: Mimic"]), [])
+    }
+
+    // MARK: Multi-hit tally (-hitcount)
+
+    func testHitCountProducesTheClosingTallyChip() {
+        XCTAssertEqual(chips(["|-hitcount|p2a: Gary-0|4"]),
+                       [BattleView.EffectChip(text: l.battleHitCount(4), isMine: false, isPositive: true)])
+    }
+
+    // MARK: Charge-move announcement (-prepare)
+
+    func testPrepareProducesAChargingChip() {
+        XCTAssertEqual(chips(["|-prepare|p1a: Ash-0|Solar Beam"]),
+                       [BattleView.EffectChip(text: l.battleCharging, isMine: true, isPositive: true)])
+    }
+
+    // MARK: Volatile-status onset (-start)
+
+    func testLeechSeedOnsetProducesASeededChip() {
+        XCTAssertEqual(chips(["|-start|p2a: Gary-0|move: Leech Seed"]),
+                       [BattleView.EffectChip(text: l.battleSeeded, isMine: false, isPositive: false)])
+    }
+
+    func testConfusionOnsetProducesAConfusedChip() {
+        XCTAssertEqual(chips(["|-start|p1a: Ash-0|confusion"]),
+                       [BattleView.EffectChip(text: l.battleConfusedStart, isMine: true, isPositive: false)])
+    }
+
+    /// Ingrain/Aqua Ring are self-buffs (unlike Leech Seed/confusion) — positive from the user's
+    /// own side, not a bad-thing-happened chip.
+    func testIngrainAndAquaRingOnsetAreShownAsPositive() {
+        XCTAssertEqual(chips(["|-start|p1a: Ash-0|move: Ingrain"]),
+                       [BattleView.EffectChip(text: l.battleIngrainStart, isMine: true, isPositive: true)])
+        XCTAssertEqual(chips(["|-start|p1a: Ash-0|move: Aqua Ring"]),
+                       [BattleView.EffectChip(text: l.battleAquaRingStart, isMine: true, isPositive: true)])
+    }
+
+    func testPerishSongOnsetProducesAChipOnlyOnTheInitialAnnouncement() {
+        XCTAssertEqual(chips(["|-start|p2a: Gary-0|perish3"]),
+                       [BattleView.EffectChip(text: l.battlePerishSongStart, isMine: false, isPositive: false)])
+    }
+
+    /// The other half of the Substitute gap the audit found — its creation, distinct from the
+    /// absorbed-hit case above.
+    func testSubstituteCreationProducesItsOwnChip() {
+        XCTAssertEqual(chips(["|-start|p1a: Ash-0|move: Substitute"]),
+                       [BattleView.EffectChip(text: l.battleSubstituteCreated, isMine: true, isPositive: true)])
+    }
+
+    func testAnUnrecognizedStartEffectProducesNoChip() {
+        XCTAssertEqual(chips(["|-start|p1a: Ash-0|move: Disable"]), [])
+    }
+}
+
+/// [Movedex audit, §3] Entry hazards & screens — the deepest gap: no wire type carries side-condition
+/// state at all, so the only source of truth is the raw log the client already receives every poll.
+@MainActor
+final class BattleViewSideConditionsTests: XCTestCase {
+    private let ash = "Ash"
+
+    /// Establishes "Ash" as p1 the same way the real client would learn it — from the first move or
+    /// switch line naming one of Ash's own mons — before any side-condition lines appear.
+    private let establishMySide = "|switch|p1a: Ash-0|Pikachu, L50|100/100"
+
+    func testAHazardSetOnMySideIsAttributedToMe() {
+        let result = BattleView.activeSideConditions(log: [establishMySide, "|-sidestart|p1: Ash|move: Stealth Rock"], myDisplayName: ash)
+        XCTAssertEqual(result.mine, ["Stealth Rock"])
+        XCTAssertEqual(result.opponent, [])
+    }
+
+    func testAScreenSetOnTheOpponentsSideIsAttributedToThem() {
+        let result = BattleView.activeSideConditions(log: [establishMySide, "|-sidestart|p2: Gary|move: Reflect"], myDisplayName: ash)
+        XCTAssertEqual(result.opponent, ["Reflect"])
+        XCTAssertEqual(result.mine, [])
+    }
+
+    func testASideEndRemovesTheCondition() {
+        let log = [establishMySide, "|-sidestart|p1: Ash|move: Spikes", "|-sideend|p1: Ash|move: Spikes"]
+        XCTAssertEqual(BattleView.activeSideConditions(log: log, myDisplayName: ash).mine, [])
+    }
+
+    func testAFieldWideConditionIsSharedNotAttributedToEitherSide() {
+        let result = BattleView.activeSideConditions(log: [establishMySide, "|-fieldstart|move: Trick Room"], myDisplayName: ash)
+        XCTAssertEqual(result.field, ["Trick Room"])
+        XCTAssertEqual(result.mine, [])
+        XCTAssertEqual(result.opponent, [])
+    }
+
+    func testAFieldEndRemovesTheCondition() {
+        let log = [establishMySide, "|-fieldstart|move: Gravity", "|-fieldend|move: Gravity"]
+        XCTAssertEqual(BattleView.activeSideConditions(log: log, myDisplayName: ash).field, [])
+    }
+
+    /// No move/switch line naming Ash yet (e.g. mid-team-preview) means "which side is mine" can't
+    /// be determined — must degrade to empty, not crash or guess.
+    func testNoEstablishedSideYetReturnsEmptyRatherThanGuessing() {
+        let result = BattleView.activeSideConditions(log: ["|-sidestart|p1: Ash|move: Stealth Rock"], myDisplayName: ash)
+        XCTAssertEqual(result, BattleView.SideConditions())
     }
 }

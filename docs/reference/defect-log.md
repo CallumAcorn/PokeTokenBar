@@ -440,6 +440,16 @@ read_when:
   안내 텍스트가 "포켓몬이 쓰러졌어요" 로 고정돼 있어 기절이 아닌 자가 교체에도 틀린 문구가 떴다.
   같은 요청이 "왜" 왔는지는 서버가 안 알려주므로, 액티브 몬 자신의 `fainted` 플래그로 구분해 문구를
   갈랐다(`battleForcedSwitchPrompt` vs `battleSelfSwitchPrompt`).
+- **이름이 닮은 프로토콜 라인이라고 인자 개수(shape)까지 같다고 가정하지 마라.** Movedex 감사(위
+  항목들)로 나온 필드 배지 기능을 구현하며 `-sidestart`/`-sideend`(두 인자: SIDE, CONDITION)와
+  `-fieldstart`/`-fieldend`(한 인자: CONDITION만, SIDE 없음)를 같은 switch 케이스로 묶어 둘 다
+  `parts[3]`을 CONDITION으로 읽었다 — `-fieldstart`류엔 SIDE 인자 자체가 없어 실제 CONDITION은
+  `parts[2]`에 있는데, 그 자리엔 대신 `[of] p1a: ...` 꼬리표가 오는 흔한 경우 파싱이 완전히 어긋난다.
+  테스트를 먼저 손으로 짜다가(커밋 전) 발견 — `-fieldstart|move: Trick Room` 같은 최소 픽스처를
+  실제 인자 개수 그대로 만들어 보면 즉시 드러난다. 교훈: 두 프로토콜 라인이 같은 접두사 계열
+  (`-side*`/`-field*`)이라고 한 케이스에 묶기 전에, **각각의 실제 인자 개수를 독립적으로 확인**한다 —
+  "제 소스가 아니면 증거가 아니다"(외부 로그 포맷 규칙, 위 §외부 로그·사용량 소스)와 같은 교훈을
+  wire 프로토콜에도 적용한 사례.
 
 ## 에너지 (상시 표시 애니메이션)
 
