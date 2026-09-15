@@ -393,6 +393,7 @@ final class CompanionStore {
                         } else {
                             applyUsage(delta)
                         }
+                        applyHyperTrainProgress(delta)
                     }
                 } else {
                     var ledger = state.claimedTodayTokensByProvider ?? [:]
@@ -423,6 +424,7 @@ final class CompanionStore {
                         } else {
                             applyUsage(delta)
                         }
+                        applyHyperTrainProgress(delta)
                     }
                 }
             }
@@ -789,6 +791,53 @@ final class CompanionStore {
     private func evRoom(for evs: StatSpread, stat keyPath: WritableKeyPath<StatSpread, Int>) -> Int {
         let total = evs.hp + evs.attack + evs.defense + evs.specialAttack + evs.specialDefense + evs.speed
         return min(Vitamin.evCapPerStat - evs[keyPath: keyPath], Vitamin.evCapTotal - total)
+    }
+
+    // MARK: 하이퍼트레이닝 (병뚜껑)
+
+    /// 이 병뚜껑으로 지정 개체에 하이퍼트레이닝을 시작할 수 있나 — 재고>0, 이미 진행 중이 아님, 대상
+    /// 스탯(들)이 아직 안 끝났을 것. 비타민(canUseVitamin)과 같은 자리, 같은 "대상은 PC 임의 개체" 원칙.
+    func canStartHyperTraining(_ kind: ItemKind, target: HyperTrainTarget, on monID: MonState.ID) -> Bool {
+        guard kind.isBottlecap, itemCount(kind) > 0,
+              let mon = state.party.first(where: { $0.id == monID }),
+              mon.hyperTrainTarget == nil else { return false }
+        switch target {
+        case .stat(let stat): return !mon.hyperTrainedStats.contains(stat)
+        case .all: return mon.hyperTrainedStats.count < StatKind.allCases.count
+        }
+    }
+
+    /// 병뚜껑 1개 소비 + 하이퍼트레이닝 시작 — 알 티어 선택과 같은 원칙으로, 대상을 확정하는 시점에
+    /// 바로 소비한다(완료를 기다려 소비하지 않음 — hypertraining.md 결정사항, 취소/환불 없음).
+    /// 이후 진행은 update() 의 usage 델타가 매 틱 applyHyperTrainProgress 로 밀어 넣는다.
+    @discardableResult
+    func startHyperTraining(_ kind: ItemKind, target: HyperTrainTarget, on monID: MonState.ID) -> Bool {
+        guard canStartHyperTraining(kind, target: target, on: monID),
+              let idx = state.party.firstIndex(where: { $0.id == monID }) else { return false }
+        state.party[idx].hyperTrainTarget = target
+        state.party[idx].hyperTrainProgress = 0
+        state.inventory[kind.rawValue] = itemCount(kind) - 1
+        save()
+        return true
+    }
+
+    /// 하이퍼트레이닝 진행 중인 모든 개체에 usage 델타를 반영 — eggUsage/applyUsage 와 같은 델타를
+    /// 그대로 추가로 관측한다(그 둘 중 하나가 이미 이 델타를 "쓰고" 있으므로, 이건 별도 재화가 아니라
+    /// 같은 델타의 세 번째 관측자일 뿐). 임계 도달 시 스탯(들)을 hyperTrainedStats 에 확정하고 대상을
+    /// 비운다 — 호출부(update())가 함수 끝에서 어차피 save() 하므로 여기선 따로 저장하지 않는다.
+    private func applyHyperTrainProgress(_ delta: Int) {
+        for idx in state.party.indices {
+            guard let target = state.party[idx].hyperTrainTarget else { continue }
+            state.party[idx].hyperTrainProgress += delta
+            guard state.party[idx].hyperTrainProgress >= target.threshold else { continue }
+            switch target {
+            case .stat(let stat): state.party[idx].hyperTrainedStats.insert(stat)
+            case .all: state.party[idx].hyperTrainedStats.formUnion(StatKind.allCases)
+            }
+            state.party[idx].hyperTrainTarget = nil
+            state.party[idx].hyperTrainProgress = 0
+            notifyCompanionEvent(l.notifHyperTrainDoneTitle, l.notifHyperTrainDoneBody(speciesName(state.party[idx].currentID)))
+        }
     }
 
     // MARK: 상점 (재화 = 사용한 토큰)

@@ -79,6 +79,7 @@ private struct ItemCard: View {
         case .moveReroll: return store.canUseMoveReroll
         case .shinyCharm: return false   // 보유형 — 사용 개념 없음(상시 효과)
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return false
+        case .bottlecapSilver, .bottlecapGold: return false   // 비타민과 동일 — 대상 선택은 PC 상세 화면
         }
     }
     /// 사용 컨트롤 효과 힌트 ("+XP" / "성격 랜덤 변경").
@@ -89,6 +90,7 @@ private struct ItemCard: View {
         case .moveReroll: return l.moveRerollEffectHint
         case .shinyCharm: return l.shinyCharmEffectHint
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return ""
+        case .bottlecapSilver, .bottlecapGold: return ""
         }
     }
     private func performUse() {
@@ -98,6 +100,7 @@ private struct ItemCard: View {
         case .moveReroll: Task { await store.useMoveReroll() }
         case .shinyCharm: break   // 보유형 — 사용 동작 없음
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: break   // PC 상세 화면에서만 사용
+        case .bottlecapSilver, .bottlecapGold: break   // PC 상세 화면에서만 사용
         }
     }
 
@@ -130,7 +133,7 @@ private struct ItemCard: View {
                         .buttonStyle(.bordered).controlSize(.small)
                 }
             }
-        } else if kind.vitaminStat != nil {
+        } else if kind.vitaminStat != nil || kind.isBottlecap {
             Text(l.useFromPcDetail).font(.caption2).foregroundStyle(.tertiary)
         } else {
             // 알(부화 전)/활성 없음/(사탕만)라인 미로딩 — 비활성 + 사유

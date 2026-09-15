@@ -33,10 +33,42 @@ enum BattleClient {
         let fainted: Bool
         let hpFraction: Double
     }
+    /// Gen 5 move audit, Fix B: the server's live per-slot move state for this side's active mon
+    /// (id/PP/disabled, post-Disable/Taunt/Encore/Torment/Imprison/Mimic/Sketch/charge-turn) — see
+    /// `activeMoveSlots` in `battles.ts`. `moveSlug` is a PokéAPI-style hyphenated slug
+    /// (`move.name` lowercased, spaces to hyphens), matched against `moveDetail(name:)`.
+    /// 서버가 준 슬롯 목록을 게임 규칙 상한(`MonState.maxKnownMoves`)으로 자른다.
+    ///
+    /// `activeMoves` 는 **서버가 주는 값**이고, 이 앱의 서버는 초대 링크로 지정될 수 있으므로 신뢰 대상이
+    /// 아니다(`OnlineStore.isAllowedScheme` 주석과 같은 전제). 소비 루프가 슬롯마다 `moveDetail(name:)`
+    /// 을 한 번씩 호출하므로, 길이를 안 자르면 슬롯 수만큼 PokéAPI 요청이 그대로 나간다 — 남의 서비스로
+    /// 증폭되는 축이고, 순차 await 라 그동안 화면도 멈춘다.
+    ///
+    /// 4개 초과는 정상 대전에서 나올 수 없는 값이라 잘라내도 잃는 정보가 없다. `knownMoves` 를
+    /// 신뢰경계에서 자른 것과 같은 규칙이고, 같은 상수를 쓴다.
+    static func cappedActiveMoves(_ slots: [ActiveMoveSlot]?) -> [ActiveMoveSlot]? {
+        guard let slots else { return nil }
+        return Array(slots.prefix(MonState.maxKnownMoves))
+    }
+
+    struct ActiveMoveSlot: Codable, Equatable {
+        let moveSlug: String
+        let pp: Int
+        let maxPP: Int
+        let disabled: Bool
+    }
     struct You: Codable, Equatable {
         let displayName: String
         let roster: [PublicMon]
         let activeIndex: Int
+        /// `nil` while it isn't this side's move choice (switch/team-preview/wait) — same states
+        /// `pendingChoice` distinguishes.
+        let activeMoves: [ActiveMoveSlot]?
+        /// Gen 5 move audit, "partial trap" category (Wrap/Bind/Fire Spin/...) — true while a
+        /// partial-trap (or other switch-blocking) volatile is active on this side's mon. Optional,
+        /// not defaulted server-side to `false`, purely so an older server that predates this field
+        /// decodes fine too (missing key → `nil`) — treat `nil` the same as `false` at call sites.
+        let trapped: Bool?
     }
     struct Opponent: Codable, Equatable {
         let displayName: String

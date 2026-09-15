@@ -64,11 +64,11 @@ final class BattleStore {
     /// True only while a `refreshOpenBattles()` call is in flight — lets the browse screen show a
     /// spinner on the very first load instead of flashing "no open battles" for the round trip.
     private(set) var isLoadingOpenBattles = false
-    /// The roster this side submitted — kept client-side because the server's `BattleView` never
-    /// echoes back which moves a mon knows (`PublicMon` is just species/name/fainted/HP; `choose`
-    /// only ever takes a 1-indexed slot number). The move grid renders this side's active mon's real
-    /// moves from here, matched to `you.roster`/`activeIndex` by array position (both are built from
-    /// this same roster, in this same order, so the positions always agree).
+    /// The roster this side submitted — still needed since `PublicMon` (`you.roster`) is just
+    /// species/name/fainted/HP, no moveset. `you.activeMoves` (Gen 5 move audit, Fix B) now
+    /// supplies the active mon's live move slots directly, but switch UI etc. still resolve a
+    /// bench mon's identity from here, matched to `you.roster`/`activeIndex` by array position
+    /// (both are built from this same roster, in this same order, so the positions always agree).
     private(set) var myRoster: [MonState] = []
     /// Badges scored on the most recently observed completion — empty most of the time (no win, or
     /// no criterion matched, or nothing new since every already-held badge is filtered out). The
