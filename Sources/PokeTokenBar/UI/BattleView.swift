@@ -1641,7 +1641,9 @@ struct BattleView: View {
             if let mon = battle.myRoster[safeIndex: you.activeIndex] {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(l.battleWaitingOnYouToChooseMove).font(.system(size: 12, weight: .semibold))
-                    BattleMoveGrid(store: companion, mon: mon, activeMoves: you.activeMoves, turn: turn) { slot in
+                    BattleMoveGrid(store: companion, mon: mon,
+                                   activeMoves: BattleClient.cappedActiveMoves(you.activeMoves),
+                                   turn: turn) { slot in
                         choiceSubmittedForTurn = turn
                         Task {
                             let accepted = await battle.choose(BattleStore.moveChoice(slot))

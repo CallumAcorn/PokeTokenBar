@@ -204,4 +204,26 @@ final class BattleClientPrimitiveDerivationTests: XCTestCase {
         let log = ["|poke|p1|Pikachu, L50|", "|poke|p2|Venusaur, L59|"]
         XCTAssertEqual(BattleClient.opponentRosterNames(log: log, myDisplayName: "Ash"), [])
     }
+
+    /// `activeMoves` 는 서버가 주는 값이고, 서버는 초대 링크로 지정될 수 있어 신뢰 대상이 아니다.
+    /// 소비 루프가 슬롯마다 `moveDetail(name:)` 을 한 번 호출하므로, 자르지 않으면 슬롯 수만큼
+    /// PokéAPI 요청이 나간다(남의 서비스로 증폭되고, 순차 await 라 화면도 그동안 멈춘다).
+    /// 4개 초과는 정상 대전에서 나올 수 없으므로 잘라도 잃는 정보가 없다.
+    func testActiveMovesFromTheServerAreCappedAtTheMoveLimit() {
+        let hostile = (0..<500).map {
+            BattleClient.ActiveMoveSlot(moveSlug: "tackle-\($0)", pp: 1, maxPP: 1, disabled: false)
+        }
+        let capped = BattleClient.cappedActiveMoves(hostile)
+        XCTAssertEqual(capped?.count, MonState.maxKnownMoves, "서버가 준 길이를 그대로 믿었다")
+        XCTAssertEqual(capped?.first?.moveSlug, "tackle-0", "앞에서부터 잘라 순서를 보존해야 한다")
+    }
+
+    /// 정상 길이는 그대로 통과하고, nil(이 턴은 기술 선택이 아님)도 nil 로 남아야 한다.
+    func testNormalActiveMovesPassThroughUnchanged() {
+        let normal = (0..<3).map {
+            BattleClient.ActiveMoveSlot(moveSlug: "m\($0)", pp: 5, maxPP: 5, disabled: false)
+        }
+        XCTAssertEqual(BattleClient.cappedActiveMoves(normal)?.count, 3)
+        XCTAssertNil(BattleClient.cappedActiveMoves(nil))
+    }
 }
