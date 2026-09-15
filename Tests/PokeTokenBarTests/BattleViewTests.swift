@@ -387,4 +387,15 @@ final class BattleViewActionBoxStateTests: XCTestCase {
         let submitted = BattleView.SubmittedChoice(turn: 3, kind: "move")
         XCTAssertTrue(BattleView.isPending("move", pendingChoice: "move", turn: 4, submitted: submitted))
     }
+
+    /// The server can't tell the client *why* it's requesting a switch — a real faint and a
+    /// self-switch move (U-turn, Volt Switch, Baton Pass, Parting Shot, Flip Turn, Teleport…) both
+    /// arrive as the identical `pendingChoice == "switch"` under the same turn number as the move
+    /// that caused them. `isPending` doesn't special-case the reason, so the same fix that unblocked
+    /// the fainted case covers this whole self-switch move family too — reported as "u-turn doesn't
+    /// work" alongside the fainting bug.
+    func testTheSameFixCoversSelfSwitchMovesLikeUTurnNotJustFainting() {
+        let submitted = BattleView.SubmittedChoice(turn: 5, kind: "move")
+        XCTAssertTrue(BattleView.isPending("switch", pendingChoice: "switch", turn: 5, submitted: submitted))
+    }
 }

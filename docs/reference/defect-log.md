@@ -432,6 +432,14 @@ read_when:
   같은 종류는 계속 가려지는지, 턴이 바뀌면 다시 뜨는지 세 축 모두. 부류 스윕: 이 파일에서 턴 번호
   하나만으로 재제출을 판별하는 가드는 이 지점 하나뿐(`grep -n "== view.turn\|!= view.turn"` 확인) —
   다른 화면에 형제 사례 없음.
+  **부류가 기절보다 넓었다** — U-turn/Volt Switch/Baton Pass/Parting Shot/Flip Turn/Teleport 같은
+  "자가 교체" 기술도 서버에게는 똑같은 `pendingChoice == "switch"` 요청이라(기절이든 자가 교체든
+  서버는 "왜" 를 알려주지 않는다), 같은 턴 번호 문제를 그대로 겪는다 — "u-turn 이 안 된다" 리포트로
+  드러남. `isPending` 은 이유를 구분하지 않으므로 위 수정 하나로 이 기술군 전체가 같이 풀린다
+  (`testTheSameFixCoversSelfSwitchMovesLikeUTurnNotJustFainting`). 다만 문구는 별개 결함이었다 —
+  안내 텍스트가 "포켓몬이 쓰러졌어요" 로 고정돼 있어 기절이 아닌 자가 교체에도 틀린 문구가 떴다.
+  같은 요청이 "왜" 왔는지는 서버가 안 알려주므로, 액티브 몬 자신의 `fainted` 플래그로 구분해 문구를
+  갈랐다(`battleForcedSwitchPrompt` vs `battleSelfSwitchPrompt`).
 
 ## 에너지 (상시 표시 애니메이션)
 

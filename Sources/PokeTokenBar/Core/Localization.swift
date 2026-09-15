@@ -767,6 +767,11 @@ struct L {
           "No se pudieron cargar los datos del Pokémon — comprueba tu conexión a internet.")
     }
     var battleForcedSwitchPrompt: String { t("포켓몬이 쓰러졌어요 — 교체할 포켓몬을 골라주세요", "Your Pokémon fainted — choose a replacement", "ポケモンがひんしになりました — 交代するポケモンを選んでください", "Tu Pokémon se debilitó — elige un reemplazo") }
+    /// Same forced-switch grid as `battleForcedSwitchPrompt`, but for a self-switch move (U-turn,
+    /// Volt Switch, Baton Pass, Parting Shot, Flip Turn, Teleport…) — the active mon didn't faint,
+    /// so saying "fainted" would be wrong. Both cases arrive as the identical server request
+    /// (`pendingChoice == "switch"`); only the active mon's `fainted` flag tells them apart.
+    var battleSelfSwitchPrompt: String { t("포켓몬을 교체해요 — 다음 포켓몬을 골라주세요", "Your Pokémon is switching out — choose the next one", "ポケモンが交代します — 次のポケモンを選んでください", "Tu Pokémon está cambiando — elige el siguiente") }
     var battleSwitchButton: String { t("교체", "Switch", "交代", "Cambiar") }
     /// Gen 5 move audit, "partial trap" category — shown next to the disabled Switch button while
     /// Wrap/Bind/Fire Spin/etc. is holding this mon in.

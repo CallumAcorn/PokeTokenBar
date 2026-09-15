@@ -1632,7 +1632,13 @@ struct BattleView: View {
                 switchStrip(you.roster, activeIndex: you.activeIndex, forced: false, turn: view.turn)
             } else if Self.isPending("switch", pendingChoice: view.pendingChoice, turn: view.turn, submitted: choiceSubmittedFor) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(l.battleForcedSwitchPrompt).font(.system(size: 12, weight: .semibold)).foregroundStyle(.orange)
+                    // Same server request (pendingChoice == "switch") covers both a real faint and a
+                    // self-switch move (U-turn, Volt Switch, Baton Pass, Parting Shot, Flip Turn,
+                    // Teleport…) — the active mon's own fainted flag is what tells them apart, since
+                    // the server never says *why* a switch is being requested.
+                    let fainted = you.roster[safeIndex: you.activeIndex]?.fainted ?? false
+                    Text(fainted ? l.battleForcedSwitchPrompt : l.battleSelfSwitchPrompt)
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(.orange)
                     switchStrip(you.roster, activeIndex: you.activeIndex, forced: true, turn: view.turn)
                 }
             } else if Self.isPending("move", pendingChoice: view.pendingChoice, turn: view.turn, submitted: choiceSubmittedFor) {
