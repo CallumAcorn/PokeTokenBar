@@ -420,6 +420,18 @@ read_when:
   리터럴 안의 `//` 를 주석으로 오인하면 진짜 결함을 놓친다(역검증에서 이 케이스로 반증함).
   새 프로바이더 UI 를 붙일 땐 같은 부류의 형제 문구(여기선 `claudeAuthExpiredTitle/Hint`)를 먼저 찾아
   문안 구조까지 맞춘다 — 문구만 새로 지으면 같은 화면에서 두 안내가 다른 말투로 갈린다.
+- **턴 번호만으로 "이번 턴에 이미 제출했나"를 판별하는 가드는 선택지 종류가 바뀌는 경우를 놓친다.**
+  배틀 화면의 재제출 방지 가드(구 `choiceSubmittedForTurn`)는 턴 번호 하나로만 "이미 보냈나"를
+  판별했다. 그런데 내 이동으로 내 액티브 몬이 기절하면 `@pkmn/sim` 은 턴이 끝나기 전(턴 번호가 아직
+  그대로인 채) 강제 교체(`pendingChoice == "switch"`)를 요청한다 — 방금 그 턴 번호로 제출한 이동
+  선택이 **다른 종류의 새 요청**을 통째로 가려버려 "포켓몬이 기절해도 교체 화면이 안 뜬다"로
+  나타났다(사용자 리포트 "no switch prompt appears"). 판별 축을 (턴, 선택 종류)로 늘리고
+  (`BattleView.SubmittedChoice`), 판정을 순수 함수로 뺀다(`BattleView.isPending`) — 같은 파일의
+  `parseLogBeats`/`formattedLogLines` 가 이미 쓰는 "SwiftUI body 밖으로 뺀 순수 함수" 패턴 그대로.
+  회귀 가드: `BattleViewActionBoxStateTests` — 같은 턴에서 move 제출 후 switch 요청이 안 가려지는지,
+  같은 종류는 계속 가려지는지, 턴이 바뀌면 다시 뜨는지 세 축 모두. 부류 스윕: 이 파일에서 턴 번호
+  하나만으로 재제출을 판별하는 가드는 이 지점 하나뿐(`grep -n "== view.turn\|!= view.turn"` 확인) —
+  다른 화면에 형제 사례 없음.
 
 ## 에너지 (상시 표시 애니메이션)
 

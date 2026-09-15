@@ -138,14 +138,30 @@ struct BattleView: View {
     /// failed) — `chatLogRow` falls back to an egg placeholder rather than guessing.
     @State private var opponentSpeciesIDByName: [String: Int] = [:]
     @State private var confirmingForfeit = false
-    /// Set the instant a move *or* voluntary switch is submitted, to the turn it was submitted for
-    /// — @pkmn/sim's own `Side.requestState` (what `view.pendingChoice` mirrors) doesn't clear on
-    /// the side that already chose; it only resets once *both* sides have and the turn resolves
-    /// (`commitChoices` nulls both `activeRequest`s together). Left alone, that reads as "still
-    /// waiting on you" — the move grid (or the forced-switch prompt) flashing back up — even though
-    /// your choice already went through. Comparing against `view.turn` is what self-clears this once
-    /// the real turn actually advances, without an explicit reset anywhere else.
-    @State private var choiceSubmittedForTurn: Int?
+    /// Set the instant a move *or* voluntary switch is submitted, to the turn *and kind* it was
+    /// submitted for — @pkmn/sim's own `Side.requestState` (what `view.pendingChoice` mirrors)
+    /// doesn't clear on the side that already chose; it only resets once *both* sides have and the
+    /// turn resolves (`commitChoices` nulls both `activeRequest`s together). Left alone, that reads
+    /// as "still waiting on you" — the move grid (or the forced-switch prompt) flashing back up —
+    /// even though your choice already went through. Comparing against `view.turn` is what
+    /// self-clears this once the real turn actually advances, without an explicit reset anywhere else.
+    ///
+    /// [Regression] Keying this on turn alone ("no switch prompt appears" when your own move faints
+    /// your active mon) missed that a mid-turn forced switch arrives under the *same* turn number as
+    /// the move that caused it — `@pkmn/sim` doesn't advance `turn` until the whole turn resolves, so
+    /// a faint mid-turn requests the switch immediately, still under that turn. The move you just
+    /// submitted for that turn then masked the switch request entirely. Tracking the choice *kind*
+    /// alongside the turn is what tells "the move I already sent" apart from "a different request the
+    /// server is now raising for that same turn number" — see `isPending`.
+    @State private var choiceSubmittedFor: SubmittedChoice?
+
+    struct SubmittedChoice: Equatable { let turn: Int; let kind: String }
+
+    /// Whether `kind` ("move" or "switch") should still prompt for `turn` — false once the player has
+    /// already submitted specifically *that* kind of choice for that turn. See `choiceSubmittedFor`.
+    static func isPending(_ kind: String, pendingChoice: String?, turn: Int, submitted: SubmittedChoice?) -> Bool {
+        pendingChoice == kind && submitted != SubmittedChoice(turn: turn, kind: kind)
+    }
 
     private var l: L { companion.l }
 
@@ -728,7 +744,7 @@ struct BattleView: View {
         moveTextGeneration = 0
         lastSeenLogCount = 0
         opponentSpeciesIDByName = [:]
-        choiceSubmittedForTurn = nil
+        choiceSubmittedFor = nil
         battleBackgroundImage = nil
         showMoveLog = false
     }
@@ -1614,12 +1630,12 @@ struct BattleView: View {
             }
             if voluntarySwitchOpen {
                 switchStrip(you.roster, activeIndex: you.activeIndex, forced: false, turn: view.turn)
-            } else if view.pendingChoice == "switch" && choiceSubmittedForTurn != view.turn {
+            } else if Self.isPending("switch", pendingChoice: view.pendingChoice, turn: view.turn, submitted: choiceSubmittedFor) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(l.battleForcedSwitchPrompt).font(.system(size: 12, weight: .semibold)).foregroundStyle(.orange)
                     switchStrip(you.roster, activeIndex: you.activeIndex, forced: true, turn: view.turn)
                 }
-            } else if view.pendingChoice == "move" && choiceSubmittedForTurn != view.turn {
+            } else if Self.isPending("move", pendingChoice: view.pendingChoice, turn: view.turn, submitted: choiceSubmittedFor) {
                 moveGrid(you: you, turn: view.turn)
             } else {
                 HStack(spacing: 8) {
@@ -1644,13 +1660,13 @@ struct BattleView: View {
                     BattleMoveGrid(store: companion, mon: mon,
                                    activeMoves: BattleClient.cappedActiveMoves(you.activeMoves),
                                    turn: turn) { slot in
-                        choiceSubmittedForTurn = turn
+                        choiceSubmittedFor = SubmittedChoice(turn: turn, kind: "move")
                         Task {
                             let accepted = await battle.choose(BattleStore.moveChoice(slot))
                             // Rejected (bad slot, network hiccup) — undo the optimistic guess so the
                             // grid comes back and the player can retry, instead of looking stuck on
                             // "waiting for opponent" for a move that never actually went through.
-                            if !accepted, choiceSubmittedForTurn == turn { choiceSubmittedForTurn = nil }
+                            if !accepted, choiceSubmittedFor == SubmittedChoice(turn: turn, kind: "move") { choiceSubmittedFor = nil }
                         }
                     }
                     // Gen 5 move audit, "partial trap" category (Wrap/Bind/Fire Spin/...) — the
@@ -1679,13 +1695,13 @@ struct BattleView: View {
                 ForEach(Array(roster.enumerated()), id: \.offset) { index, mon in
                     Button {
                         voluntarySwitchOpen = false
-                        choiceSubmittedForTurn = turn
+                        choiceSubmittedFor = SubmittedChoice(turn: turn, kind: "switch")
                         Task {
                             let accepted = await battle.choose(BattleStore.switchChoice(index + 1))
                             // Rejected — undo the optimistic guess so a forced switch can be retried
                             // instead of stranding the player on "waiting for opponent" with no way
                             // to act. (A rejected voluntary switch just stays closed, same as before.)
-                            if !accepted, choiceSubmittedForTurn == turn { choiceSubmittedForTurn = nil }
+                            if !accepted, choiceSubmittedFor == SubmittedChoice(turn: turn, kind: "switch") { choiceSubmittedFor = nil }
                         }
                     } label: {
                         VStack(spacing: 4) {

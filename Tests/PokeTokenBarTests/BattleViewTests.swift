@@ -353,3 +353,38 @@ final class BattleViewBackgroundTests: XCTestCase {
         XCTAssertNil(BattleView.loadBackgroundImage(terrain: "not-a-real-terrain"))
     }
 }
+
+/// [Regression] "No switch prompt appears" when your own move faints your active mon: `@pkmn/sim`
+/// raises the forced-switch request *before* `turn` advances (a mid-turn faint doesn't wait for the
+/// turn to resolve), so the request arrives under the same turn number you just submitted a move
+/// for. A guard keyed on turn alone can't tell "the move I already submitted" from "a new, different
+/// request the server is raising for that same turn" — see `BattleView.isPending`.
+@MainActor
+final class BattleViewActionBoxStateTests: XCTestCase {
+    func testAMoveJustSubmittedDoesNotMaskAForcedSwitchRaisedForTheSameTurn() {
+        let submitted = BattleView.SubmittedChoice(turn: 3, kind: "move")
+        XCTAssertTrue(BattleView.isPending("switch", pendingChoice: "switch", turn: 3, submitted: submitted),
+                       "a forced switch for the same turn must still show, even though a move was already submitted for it")
+    }
+
+    func testASwitchJustSubmittedDoesNotReappearForTheSameTurn() {
+        let submitted = BattleView.SubmittedChoice(turn: 3, kind: "switch")
+        XCTAssertFalse(BattleView.isPending("switch", pendingChoice: "switch", turn: 3, submitted: submitted),
+                        "the same choice kind already submitted for this turn must not flash back up")
+    }
+
+    func testAMoveJustSubmittedDoesNotReappearForTheSameTurn() {
+        let submitted = BattleView.SubmittedChoice(turn: 3, kind: "move")
+        XCTAssertFalse(BattleView.isPending("move", pendingChoice: "move", turn: 3, submitted: submitted))
+    }
+
+    func testNothingSubmittedYetShowsWhateverIsPending() {
+        XCTAssertTrue(BattleView.isPending("move", pendingChoice: "move", turn: 1, submitted: nil))
+        XCTAssertTrue(BattleView.isPending("switch", pendingChoice: "switch", turn: 1, submitted: nil))
+    }
+
+    func testANewTurnClearsAPriorSubmissionForTheSameKind() {
+        let submitted = BattleView.SubmittedChoice(turn: 3, kind: "move")
+        XCTAssertTrue(BattleView.isPending("move", pendingChoice: "move", turn: 4, submitted: submitted))
+    }
+}
