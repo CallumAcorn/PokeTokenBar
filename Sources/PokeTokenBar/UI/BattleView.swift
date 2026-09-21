@@ -138,14 +138,30 @@ struct BattleView: View {
     /// failed) — `chatLogRow` falls back to an egg placeholder rather than guessing.
     @State private var opponentSpeciesIDByName: [String: Int] = [:]
     @State private var confirmingForfeit = false
-    /// Set the instant a move *or* voluntary switch is submitted, to the turn it was submitted for
-    /// — @pkmn/sim's own `Side.requestState` (what `view.pendingChoice` mirrors) doesn't clear on
-    /// the side that already chose; it only resets once *both* sides have and the turn resolves
-    /// (`commitChoices` nulls both `activeRequest`s together). Left alone, that reads as "still
-    /// waiting on you" — the move grid (or the forced-switch prompt) flashing back up — even though
-    /// your choice already went through. Comparing against `view.turn` is what self-clears this once
-    /// the real turn actually advances, without an explicit reset anywhere else.
-    @State private var choiceSubmittedForTurn: Int?
+    /// Set the instant a move *or* voluntary switch is submitted, to the turn *and kind* it was
+    /// submitted for — @pkmn/sim's own `Side.requestState` (what `view.pendingChoice` mirrors)
+    /// doesn't clear on the side that already chose; it only resets once *both* sides have and the
+    /// turn resolves (`commitChoices` nulls both `activeRequest`s together). Left alone, that reads
+    /// as "still waiting on you" — the move grid (or the forced-switch prompt) flashing back up —
+    /// even though your choice already went through. Comparing against `view.turn` is what
+    /// self-clears this once the real turn actually advances, without an explicit reset anywhere else.
+    ///
+    /// [Regression] Keying this on turn alone ("no switch prompt appears" when your own move faints
+    /// your active mon) missed that a mid-turn forced switch arrives under the *same* turn number as
+    /// the move that caused it — `@pkmn/sim` doesn't advance `turn` until the whole turn resolves, so
+    /// a faint mid-turn requests the switch immediately, still under that turn. The move you just
+    /// submitted for that turn then masked the switch request entirely. Tracking the choice *kind*
+    /// alongside the turn is what tells "the move I already sent" apart from "a different request the
+    /// server is now raising for that same turn number" — see `isPending`.
+    @State private var choiceSubmittedFor: SubmittedChoice?
+
+    struct SubmittedChoice: Equatable { let turn: Int; let kind: String }
+
+    /// Whether `kind` ("move" or "switch") should still prompt for `turn` — false once the player has
+    /// already submitted specifically *that* kind of choice for that turn. See `choiceSubmittedFor`.
+    static func isPending(_ kind: String, pendingChoice: String?, turn: Int, submitted: SubmittedChoice?) -> Bool {
+        pendingChoice == kind && submitted != SubmittedChoice(turn: turn, kind: kind)
+    }
 
     private var l: L { companion.l }
 
@@ -318,11 +334,68 @@ struct BattleView: View {
                                                isPositive: deltaPct > 0, hpDeltaFraction: rawDelta)))
             case "faint":
                 beats.append(.chip(EffectChip(text: l.battleFainted, isMine: isMine, isPositive: false)))
+            // [Movedex audit, §3] Protect/Detect/Wide Guard/Quick Guard blocking a hit, Endure
+            // surviving one, and a Substitute absorbing one all used to produce *zero* feedback —
+            // HP genuinely doesn't move (the server is right), but nothing on screen said a hit even
+            // landed, which reads as "that move did nothing" exactly like the pre-fix Growl case.
+            case "-activate":
+                guard parts.count >= 4, let text = activateChipText(parts[3], l: l) else { continue }
+                beats.append(.chip(EffectChip(text: text, isMine: isMine, isPositive: true)))
+            // Multi-hit closing tally (Bullet Seed, Fury Attack…) — each individual hit already gets
+            // its own -damage chip; this just adds the "hit N times!" summary line.
+            case "-hitcount":
+                guard parts.count >= 4, let n = Int(parts[3]) else { continue }
+                beats.append(.chip(EffectChip(text: l.battleHitCount(n), isMine: isMine, isPositive: true)))
+            // Two-turn charge move announcement (Solar Beam, Fly, Dig…) — the |move| line already
+            // shows "used Solar Beam!"; this adds the missing "charging" cue for the turn nothing
+            // else happens, so the wait doesn't just read as the app hanging.
+            case "-prepare":
+                beats.append(.chip(EffectChip(text: l.battleCharging, isMine: isMine, isPositive: true)))
+            // Volatile-status onset flavor (Leech Seed, confusion, Ingrain, Aqua Ring, Perish Song).
+            // The ongoing mechanical effect (drain ticks, a disabled slot) already showed even
+            // without this — only the one-time "was seeded!"-style announcement was missing.
+            // ponytail: onset only, not `-end` (the effect wearing off) — not asked for, lower value.
+            case "-start":
+                guard parts.count >= 4, let text = volatileStartChip(parts[3], l: l) else { continue }
+                beats.append(.chip(EffectChip(text: text.text, isMine: isMine, isPositive: text.isPositive)))
             default:
                 continue
             }
         }
         return (beats, log.count)
+    }
+
+    /// `-activate`'s effect field covers many unrelated triggers (abilities, items, Mimic…) — only
+    /// the ones the Movedex audit called out (a blocked/endured hit, a Substitute absorbing one) are
+    /// handled; anything else is silently ignored, same "not exhaustive" convention `formattedLogLines`
+    /// already documents for its own unhandled line kinds.
+    private static let protectFamilyMoves: Set<String> = ["Protect", "Detect", "Wide Guard", "Quick Guard", "Mat Block", "Crafty Shield"]
+    private static func activateChipText(_ effect: String, l: L) -> String? {
+        if effect.hasPrefix("move: ") {
+            let move = String(effect.dropFirst("move: ".count))
+            if protectFamilyMoves.contains(move) { return l.battleProtected }
+            if move == "Endure" { return l.battleEndured }
+            return nil
+        }
+        if effect == "Substitute" { return l.battleSubstituteAbsorbed }
+        return nil
+    }
+
+    /// `-start`'s effect field, same "move: X" or bare-name shape `-activate` uses. Perish Song's
+    /// countdown line is "perish3"/"perish2"/… — only the onset (perish3, the turn it's announced)
+    /// gets the chip; the later countdown ticks reuse the same value already (perish2/1/0 don't
+    /// re-fire `-start`, only the initial one does).
+    private static func volatileStartChip(_ effect: String, l: L) -> (text: String, isPositive: Bool)? {
+        let name = effect.hasPrefix("move: ") ? String(effect.dropFirst("move: ".count)) : effect
+        switch name {
+        case "Leech Seed": return (l.battleSeeded, false)
+        case "confusion": return (l.battleConfusedStart, false)
+        case "Ingrain": return (l.battleIngrainStart, true)
+        case "Aqua Ring": return (l.battleAquaRingStart, true)
+        case "perish3": return (l.battlePerishSongStart, false)
+        case "Substitute": return (l.battleSubstituteCreated, true)
+        default: return nil
+        }
     }
 
     /// A log mon identifier looks like "p1a: Ash-0" — the part after ": " is `toPokemonSet`'s own
@@ -334,6 +407,82 @@ struct BattleView: View {
         guard let colonRange = ident.range(of: ": ") else { return false }
         return ident[colonRange.upperBound...].hasPrefix(myDisplayName + "-")
     }
+
+    // MARK: Entry hazards & screens — [Movedex audit, §3]
+    //
+    // `BattleClient.You`/`Opponent`/`BattleView` carry no side-condition field at all — the only
+    // path to knowing whether Stealth Rock/Spikes/Reflect/etc. are up is parsing them straight out
+    // of the raw log the client already receives every poll. `-sidestart`/`-sideend` (per-side:
+    // hazards, screens, Tailwind…) and `-fieldstart`/`-fieldend` (whole-field: Trick Room, Gravity…)
+    // are the two line kinds that carry this.
+
+    /// Active hazards/screens/room effects right now, derived fresh from the *whole* log each call
+    /// (not incremental — a log is at most a few hundred short lines, cheap to rescan, and this
+    /// avoids needing yet another piece of state to carry across polls). `mine`/`opponent` are
+    /// per-side (Stealth Rock, Spikes, Reflect…); `field` is shared (Trick Room, Gravity…).
+    struct SideConditions: Equatable {
+        var mine: Set<String> = []
+        var opponent: Set<String> = []
+        var field: Set<String> = []
+    }
+
+    /// "p1"/"p2" for whichever side is mine — found by scanning for the first move/switch line whose
+    /// mon identity is mine (same technique `BattleClient.mySide` already uses to tell p1/p2 apart
+    /// without this app ever being told directly which one it is server-side). `-sidestart`'s own
+    /// identifier is the bare side ("p1", possibly with a name after it, e.g. "p1: Ash") — never the
+    /// "p1a: Ash-0" mon-slot form move/switch lines use — so this can't reuse `identBelongsToMe`
+    /// directly; both share the same first-two-characters side code, which is all that's compared.
+    private static func mySideLetter(log: [String], myDisplayName: String) -> String? {
+        for line in log {
+            let parts = line.components(separatedBy: "|")
+            guard parts.count >= 3, parts[1] == "move" || parts[1] == "switch" || parts[1] == "drag" else { continue }
+            if identBelongsToMe(parts[2], myDisplayName: myDisplayName) { return String(parts[2].prefix(2)) }
+        }
+        return nil
+    }
+
+    static func activeSideConditions(log: [String]?, myDisplayName: String) -> SideConditions {
+        guard let log, let mySide = mySideLetter(log: log, myDisplayName: myDisplayName) else { return SideConditions() }
+        var result = SideConditions()
+        func stripMovePrefix(_ raw: String) -> String {
+            raw.hasPrefix("move: ") ? String(raw.dropFirst("move: ".count)) : raw
+        }
+        for line in log {
+            let parts = line.components(separatedBy: "|")
+            guard parts.count >= 3 else { continue }
+            switch parts[1] {
+            // Two args: SIDE, then CONDITION — "|−sidestart|p1|move: Stealth Rock|".
+            case "-sidestart", "-sideend":
+                guard parts.count >= 4 else { continue }
+                let condition = stripMovePrefix(parts[3])
+                let active = parts[1] == "-sidestart"
+                let mine = String(parts[2].prefix(2)) == mySide
+                if mine { if active { result.mine.insert(condition) } else { result.mine.remove(condition) } }
+                else { if active { result.opponent.insert(condition) } else { result.opponent.remove(condition) } }
+            // Only one arg — no side to name, the condition itself is right at parts[2]:
+            // "|-fieldstart|move: Trick Room|[of] p1a: Ash-0" (the trailing [of] tag, if present,
+            // is just the source and isn't needed here).
+            case "-fieldstart":
+                result.field.insert(stripMovePrefix(parts[2]))
+            case "-fieldend":
+                result.field.remove(stripMovePrefix(parts[2]))
+            default:
+                continue
+            }
+        }
+        return result
+    }
+
+    /// Short on-field badge label for a hazard/screen/room condition — `nil` for anything not worth
+    /// a permanent badge (not exhaustive; an unrecognized condition just doesn't get one, same
+    /// "silently omit" convention the rest of this file's log parsing already follows).
+    private static let sideConditionAbbreviations: [String: String] = [
+        "Stealth Rock": "SR", "Spikes": "SPK", "Toxic Spikes": "TSPK",
+        "Reflect": "REF", "Light Screen": "LS", "Safeguard": "SG", "Mist": "MIST",
+        "Tailwind": "TW", "Lucky Chant": "LC", "Wide Guard": "WG", "Quick Guard": "QG",
+        "Trick Room": "TR", "Wonder Room": "WR", "Magic Room": "MR", "Gravity": "GRV",
+    ]
+    private static func sideConditionBadge(_ condition: String) -> String? { sideConditionAbbreviations[condition] }
 
     private static func statLabel(_ code: String, l: L) -> String? {
         switch code {
@@ -728,7 +877,7 @@ struct BattleView: View {
         moveTextGeneration = 0
         lastSeenLogCount = 0
         opponentSpeciesIDByName = [:]
-        choiceSubmittedForTurn = nil
+        choiceSubmittedFor = nil
         battleBackgroundImage = nil
         showMoveLog = false
     }
@@ -1151,6 +1300,31 @@ struct BattleView: View {
                 guard parts.count >= 3, parts[2] != "none", !rawLine.contains("[upkeep]") else { return nil }
                 return ChatLogLine(text: "The weather became \(parts[2])!", speaker: .neutral)
             case "-mustrecharge": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2])) must recharge!", speaker: speaker) : nil
+            // [Movedex audit, §3] Same additions as parseLogBeats' chip versions above, in this
+            // panel's own plain-English-sentence convention.
+            case "-activate":
+                guard parts.count >= 4 else { return nil }
+                if parts[3].hasPrefix("move: "), protectFamilyMoves.contains(String(parts[3].dropFirst("move: ".count))) {
+                    return ChatLogLine(text: "\(name(parts[2])) protected itself!", speaker: speaker)
+                }
+                if parts[3] == "move: Endure" { return ChatLogLine(text: "\(name(parts[2])) endured the hit!", speaker: speaker) }
+                if parts[3] == "Substitute" { return ChatLogLine(text: "\(name(parts[2]))'s substitute took the hit!", speaker: speaker) }
+                return nil
+            case "-hitcount": return parts.count >= 4 ? ChatLogLine(text: "Hit \(parts[3]) time(s)!", speaker: .neutral) : nil
+            case "-prepare": return parts.count >= 4 ? ChatLogLine(text: "\(name(parts[2])) is preparing \(parts[3])!", speaker: speaker) : nil
+            case "-start":
+                guard parts.count >= 4, let onset = volatileStartRecapText(parts[3]) else { return nil }
+                return ChatLogLine(text: "\(name(parts[2])) \(onset)", speaker: speaker)
+            // -sidestart/-sideend carry SIDE then CONDITION (parts[3]); -fieldstart/-fieldend have
+            // no side to name, so the condition is at parts[2] instead — same shape difference
+            // `activeSideConditions` accounts for.
+            case "-sidestart", "-sideend":
+                guard parts.count >= 4 else { return nil }
+                let condition = parts[3].hasPrefix("move: ") ? String(parts[3].dropFirst("move: ".count)) : parts[3]
+                return ChatLogLine(text: "\(condition) \(parts[1] == "-sidestart" ? "was set!" : "wore off!")", speaker: .neutral)
+            case "-fieldstart", "-fieldend":
+                let condition = parts[2].hasPrefix("move: ") ? String(parts[2].dropFirst("move: ".count)) : parts[2]
+                return ChatLogLine(text: "\(condition) \(parts[1] == "-fieldstart" ? "was set!" : "wore off!")", speaker: .neutral)
             case "-terastallize": return parts.count >= 4 ? ChatLogLine(text: "\(name(parts[2])) terastallized into the \(parts[3]) type!", speaker: speaker) : nil
             case "cant": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2])) couldn't move!", speaker: speaker) : nil
             case "faint": return parts.count >= 3 ? ChatLogLine(text: "\(name(parts[2])) fainted!", speaker: speaker) : nil
@@ -1221,6 +1395,21 @@ struct BattleView: View {
         parts.count >= 4 ? parts[3] : "?"
     }
 
+    /// English-sentence-tail counterpart of `volatileStartChip`'s classification, for this panel's
+    /// own always-English convention (see `formattedLogLines`'s doc comment).
+    private static func volatileStartRecapText(_ effect: String) -> String? {
+        let name = effect.hasPrefix("move: ") ? String(effect.dropFirst("move: ".count)) : effect
+        switch name {
+        case "Leech Seed": return "was seeded!"
+        case "confusion": return "became confused!"
+        case "Ingrain": return "planted its roots!"
+        case "Aqua Ring": return "surrounded itself with a veil of water!"
+        case "perish3": return "will faint in three turns!"
+        case "Substitute": return "made a substitute!"
+        default: return nil
+        }
+    }
+
     private func battleScene(opponent: BattleClient.Opponent, you: BattleClient.You, log: [String]?) -> some View {
         let yourActive = you.roster[safeIndex: you.activeIndex]
         // Falls back to live truth (`opponent.active`/`yourActive`) whenever the seed `.task` below
@@ -1237,6 +1426,9 @@ struct BattleView: View {
         let yourSpeciesID = displayedYourSpeciesID ?? yourActive?.speciesID
         let yourFainted = displayedYourSpeciesID == nil ? (yourActive?.fainted ?? false) : displayedYourFainted
         let yourHPFraction = displayedYourHPFraction ?? yourActive?.hpFraction
+        // [Movedex audit, §3] Recomputed fresh from the whole log every render — cheap (a battle log
+        // is at most a few hundred short lines) and avoids one more piece of state to carry.
+        let conditions = log.map { Self.activeSideConditions(log: $0, myDisplayName: you.displayName) } ?? SideConditions()
         return ZStack {
             battleFieldBackground
             // chipStack is attached here, before the .frame(maxWidth: .infinity, ...) below — that
@@ -1244,14 +1436,29 @@ struct BattleView: View {
             // buggy placement) anchors to the scene's own bounds, not the box's actual small footprint,
             // landing both sides' chips at the same top-center spot regardless of which mon they're
             // for. Attached here, `.top`/`.bottom` alignment is relative to the compact card itself.
-            pokemonInfoBox(name: opponent.displayName, active: opponent.active, hpFraction: opponentHPFraction, benchCount: opponent.rosterSize)
+            pokemonInfoBox(name: opponent.displayName, active: opponent.active, hpFraction: opponentHPFraction,
+                           benchCount: opponent.rosterSize, conditions: conditions.opponent)
                 .overlay(alignment: .bottom) { chipStack(opponentChips).offset(y: 20) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(14)
+            // Field-wide conditions (Trick Room, Gravity…) belong to neither side — a small shared
+            // strip up top rather than duplicated into both info boxes.
+            if !conditions.field.isEmpty {
+                HStack(spacing: 3) {
+                    ForEach(conditions.field.sorted(), id: \.self) { condition in
+                        Text(condition).font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(.regularMaterial, in: Capsule())
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .top)
+                .padding(.top, 6)
+            }
             // Kept clear of the action-box overlay below (extra bottom padding) — unlike the plain
             // sprite artwork, this card is information (name/HP) and must never be the thing that's
             // partly hidden.
-            pokemonInfoBox(name: you.displayName, active: yourActive, hpFraction: yourHPFraction, benchCount: you.roster.count)
+            pokemonInfoBox(name: you.displayName, active: yourActive, hpFraction: yourHPFraction,
+                           benchCount: you.roster.count, conditions: conditions.mine)
                 .overlay(alignment: .top) { chipStack(yourChips).offset(y: -20) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(.horizontal, 14).padding(.top, 14)
@@ -1568,7 +1775,12 @@ struct BattleView: View {
     /// offered, which is the *entire scene width* once the call site's own alignment frame spans the
     /// full window. Bounding the card itself keeps it a compact card; the call site's frame still
     /// positions that bounded card wherever it wants within the larger area.
-    private func pokemonInfoBox(name: String, active: BattleClient.PublicMon?, hpFraction: Double?, benchCount: Int) -> some View {
+    /// [Movedex audit, §3] `conditions` — this side's active hazards/screens/rooms (Stealth Rock,
+    /// Reflect, Trick Room…), abbreviated badges under the HP bar. Previously there was no on-field
+    /// indicator at all, so a switch-in taking rock damage from a hazard it couldn't see, or a hit
+    /// softened by an unseen screen, just read as inconsistent damage rather than a real field state.
+    private func pokemonInfoBox(name: String, active: BattleClient.PublicMon?, hpFraction: Double?, benchCount: Int,
+                                 conditions: Set<String> = []) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(name).font(.system(size: 12, weight: .bold)).lineLimit(1)
@@ -1587,6 +1799,15 @@ struct BattleView: View {
                 }
             } else {
                 Text("—").font(.caption2).foregroundStyle(.tertiary)
+            }
+            if !conditions.isEmpty {
+                HStack(spacing: 3) {
+                    ForEach(conditions.compactMap(Self.sideConditionBadge).sorted(), id: \.self) { badge in
+                        Text(badge).font(.system(size: 8, weight: .heavy))
+                            .padding(.horizontal, 4).padding(.vertical, 1.5)
+                            .background(Color.secondary.opacity(0.22), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    }
+                }
             }
         }
         .frame(maxWidth: 190)
@@ -1614,12 +1835,20 @@ struct BattleView: View {
             }
             if voluntarySwitchOpen {
                 switchStrip(you.roster, activeIndex: you.activeIndex, forced: false, turn: view.turn)
-            } else if view.pendingChoice == "switch" && choiceSubmittedForTurn != view.turn {
+            } else if Self.isPending("switch", pendingChoice: view.pendingChoice, turn: view.turn, submitted: choiceSubmittedFor) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(l.battleForcedSwitchPrompt).font(.system(size: 12, weight: .semibold)).foregroundStyle(.orange)
+                    // Same server request (pendingChoice == "switch") covers both a real faint and a
+                    // self-switch move (U-turn, Volt Switch, Baton Pass — the Gen 5-legal members of
+                    // this family; Movedex audit confirmed Parting Shot/Flip Turn aren't in Gen 5 yet
+                    // and Teleport doesn't self-switch until Gen 8) — the active mon's own fainted
+                    // flag is what tells them apart, since the server never says *why* a switch is
+                    // being requested.
+                    let fainted = you.roster[safeIndex: you.activeIndex]?.fainted ?? false
+                    Text(fainted ? l.battleForcedSwitchPrompt : l.battleSelfSwitchPrompt)
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(.orange)
                     switchStrip(you.roster, activeIndex: you.activeIndex, forced: true, turn: view.turn)
                 }
-            } else if view.pendingChoice == "move" && choiceSubmittedForTurn != view.turn {
+            } else if Self.isPending("move", pendingChoice: view.pendingChoice, turn: view.turn, submitted: choiceSubmittedFor) {
                 moveGrid(you: you, turn: view.turn)
             } else {
                 HStack(spacing: 8) {
@@ -1644,13 +1873,13 @@ struct BattleView: View {
                     BattleMoveGrid(store: companion, mon: mon,
                                    activeMoves: BattleClient.cappedActiveMoves(you.activeMoves),
                                    turn: turn) { slot in
-                        choiceSubmittedForTurn = turn
+                        choiceSubmittedFor = SubmittedChoice(turn: turn, kind: "move")
                         Task {
                             let accepted = await battle.choose(BattleStore.moveChoice(slot))
                             // Rejected (bad slot, network hiccup) — undo the optimistic guess so the
                             // grid comes back and the player can retry, instead of looking stuck on
                             // "waiting for opponent" for a move that never actually went through.
-                            if !accepted, choiceSubmittedForTurn == turn { choiceSubmittedForTurn = nil }
+                            if !accepted, choiceSubmittedFor == SubmittedChoice(turn: turn, kind: "move") { choiceSubmittedFor = nil }
                         }
                     }
                     // Gen 5 move audit, "partial trap" category (Wrap/Bind/Fire Spin/...) — the
@@ -1679,13 +1908,13 @@ struct BattleView: View {
                 ForEach(Array(roster.enumerated()), id: \.offset) { index, mon in
                     Button {
                         voluntarySwitchOpen = false
-                        choiceSubmittedForTurn = turn
+                        choiceSubmittedFor = SubmittedChoice(turn: turn, kind: "switch")
                         Task {
                             let accepted = await battle.choose(BattleStore.switchChoice(index + 1))
                             // Rejected — undo the optimistic guess so a forced switch can be retried
                             // instead of stranding the player on "waiting for opponent" with no way
                             // to act. (A rejected voluntary switch just stays closed, same as before.)
-                            if !accepted, choiceSubmittedForTurn == turn { choiceSubmittedForTurn = nil }
+                            if !accepted, choiceSubmittedFor == SubmittedChoice(turn: turn, kind: "switch") { choiceSubmittedFor = nil }
                         }
                     } label: {
                         VStack(spacing: 4) {

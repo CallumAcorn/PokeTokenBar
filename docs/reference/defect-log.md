@@ -420,6 +420,36 @@ read_when:
   리터럴 안의 `//` 를 주석으로 오인하면 진짜 결함을 놓친다(역검증에서 이 케이스로 반증함).
   새 프로바이더 UI 를 붙일 땐 같은 부류의 형제 문구(여기선 `claudeAuthExpiredTitle/Hint`)를 먼저 찾아
   문안 구조까지 맞춘다 — 문구만 새로 지으면 같은 화면에서 두 안내가 다른 말투로 갈린다.
+- **턴 번호만으로 "이번 턴에 이미 제출했나"를 판별하는 가드는 선택지 종류가 바뀌는 경우를 놓친다.**
+  배틀 화면의 재제출 방지 가드(구 `choiceSubmittedForTurn`)는 턴 번호 하나로만 "이미 보냈나"를
+  판별했다. 그런데 내 이동으로 내 액티브 몬이 기절하면 `@pkmn/sim` 은 턴이 끝나기 전(턴 번호가 아직
+  그대로인 채) 강제 교체(`pendingChoice == "switch"`)를 요청한다 — 방금 그 턴 번호로 제출한 이동
+  선택이 **다른 종류의 새 요청**을 통째로 가려버려 "포켓몬이 기절해도 교체 화면이 안 뜬다"로
+  나타났다(사용자 리포트 "no switch prompt appears"). 판별 축을 (턴, 선택 종류)로 늘리고
+  (`BattleView.SubmittedChoice`), 판정을 순수 함수로 뺀다(`BattleView.isPending`) — 같은 파일의
+  `parseLogBeats`/`formattedLogLines` 가 이미 쓰는 "SwiftUI body 밖으로 뺀 순수 함수" 패턴 그대로.
+  회귀 가드: `BattleViewActionBoxStateTests` — 같은 턴에서 move 제출 후 switch 요청이 안 가려지는지,
+  같은 종류는 계속 가려지는지, 턴이 바뀌면 다시 뜨는지 세 축 모두. 부류 스윕: 이 파일에서 턴 번호
+  하나만으로 재제출을 판별하는 가드는 이 지점 하나뿐(`grep -n "== view.turn\|!= view.turn"` 확인) —
+  다른 화면에 형제 사례 없음.
+  **부류가 기절보다 넓었다** — U-turn/Volt Switch/Baton Pass/Parting Shot/Flip Turn/Teleport 같은
+  "자가 교체" 기술도 서버에게는 똑같은 `pendingChoice == "switch"` 요청이라(기절이든 자가 교체든
+  서버는 "왜" 를 알려주지 않는다), 같은 턴 번호 문제를 그대로 겪는다 — "u-turn 이 안 된다" 리포트로
+  드러남. `isPending` 은 이유를 구분하지 않으므로 위 수정 하나로 이 기술군 전체가 같이 풀린다
+  (`testTheSameFixCoversSelfSwitchMovesLikeUTurnNotJustFainting`). 다만 문구는 별개 결함이었다 —
+  안내 텍스트가 "포켓몬이 쓰러졌어요" 로 고정돼 있어 기절이 아닌 자가 교체에도 틀린 문구가 떴다.
+  같은 요청이 "왜" 왔는지는 서버가 안 알려주므로, 액티브 몬 자신의 `fainted` 플래그로 구분해 문구를
+  갈랐다(`battleForcedSwitchPrompt` vs `battleSelfSwitchPrompt`).
+- **이름이 닮은 프로토콜 라인이라고 인자 개수(shape)까지 같다고 가정하지 마라.** Movedex 감사(위
+  항목들)로 나온 필드 배지 기능을 구현하며 `-sidestart`/`-sideend`(두 인자: SIDE, CONDITION)와
+  `-fieldstart`/`-fieldend`(한 인자: CONDITION만, SIDE 없음)를 같은 switch 케이스로 묶어 둘 다
+  `parts[3]`을 CONDITION으로 읽었다 — `-fieldstart`류엔 SIDE 인자 자체가 없어 실제 CONDITION은
+  `parts[2]`에 있는데, 그 자리엔 대신 `[of] p1a: ...` 꼬리표가 오는 흔한 경우 파싱이 완전히 어긋난다.
+  테스트를 먼저 손으로 짜다가(커밋 전) 발견 — `-fieldstart|move: Trick Room` 같은 최소 픽스처를
+  실제 인자 개수 그대로 만들어 보면 즉시 드러난다. 교훈: 두 프로토콜 라인이 같은 접두사 계열
+  (`-side*`/`-field*`)이라고 한 케이스에 묶기 전에, **각각의 실제 인자 개수를 독립적으로 확인**한다 —
+  "제 소스가 아니면 증거가 아니다"(외부 로그 포맷 규칙, 위 §외부 로그·사용량 소스)와 같은 교훈을
+  wire 프로토콜에도 적용한 사례.
 
 ## 에너지 (상시 표시 애니메이션)
 

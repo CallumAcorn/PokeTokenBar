@@ -767,6 +767,11 @@ struct L {
           "No se pudieron cargar los datos del Pokémon — comprueba tu conexión a internet.")
     }
     var battleForcedSwitchPrompt: String { t("포켓몬이 쓰러졌어요 — 교체할 포켓몬을 골라주세요", "Your Pokémon fainted — choose a replacement", "ポケモンがひんしになりました — 交代するポケモンを選んでください", "Tu Pokémon se debilitó — elige un reemplazo") }
+    /// Same forced-switch grid as `battleForcedSwitchPrompt`, but for a self-switch move (U-turn,
+    /// Volt Switch, Baton Pass, Parting Shot, Flip Turn, Teleport…) — the active mon didn't faint,
+    /// so saying "fainted" would be wrong. Both cases arrive as the identical server request
+    /// (`pendingChoice == "switch"`); only the active mon's `fainted` flag tells them apart.
+    var battleSelfSwitchPrompt: String { t("포켓몬을 교체해요 — 다음 포켓몬을 골라주세요", "Your Pokémon is switching out — choose the next one", "ポケモンが交代します — 次のポケモンを選んでください", "Tu Pokémon está cambiando — elige el siguiente") }
     var battleSwitchButton: String { t("교체", "Switch", "交代", "Cambiar") }
     /// Gen 5 move audit, "partial trap" category — shown next to the disabled Switch button while
     /// Wrap/Bind/Fire Spin/etc. is holding this mon in.
@@ -798,6 +803,30 @@ struct L {
     var battleStatusFrozen: String { t("얼음!", "Frozen!", "こおり！", "¡Congelado!") }
     var battleStatusCured: String { t("회복!", "Cured!", "回復！", "¡Curado!") }
     var battleFainted: String { t("쓰러졌다!", "Fainted!", "ひんし！", "¡Debilitado!") }
+    // [Movedex audit, §3] Protect/Endure/Substitute blocked-or-absorbed-a-hit feedback — previously
+    // these produced no chip at all, reading as "that move did nothing" even though the server
+    // correctly blocked/absorbed it.
+    var battleProtected: String { t("막아냈다!", "Protected!", "まもった！", "¡Protegido!") }
+    var battleEndured: String { t("버텨냈다!", "Endured!", "こらえた！", "¡Resistió!") }
+    var battleSubstituteAbsorbed: String { t("분신이 대신 맞았다!", "The substitute took the hit!", "みがわりが かわりに うけた！", "¡El sustituto recibió el golpe!") }
+    /// Multi-hit closing tally (Bullet Seed, Fury Attack…) — each hit already shows its own damage
+    /// chip; this is just the "hit N times!" summary line that was missing.
+    func battleHitCount(_ n: Int) -> String {
+        t("\(n)번 맞았다!", "Hit \(n) time\(n == 1 ? "" : "s")!", "\(n)回あたった！", "¡Golpeó \(n) \(n == 1 ? "vez" : "veces")!")
+    }
+    /// Two-turn charge move's charging turn (Solar Beam, Fly…) — shown as a chip alongside the
+    /// existing "used Solar Beam!" banner, so the turn nothing else happens doesn't read as the app
+    /// having hung.
+    var battleCharging: String { t("힘을 모으고 있다!", "Charging!", "ちからを ためている！", "¡Cargando!") }
+    // Volatile-status onset flavor (Leech Seed, confusion, Ingrain, Aqua Ring, Perish Song) — the
+    // ongoing mechanical effect (drain ticks, a disabled slot) already showed without these; only
+    // the one-time onset announcement was missing.
+    var battleSeeded: String { t("씨앗이 심어졌다!", "Seeded!", "たねを うえつけられた！", "¡Sembrado!") }
+    var battleConfusedStart: String { t("혼란에 빠졌다!", "Confused!", "こんらんした！", "¡Confundido!") }
+    var battleIngrainStart: String { t("뿌리를 내렸다!", "Rooted!", "ねを はった！", "¡Enraizado!") }
+    var battleAquaRingStart: String { t("아쿠아링을 둘렀다!", "Aqua Ring!", "アクアリングを まとった！", "¡Anillo Ácueo!") }
+    var battlePerishSongStart: String { t("파멸의 노래!", "Perish Song!", "ほろびの うた！", "¡Canto Mortal!") }
+    var battleSubstituteCreated: String { t("분신을 만들었다!", "Made a substitute!", "みがわりを つくった！", "¡Creó un sustituto!") }
     var battleYourTeam: String { t("내 팀", "Your team", "自分のチーム", "Tu equipo") }
     var battleOpponentTeam: String { t("상대 팀", "Opponent's team", "相手のチーム", "Equipo del oponente") }
     /// Header over the roster picker's full-party grid — distinguishes it from `battleYourTeam`
