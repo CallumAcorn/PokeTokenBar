@@ -107,6 +107,18 @@ struct PopoverView: View {
         @Bindable var nav = nav
         return VStack(alignment: .leading, spacing: 12) {
             updateBanner
+            // 세그먼티드 컨트롤은 모든 세그먼트를 **가장 긴 라벨**에 맞춰 같은 폭으로 만든다. 그래서
+            // 한 라벨만 길어도 네 칸이 다 같이 넓어지고, 합계가 콘텐츠 폭(332)을 넘으면 `.frame(width:)`
+            // 는 자르지 않고 **가운데 정렬**만 해서 팝오버 내용 전체가 좌우로 13pt 씩 잘려 나간다
+            // (사용자 증상: "탭 패딩이 다 늘어나고 コレクション 이 잘린다").
+            //
+            // 실측 자연 폭(332 예산): ko 232 · pt 294 · es 338 · en 340 · fr 340 · ja 386.
+            // 여섯 중 넷이 넘친다 — ko 가 안 넘쳐서 여태 안 드러났을 뿐이다(ja 가 최악: +54).
+            // `.controlSize(.small)` 이면 ja 324 로 전부 들어간다(ko 196 · en 292 · fr 292 · es 288 · pt 252).
+            // `.font(.caption)` 은 NSSegmentedControl 까지 전달되지 않아 폭이 1pt 도 안 줄었다 — 쓰지 않는다.
+            //
+            // maxWidth 클램프는 안전망이다. 라벨이 더 길어져 다시 넘치더라도 팝오버 전체를 끌고 가는
+            // 대신 세그먼티드 컨트롤 자기 라벨만 줄여서 자른다.
             Picker("", selection: $nav.tab) {
                 Text(l.home).tag(PopoverTab.home)
                 Text(l.shop).tag(PopoverTab.shop)
@@ -115,6 +127,8 @@ struct PopoverView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .controlSize(.small)
+            .frame(maxWidth: PopoverMetrics.contentWidth)
 
             if nav.tab == .collection {
                 CollectionView(store: companion)
