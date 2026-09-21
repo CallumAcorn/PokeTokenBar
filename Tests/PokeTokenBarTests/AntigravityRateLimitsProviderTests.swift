@@ -102,6 +102,10 @@ final class AntigravityRateLimitsProviderTests: XCTestCase {
             autoRefresh: false,
             defaults: defaults
         )
+        // 이 테스트는 Antigravity 가 **설치된** 기기를 흉내낸다(위에서 Antigravity 사용량 프로바이더를
+        // 주입했다). 한도 폴은 이제 대화 저장소 존재를 확인하므로, 그 사실을 명시해 준다 — 확인을
+        // 끄는 우회가 아니라 시나리오를 있는 그대로 선언하는 것이다.
+        store.antigravityDataPresent = { true }
 
         await store.refresh()
 

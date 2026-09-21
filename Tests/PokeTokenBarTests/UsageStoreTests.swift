@@ -1098,6 +1098,43 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(limits.calls, afterAuto, "서버 백오프 중에 수동 재시도가 요청을 또 보냈다")
         XCTAssertNotNil(store.limitTokenRefreshError, "남은 시간을 사용자에게 알려야 한다")
     }
+
+    // MARK: Antigravity 한도 폴 게이트 (설치되지 않은 기기의 무의미한 Keychain 조회)
+
+    /// Antigravity 대화 저장소가 없으면 자격증명도 없으므로 조회 자체를 하지 않는다.
+    /// 실측: 설치되지 않은 기기에서 하루 313회 거절이 쌓여 실패 로그의 절반을 채웠고, 같은 로그에 섞인
+    /// Claude 승인 문제를 덮었다.
+    func testAntigravityLimitsAreNotPolledWhenNoDataStoreExists() async {
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(1_000))
+        let anti = CountingAntigravityLimits()
+        let store = UsageStore(providers: [claude],
+                               claudeLimitsProvider: FakeClaudeLimits(status: claudeLimits(fiveHourUtil: 10)),
+                               codexLimitsProvider: FakeCodexLimits(status: nil),
+                               antigravityLimitsProvider: anti,
+                               autoRefresh: false, defaults: testDefaults)
+        store.antigravityDataPresent = { false }
+
+        await store.refresh(scheduleEmptyRetry: false)
+
+        XCTAssertEqual(anti.calls, 0, "저장소가 없는데도 Keychain 을 읽으러 갔다")
+        XCTAssertNil(store.antigravityLimits)
+    }
+
+    /// 설치된 기기에서는 종전대로 조회한다 — 게이트가 멀쩡한 사용자의 한도를 꺼서는 안 된다.
+    func testAntigravityLimitsArePolledWhenTheDataStoreExists() async {
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(1_000))
+        let anti = CountingAntigravityLimits()
+        let store = UsageStore(providers: [claude],
+                               claudeLimitsProvider: FakeClaudeLimits(status: claudeLimits(fiveHourUtil: 10)),
+                               codexLimitsProvider: FakeCodexLimits(status: nil),
+                               antigravityLimitsProvider: anti,
+                               autoRefresh: false, defaults: testDefaults)
+        store.antigravityDataPresent = { true }
+
+        await store.refresh(scheduleEmptyRetry: false)
+
+        XCTAssertEqual(anti.calls, 1, "설치된 기기에서 조회가 사라졌다")
+    }
 }
 
 /// 첫 호출은 성공, 이후 지정 오류 — 살아있던 승인이 죽는 경로 재현용.
@@ -1119,5 +1156,14 @@ private final class CountingRateLimitedClaude: ClaudeLimitsProviding, @unchecked
     func fetch(allowKeychainPrompt: Bool) async throws -> LimitStatus {
         calls += 1
         throw LimitsError.rateLimited(retryAfter: 3600)
+    }
+}
+
+/// 호출 횟수를 세는 Antigravity 한도 프로바이더 — 게이트가 실제로 요청을 막는지 확인용.
+private final class CountingAntigravityLimits: AntigravityLimitsProviding, @unchecked Sendable {
+    nonisolated(unsafe) var calls = 0
+    func fetch(allowKeychainPrompt: Bool) async throws -> AntigravityRateLimitStatus {
+        calls += 1
+        throw LimitsError.keychainInteractionNotAllowed
     }
 }

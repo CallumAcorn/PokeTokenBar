@@ -68,6 +68,26 @@ enum LocalAntigravityUsageReader {
         defaultRoots[0]
     }
 
+    /// Antigravity 자격증명을 조회할 이유가 있는가 — 대화 저장소가 하나라도 존재해야 한다.
+    ///
+    /// 없으면 Antigravity 를 한 번도 실행하지 않은 기기이고, 그 상태의 Keychain 조회는 **언제나** 거절된다.
+    /// 실측(설치되지 않은 기기, 2026-09-21): 하루 313회 거절 — 같은 날 Claude 쪽 실패 298회와 뒤섞여
+    /// 실패 로그의 절반이 의미 없는 항목이 됐고, 정작 진단해야 할 Claude 승인 문제를 가렸다.
+    /// (원 버그 리포트가 "두 실패 모드가 다르게 나타나 진단이 어려웠다"고 한 것과 같은 부류의 잡음이다.)
+    ///
+    /// 기본 경로뿐 아니라 **커스텀 스캔 루트까지** 본다 — 사용자가 데이터를 다른 곳에 두었다면 설치된
+    /// 것이므로, 기본 경로만 보고 "없음"으로 판정하면 멀쩡한 사용자의 한도를 꺼버린다.
+    ///
+    /// 매 폴마다 값싼 존재 확인(stat)만 한다 — 캐시하지 않으므로 나중에 Antigravity 를 설치하면
+    /// 재시작 없이 그대로 잡힌다.
+    static func dataStorePresent(
+        customRootsValue: String? = CustomScanRoots.storedValue(for: "antigravity"),
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> Bool {
+        resolvedRoots(customRootsValue: customRootsValue, home: home)
+            .contains { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
     static func resolvedRoots(
         customRootsValue: String? = nil,
         home: URL = FileManager.default.homeDirectoryForCurrentUser
