@@ -119,16 +119,7 @@ struct PopoverView: View {
             //
             // maxWidth 클램프는 안전망이다. 라벨이 더 길어져 다시 넘치더라도 팝오버 전체를 끌고 가는
             // 대신 세그먼티드 컨트롤 자기 라벨만 줄여서 자른다.
-            Picker("", selection: $nav.tab) {
-                Text(l.home).tag(PopoverTab.home)
-                Text(l.shop).tag(PopoverTab.shop)
-                Text(l.bag).tag(PopoverTab.bag)
-                Text(l.collection).tag(PopoverTab.collection)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(.small)
-            .frame(maxWidth: PopoverMetrics.contentWidth)
+            PopoverTabPicker(l: l, selection: $nav.tab)
 
             if nav.tab == .collection {
                 CollectionView(store: companion)
@@ -875,5 +866,33 @@ struct ProviderTabBar: View {
         }
         // 탭이 적으면(대부분의 사용자) 스크롤·바운스가 생기지 않아 기존과 동일하게 보인다.
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+    }
+}
+
+/// 팝오버 상단 탭 선택기. **별도 View 로 뽑아 둔 이유는 테스트다** — 인라인으로 두면 레이아웃 가드가
+/// 프로덕션이 아니라 자기가 만든 사본을 재게 되고, 그건 이 저장소에서 이미 여러 번 통과해 놓고 결함을
+/// 놓친 방식이다(`ProviderTabBar` 가 같은 이유로 이미 분리돼 있다).
+struct PopoverTabPicker: View {
+    let l: L
+    @Binding var selection: PopoverTab
+
+    var body: some View {
+        // 클램프는 **안전망**이고, 실제로 폭을 줄이는 건 `.controlSize(.small)` 이다. 둘을 갈라 둔 이유는
+        // 테스트다: 클램프가 걸린 뒤에는 무엇을 재도 332 가 나와서, 컨트롤이 실제로 예산 안에 들어오는지
+        // 아니면 잘려서 그렇게 보이는지 구분할 수 없다. 가드는 `unclamped` 를 잰다.
+        unclamped.frame(maxWidth: PopoverMetrics.contentWidth)
+    }
+
+    /// 클램프 이전의 자연 폭 — 폭 가드가 재는 대상.
+    var unclamped: some View {
+        Picker("", selection: $selection) {
+            Text(l.home).tag(PopoverTab.home)
+            Text(l.shop).tag(PopoverTab.shop)
+            Text(l.bag).tag(PopoverTab.bag)
+            Text(l.collection).tag(PopoverTab.collection)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
     }
 }
