@@ -3,14 +3,32 @@ import Foundation
 /// PokeTokenBarOnline's trade session API — pure networking, no state (orchestration lives in
 /// TradeStore). The server never interprets the `pokemon` field, only stores and forwards it
 /// (opaque JSON), so we encode `MonState` as-is here too — no separate schema on the server side.
+/// See trading-overhaul.md for the multi-mon + token wire format this mirrors.
 enum TradeClient {
+    /// Same bound as BattleClient.maxRosterSize — mirrors trades.ts's isOffer, which rejects the
+    /// whole create/join request with `400` past 6.
+    static let maxOfferSize = 6
+
     struct StatusResponse: Codable {
         let status: String   // "open" | "offered" | "completed"
         let counterpart: Counterpart?
         struct Counterpart: Codable {
             let displayName: String
-            let pokemon: MonState
+            let pokemon: [MonState]
+            let tokens: Int
         }
+    }
+
+    /// A session still waiting for a second player, browsable via `GET /trades/open` — the
+    /// alternative to sharing a link. Mirrors `BattleClient.OpenBattle`'s shape.
+    struct OpenTrade: Codable, Equatable {
+        let sessionId: String
+        let displayName: String
+        let pokemon: [MonState]
+        let tokens: Int
+        /// Epoch milliseconds, a raw `Date.now()` from the server — same convention as
+        /// `BattleClient.OpenBattle.createdAt`, NOT the `.iso8601` dates `MonState` itself carries.
+        let createdAt: Double
     }
 
     enum TradeError: Error, Equatable {
@@ -23,10 +41,12 @@ enum TradeClient {
     private struct OfferPayload: Encodable {
         let uuid: String
         let displayName: String
-        let pokemon: MonState
+        let pokemon: [MonState]
+        let tokens: Int
     }
     private struct ConfirmPayload: Encodable { let uuid: String }
     private struct CreateResponse: Decodable { let sessionId: String }
+    private struct OpenListResponse: Decodable { let trades: [OpenTrade] }
 
     /// The save file (CompanionStore.save/load) uses the default encoding (epoch double), but this
     /// payload crosses a device boundary, so it follows the same convention as SaveTransfer
@@ -68,21 +88,23 @@ enum TradeClient {
         return data
     }
 
-    static func create(serverURL: String, uuid: String, displayName: String, offering mon: MonState,
+    static func create(serverURL: String, uuid: String, displayName: String, offering mons: [MonState], tokens: Int,
                         session: URLSession = .shared) async throws(TradeError) -> String {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/trades") else { throw .invalidServerURL }
-        let req = try request(url, method: "POST", body: OfferPayload(uuid: uuid, displayName: displayName, pokemon: mon))
+        let req = try request(url, method: "POST",
+                               body: OfferPayload(uuid: uuid, displayName: displayName, pokemon: mons, tokens: tokens))
         let data = try await send(req, session: session)
         guard let decoded = try? makeDecoder().decode(CreateResponse.self, from: data) else { throw .decoding }
         return decoded.sessionId
     }
 
-    static func join(serverURL: String, sessionId: String, uuid: String, displayName: String, offering mon: MonState,
+    static func join(serverURL: String, sessionId: String, uuid: String, displayName: String, offering mons: [MonState], tokens: Int,
                       session: URLSession = .shared) async throws(TradeError) {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/trades/\(sessionId)/join") else {
             throw .invalidServerURL
         }
-        let req = try request(url, method: "POST", body: OfferPayload(uuid: uuid, displayName: displayName, pokemon: mon))
+        let req = try request(url, method: "POST",
+                               body: OfferPayload(uuid: uuid, displayName: displayName, pokemon: mons, tokens: tokens))
         _ = try await send(req, session: session)
     }
 
@@ -107,5 +129,15 @@ enum TradeClient {
         let data = try await send(req, session: session)
         guard let decoded = try? makeDecoder().decode(StatusResponse.self, from: data) else { throw .decoding }
         return decoded
+    }
+
+    /// Lists sessions still waiting for a second player — mirrors `BattleClient.openBattles`.
+    /// Browse is now the primary way into a trade too, not just a shared link — see trading-overhaul.md.
+    static func openTrades(serverURL: String, session: URLSession = .shared) async throws(TradeError) -> [OpenTrade] {
+        guard let url = OnlineStore.endpointURL(from: serverURL, path: "/trades/open") else { throw .invalidServerURL }
+        let req = request(url, method: "GET")
+        let data = try await send(req, session: session)
+        guard let decoded = try? makeDecoder().decode(OpenListResponse.self, from: data) else { throw .decoding }
+        return decoded.trades
     }
 }

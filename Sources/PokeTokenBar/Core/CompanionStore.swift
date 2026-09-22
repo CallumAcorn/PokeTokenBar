@@ -1294,6 +1294,18 @@ final class CompanionStore {
         return true
     }
 
+    /// Moves a trade's token stake through the same ledger `buy`/`buyEgg` already move
+    /// (`spentTokens`), not a new balance — see trading-overhaul.md's "Token mechanism." Positive
+    /// `spentDelta` is tokens sent (pays for the gift, same direction a purchase moves the ledger);
+    /// negative is tokens received (frees up balance, and can legitimately push `spentTokens`
+    /// negative — see that doc for why that's correct, not a bug). A no-op for `0` so a plain
+    /// mon-for-mon trade never touches the field.
+    func applyTradeTokens(spentDelta: Int) {
+        guard spentDelta != 0 else { return }
+        state.spentTokens += spentDelta
+        save()
+    }
+
     /// 지급 판정(순수·엣지 트리거) — 한도 창이 100% 를 새로 넘어선 순간에만 지급.
     /// - 100% 미만 → 맵에서 제거(재무장). resets_at 등 휘발 필드는 key 에 없다(안정 식별자만).
     /// - 이미 지급한 창(tier≥1)은 재지급 안 함. session=1개·weekly=weeklyGrant.

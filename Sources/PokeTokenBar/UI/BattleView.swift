@@ -30,8 +30,8 @@ struct BattleView: View {
     var onClose: () -> Void
 
     /// Ordered, not a `Set` — the team grid and the roster actually submitted both follow *pick
-    /// order* (append on select, remove on deselect via `toggle`), not party order. Reordering
-    /// (`moveDroppedMon`) mutates this same array by moving an id, so both stay in sync for free.
+    /// order* (append on select, remove on deselect), not party order. `RosterPickerGrid`'s own drag
+    /// reordering mutates this same array by moving an id, so both stay in sync for free.
     @State private var selectedMonIDs: [MonState.ID] = []
     @State private var confirmingLink: BattleDeepLink?
     @State private var copiedFeedback = false
@@ -658,8 +658,8 @@ struct BattleView: View {
     }
 
     /// A big, card-style entry-point button — icon badge, title + one-line subtitle, trailing
-    /// chevron. Same custom-chrome-over-`.plain` convention `pcStyleTile`/`openBattlesList`'s rows
-    /// already use elsewhere in this file, not a new pattern.
+    /// chevron. Same custom-chrome-over-`.plain` convention `RosterPickerGrid`/`openBattlesList`'s
+    /// rows already use elsewhere in this file, not a new pattern.
     private func modeChoiceButton(title: String, subtitle: String, icon: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
@@ -783,24 +783,10 @@ struct BattleView: View {
                 Text(l.battleNoBenchedMons).font(.caption2).foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                HStack {
-                    sectionHeader(l.battleYourTeam)
-                    Spacer()
-                    Text("\(selectedMonIDs.count)/\(BattleClient.maxRosterSize)")
-                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                }
                 // Your picked team, always visible above the full party — 3 wide × 2 high (up to 6),
                 // empty dashed slots for the rest. Tap a filled one to drop it back out.
-                selectedRosterGrid(eligible: eligible)
-                sectionHeader(l.battleYourParty)
-                // Flexible, not a fixed height (unlike TradeView's offer list) — fills whatever
-                // space is left below the fixed-size team grid/headers, so Your Party isn't
-                // squeezed into a small box and the submit button below lands at the window's
-                // bottom edge instead of floating right under a cramped list.
-                ScrollView {
-                    partyGrid(eligible: eligible)
-                }
-                .frame(maxHeight: .infinity)
+                RosterPickerGrid(companion: companion, eligible: eligible, maxCount: BattleClient.maxRosterSize,
+                                  selectedIDs: $selectedMonIDs, teamLabel: l.battleYourTeam, poolLabel: l.battleYourParty)
                 Button {
                     let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
                     let roster = selectedMonIDs.compactMap { byID[$0] }
@@ -831,87 +817,6 @@ struct BattleView: View {
             .font(.system(size: 10, weight: .bold))
             .foregroundStyle(.secondary)
             .tracking(0.5)
-    }
-
-    /// Fixed 3×2 grid (not "as many columns as fit") — a party is always exactly up to 6, so a
-    /// stable grid reads as "your team" rather than a list that reflows as you add/remove picks.
-    /// Order follows pick order (`selectedMonIDs`), not party order — this is exactly the order the
-    /// server sees (`rosterPickStep`'s submit maps `selectedMonIDs` the same way). Filled tiles are
-    /// also drag-reorderable — dropping one onto another tile, or an empty dashed slot, moves it
-    /// there rather than requiring remove-then-re-add-in-order.
-    private func selectedRosterGrid(eligible: [MonState]) -> some View {
-        let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
-        let selected = selectedMonIDs.compactMap { byID[$0] }
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-            ForEach(0..<BattleClient.maxRosterSize, id: \.self) { slot in
-                if slot < selected.count {
-                    pcStyleTile(selected[slot], selected: true, size: 38)
-                        .draggable(selected[slot].id)
-                        .dropDestination(for: String.self) { items, _ in moveDroppedMon(items, toSlot: slot) }
-                } else {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4]))
-                        .frame(height: 54)
-                        .dropDestination(for: String.self) { items, _ in moveDroppedMon(items, toSlot: slot) }
-                }
-            }
-        }
-    }
-
-    /// A drop landing in the team grid at `slot` — either a reorder (the dragged id is already on
-    /// the team, so it's removed from its old spot first) or a pick (dragged up from `partyGrid`,
-    /// not yet on the team, so it's just inserted — same size cap `toggle` already enforces on tap).
-    /// `slot` may be past the current selection's end (an empty dashed slot), so it's clamped to
-    /// append in that case.
-    private func moveDroppedMon(_ items: [String], toSlot slot: Int) -> Bool {
-        guard let draggedID = items.first else { return false }
-        if let from = selectedMonIDs.firstIndex(of: draggedID) {
-            selectedMonIDs.remove(at: from)
-        } else if selectedMonIDs.count >= BattleClient.maxRosterSize {
-            return false
-        }
-        selectedMonIDs.insert(draggedID, at: min(slot, selectedMonIDs.count))
-        return true
-    }
-
-    /// The rest of the party to pick from — a PC-box grid (sprite tiles), not the old list rows.
-    /// Mons already on the team are hidden here (they're shown up in `selectedRosterGrid` instead)
-    /// — showing the same mon in both grids read as a duplicate entry, not a picked/unpicked state.
-    /// Draggable up into a team slot — same drop handling `selectedRosterGrid`'s own tiles use for
-    /// reordering, `moveDroppedMon` just treats a not-yet-selected id as a pick rather than a move.
-    private func partyGrid(eligible: [MonState]) -> some View {
-        let unselected = eligible.filter { !selectedMonIDs.contains($0.id) }
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
-            ForEach(unselected) { mon in
-                pcStyleTile(mon, selected: false, size: 30)
-                    .draggable(mon.id)
-            }
-        }
-    }
-
-    private func pcStyleTile(_ mon: MonState, selected: Bool, size: CGFloat) -> some View {
-        Button { toggle(mon.id) } label: {
-            VStack(spacing: 2) {
-                SpriteView(speciesID: mon.currentID, size: size, shiny: mon.isShiny)
-                Text(companion.l.pcLevel(mon.level)).font(.system(size: 8, weight: .semibold)).lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-            .background(selected ? Color.accentColor.opacity(0.22) : Color.secondary.opacity(0.06))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(selected ? Color.accentColor : Color.clear, lineWidth: 1.5))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func toggle(_ id: MonState.ID) {
-        if let idx = selectedMonIDs.firstIndex(of: id) {
-            selectedMonIDs.remove(at: idx)
-        } else if selectedMonIDs.count < BattleClient.maxRosterSize {
-            selectedMonIDs.append(id)
-        }
     }
 
     /// Everything `rosterPicker` (and only `rosterPicker`) owns as local `@State` — deliberately not

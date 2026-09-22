@@ -631,10 +631,19 @@ struct L {
 
     // MARK: 거래
     var tradeTitle: String { t("거래", "Trade", "交換", "Intercambio") }
-    var tradePickOffer: String { t("보낼 포켓몬을 골라주세요", "Pick a Pokémon to offer", "送るポケモンを選んでください", "Elige un Pokémon para ofrecer") }
+    var tradePickOffer: String { t("제안할 포켓몬과 토큰을 골라주세요", "Pick what to offer — Pokémon and/or tokens", "提案するポケモンとトークンを選んでください", "Elige qué ofrecer: Pokémon y/o tokens") }
     var tradeNoBenchedMons: String { t("PC에 훈련 중이 아닌 포켓몬이 없어요.\n먼저 훈련 대상을 바꾸거나 새 알을 부화시켜 보세요.", "You don't have any benched Pokémon to offer.\nSwitch your training focus or hatch a new egg first.", "PCに育成中でないポケモンがいません。\nまず育成対象を切り替えるか、新しい卵を孵化させてください。", "No tienes ningún Pokémon en el banco para ofrecer.\nCambia tu Pokémon en entrenamiento o eclosiona un huevo primero.") }
-    var tradeCreateButton: String { t("이 포켓몬으로 거래 시작", "Start trade with this Pokémon", "このポケモンで交換を開始", "Iniciar intercambio con este Pokémon") }
+    var tradeCreateButton: String { t("거래 시작", "Start trade", "交換を開始", "Iniciar intercambio") }
     var tradeWaitingForJoin: String { t("친구가 링크를 열기를 기다리는 중…", "Waiting for a friend to open the link…", "友達がリンクを開くのを待っています…", "Esperando a que un amigo abra el enlace…") }
+    /// Browse leads on the chooser screen now (see tradeBrowseSubtitle) — this session already shows
+    /// up there (`GET /trades/open`) the instant it's created, same "link is the backup path" note
+    /// battleWaitingHelpText carries for battles.
+    var tradeWaitingHelpText: String {
+        t("참가하고 싶은 사람은 열린 거래 찾아보기에서도 이 거래를 바로 볼 수 있어요.",
+          "Anyone looking to join can also find this trade by browsing open trades.",
+          "参加したい人は、開いている交換一覧からもこの取引をすぐに見つけられます。",
+          "Cualquiera que quiera unirse también puede encontrar este intercambio buscando intercambios abiertos.")
+    }
     var tradeShareLink: String { t("링크 공유", "Share link", "リンクを共有", "Compartir enlace") }
     var tradeCopyLink: String { t("링크 복사", "Copy link", "リンクをコピー", "Copiar enlace") }
     var tradeCopied: String { t("복사됨", "Copied", "コピーしました", "Copiado") }
@@ -644,10 +653,22 @@ struct L {
     }
     var tradeConfirmButton: String { t("거래 확정", "Confirm trade", "交換を確定", "Confirmar intercambio") }
     var tradeCancelButton: String { t("취소", "Cancel", "キャンセル", "Cancelar") }
-    func tradeCompleted(_ received: String, from: String) -> String {
-        t("\(from)님에게서 \(received)을(를) 받았어요!", "You received \(received) from \(from)!", "\(from) さんから \(received) を受け取りました！", "¡Recibiste a \(received) de \(from)!")
+    /// Multi-mon/token trade completion — replaced the old single-mon "you received X" wording
+    /// (trading-overhaul.md), since the receive list itself now renders above this line.
+    func tradeCompletedSummary(_ from: String) -> String {
+        t("\(from)님과의 거래가 완료됐어요!", "Your trade with \(from) is complete!", "\(from) さんとの交換が完了しました！", "¡Tu intercambio con \(from) se completó!")
     }
     var tradeDoneButton: String { t("완료", "Done", "完了", "Listo") }
+    /// Label over the offer picker's numeric token stake field.
+    var tradeTokenStakeLabel: String { t("토큰 제안", "Token stake", "トークンの提案", "Oferta de tokens") }
+    func tradeTokenStakeAvailable(_ amount: String) -> String {
+        t("보유: \(amount)", "Balance: \(amount)", "所持: \(amount)", "Saldo: \(amount)")
+    }
+    var tradeTokenStakeMaxButton: String { t("최대", "Max", "最大", "Máx") }
+    /// The token half of an offer/received preview — "+250M tokens".
+    func tradeTokenDelta(_ amount: String) -> String {
+        t("+\(amount) 토큰", "+\(amount) tokens", "+\(amount) トークン", "+\(amount) tokens")
+    }
     var tradeFailedTitle: String { t("거래에 실패했어요", "Trade failed", "交換に失敗しました", "El intercambio falló") }
     var tradeAuthErrorMessage: String {
         t("서버에 연결할 수 없어요. 설정에서 서버 주소가 정확한지, 테스트가 성공했는지 확인해 주세요.",
@@ -701,6 +722,17 @@ struct L {
         t("이 거래는 이미 진행됐어요 — 새로 시작해주세요.", "This trade already moved on — try starting a new one.",
           "この交換はすでに進行しています — 新しく始めてください。", "Este intercambio ya avanzó — intenta empezar uno nuevo.")
     }
+    /// "How do you want to start?" screen — mirrors battleStartPrompt, same three-way chooser shape
+    /// (browse leads, create, join via link) trading-overhaul.md asks trading to adopt too.
+    var tradeStartPrompt: String { t("어떻게 시작할까요?", "How do you want to start?", "どうやって始めますか？", "¿Cómo quieres empezar?") }
+    var tradeBrowseOpen: String { t("열린 거래 찾아보기", "Browse open trades", "募集中の交換を見る", "Buscar intercambios abiertos") }
+    var tradeBrowseSubtitle: String { t("참가할 거래 찾기", "Find a trade to join", "参加できる交換を探す", "Busca un intercambio para unirte") }
+    var tradeCreateSubtitle: String { t("포켓몬·토큰을 고르고 초대 링크를 공유하세요", "Pick Pokémon and/or tokens, then share an invite link", "ポケモン・トークンを選んで招待リンクを共有", "Elige Pokémon y/o tokens, y comparte un enlace") }
+    var tradeJoinViaLinkButton: String { t("링크로 참가", "Join via link", "リンクで参加", "Unirse con un enlace") }
+    var tradeJoinViaLinkSubtitle: String { t("친구가 보낸 초대 링크를 붙여넣으세요", "Paste a link a friend sent you", "友達から届いたリンクを貼り付け", "Pega un enlace que te haya enviado un amigo") }
+    var tradePasteLinkPrompt: String { t("거래 링크를 붙여넣으세요", "Paste the trade link below", "下に交換リンクを貼り付けてください", "Pega el enlace del intercambio abajo") }
+    var tradeBrowsePrompt: String { t("참가할 거래를 골라주세요", "Pick a trade to join", "参加する交換を選んでください", "Elige un intercambio para unirte") }
+    var tradeNoOpenTrades: String { t("지금 열려 있는 거래가 없어요", "No open trades right now", "現在募集中の交換はありません", "No hay intercambios abiertos ahora mismo") }
 
     // MARK: 배틀
     var battleTitle: String { t("배틀", "Battle", "バトル", "Batalla") }

@@ -194,6 +194,23 @@ final class TradeCompanionStoreTests: XCTestCase {
         XCTAssertNotNil(s.trainingMon, "must not have been bumped back to an egg")
         XCTAssertTrue(s.party.contains { $0.id == maxed.id })
     }
+
+    /// A positive delta (tokens sent) moves the ledger the same direction a shop purchase does;
+    /// a negative delta (tokens received) frees up balance; `0` is a no-op so a plain mon-for-mon
+    /// trade never touches the field.
+    func testApplyTradeTokensMovesSpentTokensBySignedDelta() {
+        let s = store()
+        XCTAssertEqual(s.state.spentTokens, 0)
+
+        s.applyTradeTokens(spentDelta: 250)
+        XCTAssertEqual(s.state.spentTokens, 250, "sending tokens pays for the gift, same direction buy() moves the ledger")
+
+        s.applyTradeTokens(spentDelta: -600)
+        XCTAssertEqual(s.state.spentTokens, -350, "receiving more than was sent can legitimately push spentTokens negative")
+
+        s.applyTradeTokens(spentDelta: 0)
+        XCTAssertEqual(s.state.spentTokens, -350, "a zero delta is a no-op")
+    }
 }
 
 // MARK: TradeStore — network failure handling
@@ -254,7 +271,7 @@ final class TradeStoreFailureTests: XCTestCase {
         StubURLProtocol.body = Data(#"{"error":{"code":"401","message":"Protected deployment"}}"#.utf8)
         let (trade, offered) = makeStores()
 
-        await trade.createTrade(offering: offered)
+        await trade.createTrade(offering: [offered])
 
         guard case .failed(.server(status: 401)) = trade.phase else {
             return XCTFail("expected a 401 server error, got \(trade.phase)")
@@ -273,10 +290,105 @@ final class TradeStoreFailureTests: XCTestCase {
         StubURLProtocol.body = Data(#"{"error":"not found"}"#.utf8)
         let (trade, offered) = makeStores()
 
-        await trade.joinTrade(sessionId: "gone", server: "https://mock.test", offering: offered)
+        await trade.joinTrade(sessionId: "gone", server: "https://mock.test", offering: [offered])
 
         XCTAssertEqual(trade.phase, .expired)
         XCTAssertFalse(trade.reservedMonIDs.contains(offered.id))
+    }
+}
+
+// MARK: TradeStore — multi-mon + token completion (trading-overhaul.md)
+
+/// Returns one queued (status, body) response per request, in order — for scripting a whole
+/// create→poll exchange in one test, unlike `StubURLProtocol`'s single fixed reply. Mirrors
+/// BattleStoreTests' own `QueuedStubURLProtocol`.
+private final class QueuedTradeStubURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var responses: [(Int, Data)] = []
+    private static let lock = NSLock()
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.lock()
+        let next = Self.responses.isEmpty ? (200, Data()) : Self.responses.removeFirst()
+        Self.lock.unlock()
+        let response = HTTPURLResponse(url: request.url!, statusCode: next.0, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: next.1)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+@MainActor
+final class TradeStoreNetworkTests: XCTestCase {
+    private let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)
+
+    private func waitUntil(timeout: TimeInterval = 4, _ condition: @escaping () -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return condition()
+    }
+
+    private func encode(_ value: some Encodable) -> Data {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        return try! e.encode(value)
+    }
+
+    private struct StubCreate: Encodable { let sessionId: String }
+    private struct StubCounterpart: Encodable { let displayName: String; let pokemon: [MonState]; let tokens: Int }
+    private struct StubStatus: Encodable { let status: String; let counterpart: StubCounterpart? }
+
+    private func mon(baseID: Int) -> MonState {
+        MonState(baseID: baseID, pathIDs: [baseID], plannedPathIDs: [baseID], stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+    }
+
+    /// [Regression] A multi-mon + token completion must remove every mon I sent (not just the
+    /// first), add every mon I received, and net the token ledger by what I sent minus what I
+    /// received — see `CompanionStore.applyTradeTokens`'s sign convention.
+    func testMultiMonAndTokenCompletionAppliesAllMonsAndNetsTheTokenLedger() async {
+        let companionURL = FileManager.default.temporaryDirectory.appendingPathComponent("trade-net-\(UUID().uuidString).json")
+        let companion = CompanionStore(provider: TradeStubProvider(), clock: { self.fixedNow }, fileURL: companionURL, rng: SeededRNG(seed: 7))
+        let mine1 = mon(baseID: 1)
+        let mine2 = mon(baseID: 1)
+        _ = companion.addTradedMon(mine1, from: "Seed")   // benched, so both are legal offer candidates
+        _ = companion.addTradedMon(mine2, from: "Seed")
+        let received1 = mon(baseID: 4)
+        let received2 = mon(baseID: 7)
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [QueuedTradeStubURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let online = OnlineStore(defaults: UserDefaults(suiteName: "TradeStoreNetworkTests.\(UUID().uuidString)")!, session: session)
+        online.serverURL = "https://mock.test"
+        let reservationsURL = FileManager.default.temporaryDirectory.appendingPathComponent("trade-net-reservations-\(UUID().uuidString).json")
+        // Fast polling — real 2s ticks would make this test slow for no benefit.
+        let trade = TradeStore(companion: companion, online: online, fileURL: reservationsURL, session: session, pollIntervalNanoseconds: 10_000_000)
+
+        QueuedTradeStubURLProtocol.responses = [
+            (200, encode(StubCreate(sessionId: "sess-1"))),
+            (200, encode(StubStatus(status: "completed",
+                                     counterpart: StubCounterpart(displayName: "Gary", pokemon: [received1, received2], tokens: 500)))),
+        ]
+
+        await trade.createTrade(offering: [mine1, mine2], tokens: 200)
+
+        let completed = await waitUntil {
+            if case .completed = trade.phase { return true }
+            return false
+        }
+        XCTAssertTrue(completed, "expected the trade to reach .completed, got \(trade.phase)")
+
+        XCTAssertFalse(companion.party.contains { $0.id == mine1.id }, "both offered mons must be removed, not just the first")
+        XCTAssertFalse(companion.party.contains { $0.id == mine2.id })
+        XCTAssertTrue(companion.party.contains { $0.id == received1.id }, "both received mons must be added")
+        XCTAssertTrue(companion.party.contains { $0.id == received2.id })
+        // Sent 200, received 500 — net +300 to available balance (spentTokens moves by -300).
+        XCTAssertEqual(companion.state.spentTokens, -300)
+        XCTAssertTrue(trade.reservedMonIDs.isEmpty, "both offered mons' reservations release on completion")
     }
 }
 
