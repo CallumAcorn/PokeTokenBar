@@ -867,8 +867,20 @@ final class UsageStore {
         await refreshAntigravityLimits(allowKeychainPrompt: true)
     }
 
+    /// 테스트에서 갈아끼울 수 있게 프로퍼티로 둔다 — 기본값은 실제 디스크 확인.
+    var antigravityDataPresent: () -> Bool = { LocalAntigravityUsageReader.dataStorePresent() }
+
     private func refreshAntigravityLimits(allowKeychainPrompt: Bool) async {
         if disableKeychainAccess {
+            antigravityLimits = nil
+            antigravityLimitsAuthExpired = false
+            return
+        }
+        // Antigravity 를 한 번도 실행하지 않은 기기에서는 이 조회가 **언제나** 거절된다. 그럼에도 매 폴마다
+        // 시도해서, 설치되지 않은 이 기기에 하루 313번의 keychainInteractionNotAllowed 를 남겼다 — 같은 날
+        // Claude 쪽 실패 298번과 뒤섞여 실패 로그의 절반이 의미 없는 항목이 됐고, 정작 진단이 필요한
+        // Claude 승인 문제를 덮었다. 데이터 저장소가 없으면 조회할 자격증명도 없다.
+        guard antigravityDataPresent() else {
             antigravityLimits = nil
             antigravityLimitsAuthExpired = false
             return
