@@ -55,6 +55,35 @@ final class BattleClientDecodingTests: XCTestCase {
         let decoded = try JSONDecoder().decode(Wrapper.self, from: json)
         XCTAssertEqual(decoded.battles.first?.createdAt, 1787665470123)
     }
+
+    // MARK: Spectator wire format — see spectator.md
+
+    func testDecodesSpectatorViewWithBothSidesRestricted() throws {
+        let json = Data("""
+        {"status":"active","turn":2,
+         "p1":{"displayName":"Ash","active":{"speciesID":1,"name":"Ash-0","fainted":false,"hpFraction":0.8},"rosterSize":1},
+         "p2":{"displayName":"Gary","active":{"speciesID":4,"name":"Gary-0","fainted":false,"hpFraction":0.75},"rosterSize":1},
+         "hostLeadSpeciesID":1,"log":["|turn|1"]}
+        """.utf8)
+        let view = try JSONDecoder().decode(BattleClient.SpectatorView.self, from: json)
+        XCTAssertEqual(view.p1?.displayName, "Ash")
+        XCTAssertEqual(view.p2?.active?.speciesID, 4)
+        XCTAssertNil(view.winner, "not decided yet")
+    }
+
+    func testDecodesSpectatorViewWinnerAsPSideNotWinLoss() throws {
+        let json = Data(#"{"status":"completed","turn":3,"winner":"p2"}"#.utf8)
+        let view = try JSONDecoder().decode(BattleClient.SpectatorView.self, from: json)
+        XCTAssertEqual(view.winner, "p2")
+    }
+
+    func testDecodesLiveBattleListing() throws {
+        let json = Data(#"{"battles":[{"sessionId":"abc","p1DisplayName":"Ash","p2DisplayName":"Gary","turn":3,"createdAt":1787665470123}]}"#.utf8)
+        struct Wrapper: Decodable { let battles: [BattleClient.LiveBattle] }
+        let decoded = try JSONDecoder().decode(Wrapper.self, from: json)
+        XCTAssertEqual(decoded.battles.first?.p1DisplayName, "Ash")
+        XCTAssertEqual(decoded.battles.first?.turn, 3)
+    }
 }
 
 // MARK: Primitive encoding — field names must match pkmnAdapter.ts's isMonPrimitive exactly

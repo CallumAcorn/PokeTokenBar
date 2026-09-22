@@ -26,6 +26,7 @@ struct BattleView: View {
     @Environment(CompanionStore.self) private var companion
     @Environment(BattleStore.self) private var battle
     @Environment(OnlineStore.self) private var online
+    @Environment(SpectatorStore.self) private var spectator
     var onClose: () -> Void
 
     /// Ordered, not a `Set` — the team grid and the roster actually submitted both follow *pick
@@ -42,6 +43,7 @@ struct BattleView: View {
     /// entirely in favor of the roster-pick screen; it only governs the *pre*-target choice.
     private enum PickerStep { case chooseMode, pasteLink, browseList }
     @State private var pickerStep: PickerStep = .chooseMode
+    @State private var browseTab: BrowseTab = .join
     /// Set when the user picks "Create Battle" from the mode chooser — distinguishes "creating fresh,
     /// no target yet" from "still choosing how to start" now that both skip straight past `pickerStep`
     /// to the same roster-pick screen `joinTarget` drives.
@@ -171,19 +173,40 @@ struct BattleView: View {
     }
 
     var body: some View {
-        content
-            .frame(width: BattleWindowMetrics.width, height: BattleWindowMetrics.height, alignment: .top)
-            .task { checkPendingInvite() }
-            .onChange(of: battle.pendingInvite) { checkPendingInvite() }
-            .alert(l.battleJoinButton, isPresented: Binding(get: { confirmingLink != nil }, set: { if !$0 { declineInvite() } }),
-                   presenting: confirmingLink) { link in
-                Button(l.battleJoinButton) { online.serverURL = link.server; confirmingLink = nil }
-                Button(l.tradeCancelButton, role: .cancel) { declineInvite() }
-            } message: { link in
-                Text(online.serverURL.isEmpty
-                     ? l.battleConnectServerConfirm(link.server)
-                     : l.battleDifferentServerConfirm(link.server))
+        // Spectating shows in *this same window*, not a second one — `SpectatorStore` is a sibling
+        // environment object (injected by `BattleWindowController` alongside `BattleStore`), so as
+        // soon as something calls `spectator.start(...)` (a `liveBattleRow` tap, or the invite
+        // alert's Spectate button below) this swaps in, in place of whatever the picker/battle
+        // content was showing — same "one window, content swaps by state" shape the picker screens
+        // themselves already use. `SpectatorView` applies its own identical window-size framing, so
+        // both branches end up the same overall size.
+        Group {
+            if spectator.phase != .idle {
+                SpectatorView(onClose: { spectator.stop() })
+            } else {
+                content
+                    .frame(width: BattleWindowMetrics.width, height: BattleWindowMetrics.height, alignment: .top)
             }
+        }
+        .task { checkPendingInvite() }
+        .onChange(of: battle.pendingInvite) { checkPendingInvite() }
+        .alert(l.battleTitle, isPresented: Binding(get: { confirmingLink != nil }, set: { if !$0 { declineInvite() } }),
+               presenting: confirmingLink) { link in
+            Button(l.battleJoinButton) { online.serverURL = link.server; confirmingLink = nil }
+            // Spectating needs no roster picker — jumps straight into the spectating content above,
+            // same as tapping a `liveBattleRow`, and cleans up `pendingInvite` the same way
+            // `declineInvite()` would (this isn't a join, so nothing should stay pending).
+            Button(l.battleSpectateButton) {
+                online.serverURL = link.server
+                spectator.start(serverURL: link.server, sessionId: link.sessionId)
+                declineInvite()
+            }
+            Button(l.tradeCancelButton, role: .cancel) { declineInvite() }
+        } message: { link in
+            Text(online.serverURL.isEmpty
+                 ? l.battleConnectServerConfirm(link.server)
+                 : l.battleDifferentServerConfirm(link.server))
+        }
     }
 
     /// Same reasoning as TradeView.checkPendingInvite: a `poketokenbar://` link is attacker-
@@ -432,6 +455,22 @@ struct BattleView: View {
     /// identifier is the bare side ("p1", possibly with a name after it, e.g. "p1: Ash") — never the
     /// "p1a: Ash-0" mon-slot form move/switch lines use — so this can't reuse `identBelongsToMe`
     /// directly; both share the same first-two-characters side code, which is all that's compared.
+    /// The name `|switch|<sideLetter>a: ...|<Name>, L<level>...|...` last put on the field for
+    /// `sideLetter` ("p1"/"p2") — same log source `activeSideConditions`/`mySideLetter` already
+    /// read for side conditions/ident matching, just the mon's own species name this time. Needed
+    /// for the *opponent* info card's label: their mon isn't something this client owns, so
+    /// `CompanionStore.speciesName` (dex-unlock-only) can't name it — the log is the only place a
+    /// real name for a stranger's Pokémon ever shows up here.
+    private static func activeMonName(sideLetter: String, log: [String]) -> String? {
+        var latest: String?
+        for line in log {
+            let parts = line.components(separatedBy: "|")
+            guard parts.count >= 4, parts[1] == "switch", parts[2].hasPrefix(sideLetter) else { continue }
+            latest = parts[3].components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces)
+        }
+        return latest
+    }
+
     private static func mySideLetter(log: [String], myDisplayName: String) -> String? {
         for line in log {
             let parts = line.components(separatedBy: "|")
@@ -588,21 +627,32 @@ struct BattleView: View {
     /// real tappable cards (icon badge + title + subtitle + chevron) rather than plain native
     /// `.bordered` rows, which read thin and flat at this size — this is the screen's *only* content,
     /// so it can afford to give each choice real visual weight.
+    /// Browse leads — it's the primary way to find a battle to join *or* watch now, not one of
+    /// three equally-weighted options. A direct invite link still works exactly as before; it's
+    /// just a small text button below the two real cards instead of a third card of its own, for
+    /// the friend-sent-me-a-specific-link case rather than the general "find something to do" case
+    /// browse now covers.
     private var modeChooserStep: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(l.battleStartPrompt).font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-            modeChoiceButton(title: l.battleCreateButton, subtitle: l.battleCreateSubtitle,
-                              icon: "plus.circle.fill", tint: .accentColor) {
-                creatingNew = true
-            }
-            modeChoiceButton(title: l.battleJoinViaLinkButton, subtitle: l.battleJoinViaLinkSubtitle,
-                              icon: "link", tint: .blue) {
-                pickerStep = .pasteLink
-            }
             modeChoiceButton(title: l.battleBrowseOpen, subtitle: l.battleBrowseSubtitle,
                               icon: "magnifyingglass", tint: .orange) {
                 pickerStep = .browseList
                 Task { await battle.refreshOpenBattles() }
+                Task { await battle.refreshLiveBattles() }
+            }
+            modeChoiceButton(title: l.battleCreateButton, subtitle: l.battleCreateSubtitle,
+                              icon: "plus.circle.fill", tint: .accentColor) {
+                creatingNew = true
+            }
+            // Tried demoting this to a small text button, then a small bordered pill — both read as
+            // lower-weight than intended and the user wanted it back as a real card (2026-09-22).
+            // Full card restored; the only change from the original three-card layout that stands is
+            // the order (Browse leads, per the original "links are a backup plan" ask) — the link
+            // option itself is back to full equal weight with Create/Browse, not shrunk.
+            modeChoiceButton(title: l.battleJoinViaLinkButton, subtitle: l.battleJoinViaLinkSubtitle,
+                              icon: "link", tint: .blue) {
+                pickerStep = .pasteLink
             }
         }
     }
@@ -642,13 +692,16 @@ struct BattleView: View {
         VStack(spacing: 16) {
             backButton.frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 0)
-            VStack(spacing: 10) {
+            VStack(spacing: 6) {
                 Image(systemName: "link")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(Color.blue.gradient, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                Text(l.battlePasteLinkPrompt).font(.system(size: 15, weight: .semibold))
+                    .frame(width: 52, height: 52)
+                    .background(Color.blue.gradient, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .shadow(color: .blue.opacity(0.3), radius: 8, y: 3)
+                Text(l.battlePasteLinkPrompt).font(.system(size: 16, weight: .bold))
+                    .padding(.top, 6)
+                Text(l.battleJoinViaLinkSubtitle).font(.system(size: 12)).foregroundStyle(.secondary)
             }
             pasteInviteCard
             Spacer(minLength: 0)
@@ -656,13 +709,35 @@ struct BattleView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Step 2b: browse the open lobby. Tapping an entry sets `browseTarget`, which — same as
-    /// `pasteLinkStep` — makes `joinTarget` non-nil and advances the flow on its own.
+    /// Step 2b: browse — two tabs, join an open lobby or watch a live one. Tapping an open-lobby
+    /// entry sets `browseTarget`, which — same as `pasteLinkStep` — makes `joinTarget` non-nil and
+    /// advances the flow on its own; tapping a live entry starts `spectator` directly, which swaps
+    /// this whole window's content over to spectating (see `body`) — closing the spectator screen
+    /// (`SpectatorView`'s Done button, or its own window-close path) returns here, to whichever tab
+    /// was showing, rather than back to the mode chooser.
+    private enum BrowseTab { case join, watch }
     private var browseListStep: some View {
         VStack(alignment: .leading, spacing: 14) {
             backButton
-            Text(l.battleBrowsePrompt).font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-            openBattlesList
+            Picker("", selection: Binding(
+                get: { browseTab },
+                set: { newValue in
+                    browseTab = newValue
+                    if newValue == .watch { Task { await battle.refreshLiveBattles() } }
+                })) {
+                Text(l.battleBrowseJoinTab).tag(BrowseTab.join)
+                Text(l.battleBrowseWatchTab).tag(BrowseTab.watch)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            switch browseTab {
+            case .join:
+                Text(l.battleBrowsePrompt).font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                openBattlesList
+            case .watch:
+                liveBattlesList
+            }
         }
     }
 
@@ -885,14 +960,41 @@ struct BattleView: View {
     /// Same card chrome (`Color.secondary.opacity(0.07)` fill + hairline border, 12pt radius,
     /// 340pt max width) `waitingInviteCard`/`openBattleRow`/`modeChoiceButton` already use — a
     /// consistent look across every screen in this flow, not a plain unstyled field + small button.
+    /// Facelift (2026-09-22, user request) — same card chrome `waitingInviteCard`/`openBattleRow`
+    /// already use elsewhere in this file, a custom-styled field instead of the plain system
+    /// `.roundedBorder` (which read flat/generic next to those), and a one-tap paste-from-clipboard
+    /// button — the field's whole job is almost always receiving exactly what a `ShareLink`/copy-
+    /// link button on the *other* side just put on the clipboard, so typing or manually pasting
+    /// (⌘V) shouldn't be the only way in.
     private var pasteInviteCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TextField(l.battlePasteInviteLinkPlaceholder, text: $pastedInviteLink)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 13))
-                .onSubmit(submitPastedInviteLink)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "link").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                TextField(l.battlePasteInviteLinkPlaceholder, text: $pastedInviteLink)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .onSubmit(submitPastedInviteLink)
+                Button {
+                    if let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !clip.isEmpty {
+                        pastedInviteLink = clip
+                        pastedInviteError = false
+                    }
+                } label: {
+                    Image(systemName: "doc.on.clipboard")
+                }
+                .buttonStyle(.borderless)
+                .help(l.battlePasteFromClipboardHelp)
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
+
             if pastedInviteError {
-                Text(l.battleInvalidInviteLink).font(.system(size: 11)).foregroundStyle(.red)
+                Label(l.battleInvalidInviteLink, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11)).foregroundStyle(.red)
             }
             Button(l.battleJoinButton, action: submitPastedInviteLink)
                 .buttonStyle(.borderedProminent)
@@ -900,12 +1002,13 @@ struct BattleView: View {
                 .frame(maxWidth: .infinity)
                 .disabled(pastedInviteLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .padding(14)
-        .frame(maxWidth: 340, alignment: .leading)
-        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(16)
+        .frame(maxWidth: 360, alignment: .leading)
+        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
+        .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
     }
 
     private func submitPastedInviteLink() {
@@ -1006,6 +1109,63 @@ struct BattleView: View {
         .buttonStyle(.plain)
     }
 
+    /// Same structure as `openBattlesList`, watching `battle.liveBattles` instead — see that
+    /// property's doc comment for why it's a separate on-demand list rather than folded into the
+    /// open one (different server endpoint, different tap action).
+    private var liveBattlesList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if battle.isLoadingLiveBattles && battle.liveBattles.isEmpty {
+                browseStatus(showsSpinner: true, icon: nil, text: nil)
+            } else if battle.liveBattles.isEmpty {
+                browseStatus(showsSpinner: false, icon: "tray", text: l.battleNoLiveBattles)
+            } else {
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(battle.liveBattles, id: \.sessionId) { live in
+                            liveBattleRow(live)
+                        }
+                    }
+                }
+                .frame(maxHeight: .infinity)
+            }
+            Button { Task { await battle.refreshLiveBattles() } } label: {
+                if battle.isLoadingLiveBattles && !battle.liveBattles.isEmpty {
+                    Label(l.refresh, systemImage: "arrow.clockwise").opacity(0.5)
+                } else {
+                    Label(l.refresh, systemImage: "arrow.clockwise")
+                }
+            }
+            .buttonStyle(.borderless).controlSize(.small)
+            .disabled(battle.isLoadingLiveBattles)
+        }
+    }
+
+    /// Tapping starts spectating directly, swapping this window's own content over (see `body`) —
+    /// unlike `openBattleRow`, this never sets `browseTarget`/advances `rosterPicker`'s own flow,
+    /// since watching needs no roster.
+    private func liveBattleRow(_ live: BattleClient.LiveBattle) -> some View {
+        Button {
+            spectator.start(serverURL: online.serverURL, sessionId: live.sessionId)
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("\(live.p1DisplayName) vs \(live.p2DisplayName)").font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        Spacer()
+                        Text(l.spectatorTurn(live.turn)).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                }
+                Image(systemName: "eye").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.secondary.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: Waiting to be joined
 
     /// Centered rather than top-left (like the roster/browse screens after their own space-filling
@@ -1045,6 +1205,12 @@ struct BattleView: View {
                 Text(sessionId.suffix(4).uppercased())
                     .font(.system(size: 20, weight: .bold, design: .monospaced))
             }
+            // Browse leads on the chooser screen now (see battleBrowseSubtitle) — this session
+            // already shows up there (`GET /battles/open`) the instant it's created, same as it
+            // always has. This line just says so, so the link below doesn't read as the only way
+            // in once it's a small demoted button rather than its own big card.
+            Text(l.battleWaitingHelpText)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 ShareLink(item: shareURL) { Label(l.tradeShareLink, systemImage: "square.and.arrow.up") }
                     .buttonStyle(.borderedProminent)
@@ -1429,6 +1595,15 @@ struct BattleView: View {
         // [Movedex audit, §3] Recomputed fresh from the whole log every render — cheap (a battle log
         // is at most a few hundred short lines) and avoids one more piece of state to carry.
         let conditions = log.map { Self.activeSideConditions(log: $0, myDisplayName: you.displayName) } ?? SideConditions()
+        // Mine: owned, so the synchronous dex-unlock name cache already has it — no log parsing
+        // needed. Opponent: not owned, so the log's own `|switch|` text is the only source (see
+        // `activeMonName`'s doc comment) — resolved off *their* side letter, the other one from
+        // whichever letter `mySideLetter` says is mine.
+        let yourMonName = yourActive.map { companion.speciesName($0.speciesID) }
+        let opponentMonName: String? = log.flatMap { l in
+            guard let mine = Self.mySideLetter(log: l, myDisplayName: you.displayName) else { return nil }
+            return Self.activeMonName(sideLetter: mine == "p1" ? "p2" : "p1", log: l)
+        }
         return ZStack {
             battleFieldBackground
             // chipStack is attached here, before the .frame(maxWidth: .infinity, ...) below — that
@@ -1436,7 +1611,7 @@ struct BattleView: View {
             // buggy placement) anchors to the scene's own bounds, not the box's actual small footprint,
             // landing both sides' chips at the same top-center spot regardless of which mon they're
             // for. Attached here, `.top`/`.bottom` alignment is relative to the compact card itself.
-            pokemonInfoBox(name: opponent.displayName, active: opponent.active, hpFraction: opponentHPFraction,
+            pokemonInfoBox(name: opponent.displayName, monName: opponentMonName, active: opponent.active, hpFraction: opponentHPFraction,
                            benchCount: opponent.rosterSize, conditions: conditions.opponent)
                 .overlay(alignment: .bottom) { chipStack(opponentChips).offset(y: 20) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -1457,7 +1632,7 @@ struct BattleView: View {
             // Kept clear of the action-box overlay below (extra bottom padding) — unlike the plain
             // sprite artwork, this card is information (name/HP) and must never be the thing that's
             // partly hidden.
-            pokemonInfoBox(name: you.displayName, active: yourActive, hpFraction: yourHPFraction,
+            pokemonInfoBox(name: you.displayName, monName: yourMonName, active: yourActive, hpFraction: yourHPFraction,
                            benchCount: you.roster.count, conditions: conditions.mine)
                 .overlay(alignment: .top) { chipStack(yourChips).offset(y: -20) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
@@ -1779,11 +1954,16 @@ struct BattleView: View {
     /// Reflect, Trick Room…), abbreviated badges under the HP bar. Previously there was no on-field
     /// indicator at all, so a switch-in taking rock damage from a hazard it couldn't see, or a hit
     /// softened by an unseen screen, just read as inconsistent damage rather than a real field state.
-    private func pokemonInfoBox(name: String, active: BattleClient.PublicMon?, hpFraction: Double?, benchCount: Int,
+    private func pokemonInfoBox(name: String, monName: String?, active: BattleClient.PublicMon?, hpFraction: Double?, benchCount: Int,
                                  conditions: Set<String> = []) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(name).font(.system(size: 12, weight: .bold)).lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(name).font(.system(size: 12, weight: .bold)).lineLimit(1)
+                    if let monName {
+                        Text(monName).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
                 Spacer(minLength: 4)
                 Text("×\(benchCount)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
             }

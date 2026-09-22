@@ -93,6 +93,41 @@ enum BattleClient {
         let log: [String]?
         let result: String?  // "win" | "loss" | "draw"
     }
+    // MARK: Spectating — see spectator.md
+
+    /// The same restricted shape `battleView` already gives a participant's *opponent* (species/
+    /// name/fainted/HP-fraction on the active mon, bench size only) — a spectator gets this for
+    /// both sides, never the "you" privilege (real moveset, exact roster) either participant has
+    /// over their own mon. No new privilege level, just this one rendered twice server-side.
+    struct SpectatorSide: Codable, Equatable {
+        let displayName: String
+        let active: PublicMon?
+        let rosterSize: Int
+    }
+    struct SpectatorView: Codable, Equatable {
+        let status: String   // "waiting" | "active" | "completed"
+        let turn: Int
+        let p1: SpectatorSide?
+        let p2: SpectatorSide?
+        let hostLeadSpeciesID: Int?
+        let log: [String]?
+        let winner: String?  // "p1" | "p2" | "draw" — never "win"/"loss", which only mean something
+                              // relative to a participant; see spectatorView in battles.ts.
+    }
+
+    /// No `uuid` — spectating needs none of the participant auth `status(...)` requires (see
+    /// `GET /battles/:id/spectate`'s own doc comment server-side).
+    static func spectate(serverURL: String, sessionId: String,
+                          session: URLSession = .shared) async throws(BattleError) -> SpectatorView {
+        guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/\(sessionId)/spectate") else {
+            throw .invalidServerURL
+        }
+        let req = request(url, method: "GET")
+        let data = try await send(req, session: session)
+        guard let decoded = try? JSONDecoder().decode(SpectatorView.self, from: data) else { throw .decoding }
+        return decoded
+    }
+
     struct OpenBattle: Codable, Equatable {
         let sessionId: String
         let displayName: String
@@ -100,6 +135,17 @@ enum BattleClient {
         /// Epoch milliseconds, a raw `Date.now()` from the server — NOT an ISO 8601 string, unlike
         /// `MonState`'s embedded dates in a trade payload. Decode as a number; convert manually
         /// (`Date(timeIntervalSince1970: createdAt / 1000)`) if a `Date` is ever needed for display.
+        let createdAt: Double
+    }
+
+    /// A battle already underway, browsable for spectating — `GET /battles/live`'s entries. Browse
+    /// is now the primary way in for both joining (`OpenBattle`) and spectating; a shared link is
+    /// the backup, not the default.
+    struct LiveBattle: Codable, Equatable {
+        let sessionId: String
+        let p1DisplayName: String
+        let p2DisplayName: String
+        let turn: Int
         let createdAt: Double
     }
 
@@ -119,6 +165,7 @@ enum BattleClient {
     private struct UUIDPayload: Encodable { let uuid: String }
     private struct CreateResponse: Decodable { let sessionId: String }
     private struct OpenListResponse: Decodable { let battles: [OpenBattle] }
+    private struct LiveListResponse: Decodable { let battles: [LiveBattle] }
 
     /// Per-request deadline. URLRequest's default is 60s, which is far longer than the quit path
     /// is willing to wait: `applicationShouldTerminate` fires a leave and must let the app die
@@ -212,6 +259,14 @@ enum BattleClient {
         let req = request(url, method: "GET")
         let data = try await send(req, session: session)
         guard let decoded = try? JSONDecoder().decode(OpenListResponse.self, from: data) else { throw .decoding }
+        return decoded.battles
+    }
+
+    static func liveBattles(serverURL: String, session: URLSession = .shared) async throws(BattleError) -> [LiveBattle] {
+        guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/live") else { throw .invalidServerURL }
+        let req = request(url, method: "GET")
+        let data = try await send(req, session: session)
+        guard let decoded = try? JSONDecoder().decode(LiveListResponse.self, from: data) else { throw .decoding }
         return decoded.battles
     }
 

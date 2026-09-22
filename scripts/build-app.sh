@@ -54,13 +54,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
             <array><string>poketokenbar</string></array>
         </dict>
     </array>
-    <!-- ATS 는 기본값이 이미 이렇지만 명시한다 — 감사자가 Info.plist 만 보고 "이 앱은 평문 HTTP 를
-         쓰지 않는다"를 확인할 수 있어야 하고, 나중에 예외가 추가되면 diff 에 드러난다. -->
+    <!-- ATS 는 원격 호스트에 한해 기본값이 이미 이렇지만 명시한다 — 감사자가 Info.plist 만 보고
+         "이 앱은 임의 원격 호스트에 평문 HTTP 를 쓰지 않는다"를 확인할 수 있어야 하고, 나중에
+         예외가 추가되면 diff 에 드러난다. NSAllowsArbitraryLoads(원격 전체)/InWebContent 는
+         그대로 false — 이 파일이 내리는 보안 태도(임의 원격 평문 금지)는 안 바뀐다.
+
+         NSAllowsLocalNetworking 만 true: OnlineStore.isAllowedScheme 의 isLoopback 이 이미
+         "http://localhost 로 로컬 서버 개발하는 게 정상"이라고 문서화·구현해 뒀는데, 이 값이
+         false 였을 땐 그 경로가 실제로는 OS ATS 단에서 통째로 막혀 있었다(2026-09-22, 로컬
+         PokeTokenBarOnline 서버로 배틀 관전 기능 실측하다 발견 — "localhost"/"127.0.0.1" 둘 다
+         URLSession 에서 "App Transport Security policy requires...secure connection" 로 죽었다).
+         코드가 이미 허용한다고 주장하는 걸 매니페스트가 막고 있던 모순이라 고쳤다 — 루프백만
+         풀리고, 원격 호스트의 평문 HTTP 는 여전히 전혀 허용 안 된다(isLoopback 이 스킴 검사에서
+         이미 걸러줌). -->
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key><false/>
         <key>NSAllowsArbitraryLoadsInWebContent</key><false/>
-        <key>NSAllowsLocalNetworking</key><false/>
+        <key>NSAllowsLocalNetworking</key><true/>
     </dict>
 </dict>
 </plist>

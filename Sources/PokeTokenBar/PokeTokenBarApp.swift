@@ -9,7 +9,16 @@ struct PokeTokenBarApp: App {
     var body: some Scene {
         // 메뉴바는 AppDelegate 의 NSStatusItem 이 담당.
         // MenuBarExtra 라벨은 고빈도 갱신 시 재렌더링 폭주로 CPU/메모리 문제가 있어 사용하지 않는다.
-        Settings { EmptyView() }
+        // 이 Settings 는 `some Scene` 이 요구하는 "Scene 최소 1개"를 채우려고만 있다 — 실제로 보여줄
+        // 생각이 전혀 없는 더미. 그런데 일부 macOS 버전은 `.accessory` 앱이라도 Scene 이 이것뿐이면
+        // 실행 즉시 이걸 진짜 창으로 띄운다(2026-09-22 재현: 빈 "PokeTokenBar Settings" 창).
+        // onAppear 로 그 창만 정확히 닫는다 — AppDelegate 쪽에서 NSApp.windows 를 통째로 훑어 닫는
+        // 접근은 시도했다가 되돌렸다: 그 타이밍(비동기, 지연 실행)이 팝오버 자체의 표시 경로와
+        // 경합해 메뉴바 클릭이 먹통이 되는 회귀를 냈다 — 이 창 자신이 스스로 닫는 편이 다른 어떤
+        // 창과도 절대 경합하지 않는, 더 안전한 고정이다.
+        Settings {
+            EmptyView().onAppear { NSApp.keyWindow?.close() }
+        }
     }
 }
 
@@ -25,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var trade: TradeStore!
     private var battle: BattleStore!
     private var battleWindow: BattleWindowController!
+    private var spectator: SpectatorStore!
     private var floatingPet: FloatingPetController!
     private let navigation = PopoverNavigation()
 
@@ -87,7 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         online = OnlineStore()
         trade = TradeStore(companion: companion, online: online)
         battle = BattleStore(companion: companion, online: online)
-        battleWindow = BattleWindowController(companion: companion, battle: battle, online: online)
+        spectator = SpectatorStore()
+        battleWindow = BattleWindowController(companion: companion, battle: battle, spectator: spectator, online: online)
         navigation.onOpenBattleWindow = { [weak self] in self?.battleWindow.show() }
         store.localizationLanguage = companion.language   // 알림 현지화용 미러 시드
         store.onRefresh = { [weak self] in self?.onStoreRefreshed() }   // 한도 로드 후 companion·사탕 지급

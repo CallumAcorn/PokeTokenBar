@@ -721,6 +721,15 @@ struct L {
     /// value `battleOpenRosterSize`'s row already shows in the browse list, just surfaced here too so
     /// two people can confirm they're looking at the same session over voice/text without the link.
     var battleSessionCodeLabel: String { t("세션 코드", "Session code", "セッションコード", "Código de sesión") }
+    /// Shown on the waiting-for-opponent screen, under the share link — names *both* ways in now
+    /// that Browse leads (see `battleBrowseSubtitle`), so the link doesn't read as the only option
+    /// once it's been visually demoted to a small button on the chooser screen.
+    var battleWaitingHelpText: String {
+        t("친구에게 배틀 목록에서 참가하라고 알려주거나, 이 링크를 보내세요",
+          "Let them know to join from the battle list — or just send this link",
+          "友達にバトル一覧から参加するよう伝えるか、このリンクを送ってください",
+          "Diles que se unan desde la lista de batallas, o simplemente envía este enlace")
+    }
     /// The instant gap between tapping Create/Join and there being anything real to show yet — see
     /// `BattleStore.Phase.starting`'s doc comment.
     var battleStartingTitle: String { t("배틀 시작 중…", "Starting battle…", "バトルを開始しています…", "Iniciando batalla…") }
@@ -737,6 +746,7 @@ struct L {
     var battleInvalidInviteLink: String {
         t("유효한 배틀 링크가 아니에요", "That's not a valid battle link", "有効なバトルリンクではありません", "Ese no es un enlace de batalla válido")
     }
+    var battlePasteFromClipboardHelp: String { t("클립보드에서 붙여넣기", "Paste from clipboard", "クリップボードから貼り付け", "Pegar desde el portapapeles") }
     func battleJoinPrompt(_ server: String) -> String {
         t("\(server)에서 온 배틀 초대예요. 참가할까요?", "You've been invited to a battle on \(server). Join?", "\(server) からのバトルの招待です。参加しますか？", "Te han invitado a una batalla en \(server). ¿Quieres unirte?")
     }
@@ -793,6 +803,16 @@ struct L {
         t("\(pokemon)의 \(move) 사용!", "\(pokemon) used \(move)!", "\(pokemon)の\(move)！", "¡\(pokemon) usó \(move)!")
     }
     var battlePP: String { t("PP", "PP", "PP", "PP") }
+
+    // MARK: 관전 (Spectator) — see spectator.md
+    var battleSpectateButton: String { t("관전", "Spectate", "観戦", "Ver") }
+    var spectatorTitle: String { t("관전 중", "Watching", "観戦中", "Viendo") }
+    var spectatorConnecting: String { t("배틀에 연결하는 중…", "Connecting to the battle…", "バトルに接続しています…", "Conectando a la batalla…") }
+    /// The pre-join 409 — someone shared a spectate link before their opponent ever joined.
+    var spectatorNotStarted: String { t("아직 상대가 참가하지 않았어요", "Nobody's joined this battle yet", "まだ相手が参加していません", "Nadie se ha unido a esta batalla todavía") }
+    func spectatorTurn(_ n: Int) -> String { t("\(n)턴", "Turn \(n)", "\(n)ターン目", "Turno \(n)") }
+    var spectatorDraw: String { t("무승부", "Draw", "引き分け", "Empate") }
+    func spectatorWinner(_ name: String) -> String { t("\(name) 승리!", "\(name) wins!", "\(name) の勝利！", "¡\(name) gana!") }
     // MARK: Battle effect chips — short floating labels next to a sprite (parseEffectChips), shown
     // alongside the hit-flash for whatever a move (or an end-of-turn tick like Leech Seed's drain)
     // actually did: a stat stage, a status, a cure, an HP swing, a faint.
@@ -849,9 +869,16 @@ struct L {
     // MARK: Mode-chooser subtitles — one line of context under each big start-flow button.
     var battleCreateSubtitle: String { t("팀을 고르고 초대 링크를 공유하세요", "Pick a team and share an invite link", "チームを選んで招待リンクを共有", "Elige un equipo y comparte un enlace") }
     var battleJoinViaLinkSubtitle: String { t("친구가 보낸 초대 링크를 붙여넣으세요", "Paste a link a friend sent you", "友達から届いたリンクを貼り付け", "Pega un enlace que te haya enviado un amigo") }
-    var battleBrowseSubtitle: String { t("상대를 기다리고 있는 배틀 찾기", "Find a battle waiting for an opponent", "対戦相手を待っているバトルを探す", "Busca una batalla que espera oponente") }
+    /// Browse is now the primary way in — this card covers both joining an open lobby and watching
+    /// a live one (two tabs on the same screen, see `browseListStep`), so the subtitle names both
+    /// rather than just joining.
+    var battleBrowseSubtitle: String { t("참가하거나 관전할 배틀 찾기", "Find a battle to join or watch", "参加・観戦できるバトルを探す", "Busca una batalla para unirte o ver") }
     var battlePasteLinkPrompt: String { t("배틀 링크를 붙여넣으세요", "Paste the battle link below", "下にバトルリンクを貼り付けてください", "Pega el enlace de la batalla abajo") }
     var battleBrowsePrompt: String { t("참가할 배틀을 골라주세요", "Pick a battle to join", "参加するバトルを選んでください", "Elige una batalla para unirte") }
+    /// The two tabs on the browse screen — see above.
+    var battleBrowseJoinTab: String { t("참가", "Join", "参加", "Unirse") }
+    var battleBrowseWatchTab: String { t("관전", "Watch", "観戦", "Ver") }
+    var battleNoLiveBattles: String { t("지금 진행 중인 배틀이 없어요", "No battles in progress right now", "現在進行中のバトルはありません", "No hay batallas en curso ahora mismo") }
     var battleForfeitButton: String { t("기권", "Forfeit", "降参", "Rendirse") }
     var battleForfeitConfirmTitle: String { t("이 배틀을 기권할까요?", "Forfeit this battle?", "このバトルを降参しますか？", "¿Rendirte en esta batalla?") }
 

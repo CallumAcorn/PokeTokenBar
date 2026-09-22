@@ -18,10 +18,15 @@ final class BattleWindowController {
     private let companion: CompanionStore
     private let battle: BattleStore
     private let online: OnlineStore
+    /// Spectating shows *in this same window*, swapped in by `BattleView.body` — see its own doc
+    /// comment. Owned here (not a separate window/controller) so a spectate tap from inside this
+    /// window never has to reach out to another controller, just flip this shared store's phase.
+    private let spectator: SpectatorStore
 
-    init(companion: CompanionStore, battle: BattleStore, online: OnlineStore) {
+    init(companion: CompanionStore, battle: BattleStore, spectator: SpectatorStore, online: OnlineStore) {
         self.companion = companion
         self.battle = battle
+        self.spectator = spectator
         self.online = online
     }
 
@@ -35,6 +40,7 @@ final class BattleWindowController {
             BattleView(onClose: { [weak self] in self?.window?.performClose(nil) })
                 .environment(companion)
                 .environment(battle)
+                .environment(spectator)
                 .environment(online))
         let w = NSWindow(contentViewController: hosting)
         w.title = L(companion.language).battleTitle
