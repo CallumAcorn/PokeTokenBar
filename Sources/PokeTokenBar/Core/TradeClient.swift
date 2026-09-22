@@ -131,6 +131,21 @@ enum TradeClient {
         return decoded
     }
 
+    /// Takes back a confirm — the only way to genuinely back out of a trade after tapping Confirm,
+    /// not just stop polling locally (which would leave the server thinking I already confirmed, so
+    /// the trade could still complete on the counterpart's side the moment they confirm too). The
+    /// server 409s once the trade has actually completed — see trades.ts's own doc comment.
+    static func unconfirm(serverURL: String, sessionId: String, uuid: String,
+                           session: URLSession = .shared) async throws(TradeError) -> StatusResponse {
+        guard let url = OnlineStore.endpointURL(from: serverURL, path: "/trades/\(sessionId)/unconfirm") else {
+            throw .invalidServerURL
+        }
+        let req = try request(url, method: "POST", body: ConfirmPayload(uuid: uuid))
+        let data = try await send(req, session: session)
+        guard let decoded = try? makeDecoder().decode(StatusResponse.self, from: data) else { throw .decoding }
+        return decoded
+    }
+
     /// Lists sessions still waiting for a second player — mirrors `BattleClient.openBattles`.
     /// Browse is now the primary way into a trade too, not just a shared link — see trading-overhaul.md.
     static func openTrades(serverURL: String, session: URLSession = .shared) async throws(TradeError) -> [OpenTrade] {

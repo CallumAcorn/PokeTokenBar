@@ -648,11 +648,26 @@ struct L {
     var tradeCopyLink: String { t("링크 복사", "Copy link", "リンクをコピー", "Copiar enlace") }
     var tradeCopied: String { t("복사됨", "Copied", "コピーしました", "Copiado") }
     var tradeWaitingForCounterpart: String { t("상대가 포켓몬을 고르는 중…", "Waiting for the other trainer to pick…", "相手がポケモンを選んでいます…", "Esperando a que el otro entrenador elija…") }
+    /// Screen prompt above the side-by-side "your offer" / "their offer" comparison — no longer
+    /// mon-specific wording ("...is offering this Pokémon") since an offer can be 0-6 mons and/or
+    /// tokens now (trading-overhaul.md).
     func tradeReviewOffer(_ name: String) -> String {
-        t("\(name)님이 이 포켓몬을 제안했어요", "\(name) is offering this Pokémon", "\(name) さんがこのポケモンを提案しました", "\(name) te ofrece este Pokémon")
+        t("\(name)님과의 거래를 검토하세요", "Review the trade with \(name)", "\(name) さんとの交換内容を確認してください", "Revisa el intercambio con \(name)")
+    }
+    /// Right-hand column header on the review screen, paired with `tradeYourOffer` for the left.
+    var tradeTheirOffer: String { t("상대의 제안", "Their offer", "相手の提案", "Su oferta") }
+    /// Shown on `TradeStore.Phase.confirmed` — I've confirmed, the counterpart hasn't yet. Distinct
+    /// from `tradeWaitingForCounterpart` (which covers the earlier "they haven't offered anything
+    /// at all yet" wait) so the copy actually reflects that *I* already acted.
+    var tradeYouConfirmedWaiting: String {
+        t("확정했어요 — 상대의 확정을 기다리는 중…", "You confirmed — waiting for the other trainer…",
+          "確定しました — 相手の確定を待っています…", "Confirmaste — esperando al otro entrenador…")
     }
     var tradeConfirmButton: String { t("거래 확정", "Confirm trade", "交換を確定", "Confirmar intercambio") }
     var tradeCancelButton: String { t("취소", "Cancel", "キャンセル", "Cancelar") }
+    /// Result-card title (BattleView.resultView's own "big bold headline" shape) — the completion
+    /// screen's facelift, sitting above `tradeCompletedSummary`'s subtitle line.
+    var tradeCompletedTitle: String { t("거래 완료!", "Trade complete!", "交換完了！", "¡Intercambio completo!") }
     /// Multi-mon/token trade completion — replaced the old single-mon "you received X" wording
     /// (trading-overhaul.md), since the receive list itself now renders above this line.
     func tradeCompletedSummary(_ from: String) -> String {
@@ -733,6 +748,9 @@ struct L {
     var tradePasteLinkPrompt: String { t("거래 링크를 붙여넣으세요", "Paste the trade link below", "下に交換リンクを貼り付けてください", "Pega el enlace del intercambio abajo") }
     var tradeBrowsePrompt: String { t("참가할 거래를 골라주세요", "Pick a trade to join", "参加する交換を選んでください", "Elige un intercambio para unirte") }
     var tradeNoOpenTrades: String { t("지금 열려 있는 거래가 없어요", "No open trades right now", "現在募集中の交換はありません", "No hay intercambios abiertos ahora mismo") }
+    /// Label over the offer picker's picked-mons grid — deliberately not `battleYourTeam`
+    /// ("Your team" reads as a battle roster, not an outgoing trade offer).
+    var tradeYourOffer: String { t("보내는 포켓몬", "Your offer", "送るポケモン", "Tu oferta") }
 
     // MARK: 배틀
     var battleTitle: String { t("배틀", "Battle", "バトル", "Batalla") }

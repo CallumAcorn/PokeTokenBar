@@ -1,8 +1,20 @@
 import SwiftUI
 
+/// Fixed content size for the standalone trade window (`TradeWindowController`) — same reasoning as
+/// `BattleWindowMetrics`: this screen used to live in the 360pt popover strip, but a multi-mon
+/// roster grid + token stake needs real screen real estate, not a cramped strip. Sized close to
+/// `BattleWindowMetrics` (520×460) so the two windows read as the same app, not two different sizes
+/// for no reason — a little taller since the offer step stacks one more row (the token stake card)
+/// than battle's roster-pick step does.
+enum TradeWindowMetrics {
+    static let width: CGFloat = 520
+    static let height: CGFloat = 520
+    static let padding: CGFloat = 14
+}
+
 /// Trade screen — same full-content-swap pattern as Settings/Battle (NOTE: see PopoverView's
-/// reasoning for avoiding .sheet). Kept as its own screen rather than crammed into a 5th segmented
-/// tab for the same reason — the 360pt-wide segment bar is already tight.
+/// reasoning for avoiding .sheet). Hosted in its own window (`TradeWindowController`), not the
+/// popover, for the same reason `BattleView` moved out of it — see that type's doc comment.
 ///
 /// Create/join/browse, matching `BattleView`'s picker flow shape and visual vocabulary end to end
 /// (trading-overhaul.md + visual-style.md) — browse leads, a link is the backup path, and the offer
@@ -23,6 +35,11 @@ struct TradeView: View {
     @State private var copiedFeedback = false
     @State private var pastedInviteLink = ""
     @State private var pastedInviteError = false
+    /// Resolved names for mons shown by id — `offerTile` falls back to `companion.speciesName`
+    /// (instant, but only real for an already-owned species) until this fills in from
+    /// `CompanionStore.resolvedSpeciesName`'s network lookup, needed for a trade counterpart's
+    /// species before their offer actually completes.
+    @State private var resolvedNames: [String: String] = [:]
     /// Which screen of the "how do you want to start" flow is showing — same shape as
     /// `BattleView.PickerStep`.
     private enum PickerStep { case chooseMode, pasteLink, browseList }
@@ -41,15 +58,12 @@ struct TradeView: View {
         return browseTarget
     }
 
-    private var tokenStake: Int { Int(tokenStakeText) ?? 0 }
+    private var tokenStake: Int { Int(tokenStakeText.filter(\.isNumber)) ?? 0 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            content
-        }
-        .padding(PopoverMetrics.padding)
-        .frame(width: PopoverMetrics.width)
+        content
+        .padding(TradeWindowMetrics.padding)
+        .frame(width: TradeWindowMetrics.width, height: TradeWindowMetrics.height, alignment: .top)
         .task { checkPendingInvite() }
         .onChange(of: trade.pendingInvite) { checkPendingInvite() }
         .alert(l.tradeJoinButton, isPresented: Binding(get: { confirmingLink != nil }, set: { if !$0 { declineInvite() } }),
@@ -113,15 +127,6 @@ struct TradeView: View {
         return ua.host == ub.host && ua.port == ub.port
     }
 
-    private var header: some View {
-        HStack {
-            Button { onClose() } label: { Image(systemName: "chevron.left") }
-                .buttonStyle(.borderless)
-            Text(l.tradeTitle).font(.callout.weight(.semibold))
-            Spacer()
-        }
-    }
-
     @ViewBuilder
     private var content: some View {
         switch trade.phase {
@@ -133,6 +138,8 @@ struct TradeView: View {
             statusView(message: l.tradeWaitingForCounterpart, showsSpinner: true)
         case .reviewingCounterpart(_, let counterpart):
             reviewCounterpart(counterpart)
+        case .confirmed(_, let counterpart):
+            confirmedWaiting(counterpart)
         case .completed(let received, let tokens, let from):
             completedView(received: received, tokens: tokens, from: from)
         case .failed(let error):
@@ -414,7 +421,7 @@ struct TradeView: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 RosterPickerGrid(companion: companion, eligible: candidates, maxCount: TradeClient.maxOfferSize,
-                                  selectedIDs: $selectedMonIDs, teamLabel: l.battleYourTeam, poolLabel: l.battleYourParty)
+                                  selectedIDs: $selectedMonIDs, teamLabel: l.tradeYourOffer, poolLabel: l.battleYourParty)
                     .frame(maxHeight: .infinity)
             }
             tokenStakeCard
@@ -442,23 +449,47 @@ struct TradeView: View {
 
     /// Bounded numeric field, clamped client-side to the sender's own current balance — same trust
     /// level as everything else self-reported here (nothing stops a hand-edited save from lying,
-    /// same as today — trading-overhaul.md's "Open decisions").
+    /// same as today — trading-overhaul.md's "Open decisions"). Two rows, not one — a fixed-width
+    /// field on the same line as the label/balance/Max button clipped once grouped commas made it
+    /// long ("190,600,000"); the field now gets the full card width on its own row, with a compact
+    /// "≈121M" readout beside the digits so the scale of a long grouped number is still legible at
+    /// a glance.
     private var tokenStakeCard: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(l.tradeTokenStakeLabel).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                Text(l.tradeTokenStakeAvailable(TokenFormatter.compact(companion.availableTokens)))
-                    .font(.system(size: 9)).foregroundStyle(.tertiary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(l.tradeTokenStakeLabel).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    // Grouped, not compact — sits right above the stake field, which is also
+                    // grouped now; an abbreviated "190.6M" balance next to a precise "190,600,000"
+                    // stake read as two different numbers at a glance.
+                    Text(l.tradeTokenStakeAvailable(TokenFormatter.grouped(companion.availableTokens)))
+                        .font(.system(size: 9)).foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Button(l.tradeTokenStakeMaxButton) { tokenStakeText = TokenFormatter.grouped(companion.availableTokens) }
+                    .buttonStyle(.bordered).controlSize(.small)
             }
-            Spacer()
-            TextField("0", text: $tokenStakeText)
-                .textFieldStyle(.plain)
-                .multilineTextAlignment(.trailing)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .frame(width: 90)
-                .onChange(of: tokenStakeText) { clampTokenStakeText() }
-            Button(l.tradeTokenStakeMaxButton) { tokenStakeText = "\(companion.availableTokens)" }
-                .buttonStyle(.bordered).controlSize(.small)
+            // Its own bordered field box — same field chrome `pasteInviteCard` uses — instead of a
+            // borderless TextField floating in the outer card, so the input itself reads as a
+            // control, not inert text.
+            HStack(spacing: 8) {
+                TextField("0", text: $tokenStakeText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .onChange(of: tokenStakeText) { clampTokenStakeText() }
+                if tokenStake > 0 {
+                    Text(TokenFormatter.compact(tokenStake))
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
+                }
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
         }
         .padding(10)
         .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -467,10 +498,15 @@ struct TradeView: View {
                 .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
     }
 
+    /// Reformats with thousands separators on every keystroke — balances here run into the hundreds
+    /// of millions/billions, where a bare digit string is easy to miscount (trading-overhaul.md's
+    /// worked example is literally "+250,000,000 tokens"). Idempotent (stripping commas back out of
+    /// an already-grouped string reproduces the same value), so this converges in one extra
+    /// `onChange` bounce rather than looping.
     private func clampTokenStakeText() {
         let digits = tokenStakeText.filter(\.isNumber)
         let value = min(Int(digits) ?? 0, companion.availableTokens)
-        tokenStakeText = "\(value)"
+        tokenStakeText = TokenFormatter.grouped(value)
     }
 
     /// Everything `picker` (and only `picker`) owns as local `@State` — deliberately not
@@ -539,22 +575,33 @@ struct TradeView: View {
 
     // MARK: Reviewing the counterpart's offer
 
+    /// Side by side, not counterpart-only — "your offer" resolved against `companion.party` by id
+    /// (`trade.myOfferedMonIDs`; the mons are still yours until the trade actually completes) next
+    /// to the counterpart's, so both sides of the trade are comparable at a glance instead of
+    /// trusting memory of what you picked two screens ago. Shared with `confirmedWaiting` — the same
+    /// comparison stays visible after confirming, not swapped for a bare spinner.
+    private func offerComparison(_ counterpart: TradeStore.Offer) -> some View {
+        let myOffer = trade.myOfferedMonIDs.compactMap { id in companion.party.first { $0.id == id } }
+        return HStack(alignment: .top, spacing: 12) {
+            offerColumn(label: l.tradeYourOffer, mons: myOffer, tokens: trade.myOfferedTokens)
+            Divider()
+            offerColumn(label: l.tradeTheirOffer, mons: counterpart.pokemon, tokens: counterpart.tokens)
+        }
+        // My own mons resolve instantly (already owned); the counterpart's usually don't — this is
+        // the one place that actually needs CompanionStore.resolvedSpeciesName's network fallback.
+        .task { await ensureNamesResolved(myOffer + counterpart.pokemon) }
+    }
+
+    private func ensureNamesResolved(_ mons: [MonState]) async {
+        for mon in mons where resolvedNames[mon.id] == nil {
+            resolvedNames[mon.id] = await companion.resolvedSpeciesName(baseID: mon.baseID, currentID: mon.currentID)
+        }
+    }
+
     private func reviewCounterpart(_ counterpart: TradeStore.Offer) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(l.tradeReviewOffer(counterpart.displayName)).font(.caption).foregroundStyle(.secondary)
-            if !counterpart.pokemon.isEmpty {
-                ScrollView {
-                    VStack(spacing: 6) {
-                        ForEach(counterpart.pokemon) { mon in
-                            TradeOfferRow(store: companion, mon: mon, isSelected: false, onTap: nil)
-                        }
-                    }
-                }
-                .frame(height: min(CGFloat(counterpart.pokemon.count) * 66, 200))
-            }
-            if counterpart.tokens > 0 {
-                tokenDeltaRow(counterpart.tokens)
-            }
+            offerComparison(counterpart)
             HStack {
                 Button(l.tradeConfirmButton) { Task { await trade.confirm() } }
                     .buttonStyle(.borderedProminent)
@@ -562,6 +609,76 @@ struct TradeView: View {
                     .buttonStyle(.borderless)
             }
         }
+    }
+
+    /// I've confirmed; the counterpart hasn't yet — same comparison as `reviewCounterpart`, so the
+    /// screen doesn't jump to a bare "waiting" spinner and lose what you're about to receive, plus a
+    /// visible "you confirmed" state (the whole point of this phase existing — see `TradeStore.Phase
+    /// .confirmed`'s doc comment) and a real way out: `backOut()` actually tells the server, unlike
+    /// a plain `cancel()` here which would leave the server still holding this side's confirmation.
+    private func confirmedWaiting(_ counterpart: TradeStore.Offer) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(.green)
+                Text(l.tradeYouConfirmedWaiting).font(.caption).foregroundStyle(.secondary)
+            }
+            offerComparison(counterpart)
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Button(l.tradeCancelButton) { Task { await trade.backOut() } }
+                    .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    /// One side of the your-offer/their-offer comparison — a fixed 3×2 grid (always all 6 slots,
+    /// same shape `RosterPickerGrid`'s team grid uses for *picking*, here just for *display*: empty
+    /// dashed slots for whatever wasn't offered, not a reflowing list) plus the token line below.
+    private func offerColumn(label: String, mons: [MonState], tokens: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label.uppercased()).font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).tracking(0.5)
+            offerGrid(mons)
+            if tokens > 0 {
+                tokenDeltaRow(tokens)
+            } else if mons.isEmpty {
+                Text("—").font(.system(size: 12)).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// `slots` fixed at `TradeClient.maxOfferSize` for the your-offer/their-offer comparison — both
+    /// columns line up tile-for-tile even when one side offered fewer. `completedView` instead
+    /// passes exactly `received.count`: a single lonely tile padded out to a 6-slot grid on its own
+    /// result card read as sparse with no second column to justify the empty dashed slots. Display-
+    /// only either way (no tap/drag, unlike `RosterPickerGrid`'s picker version of this same tile).
+    private func offerGrid(_ mons: [MonState], slots: Int = TradeClient.maxOfferSize) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+            ForEach(0..<slots, id: \.self) { slot in
+                if slot < mons.count {
+                    offerTile(mons[slot])
+                } else {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                        .frame(height: 58)   // matches the taller tile now that it carries a name line too
+                }
+            }
+        }
+    }
+
+    private func offerTile(_ mon: MonState) -> some View {
+        VStack(spacing: 1) {
+            SpriteView(speciesID: mon.currentID, size: 28, shiny: mon.isShiny)
+            // Instant fallback (own mon, or a species already seen elsewhere) until/unless
+            // `ensureNamesResolved` fills in a real name for a counterpart's unseen species.
+            Text(resolvedNames[mon.id] ?? companion.speciesName(mon.currentID))
+                .font(.system(size: 8, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.7)
+            Text(companion.l.pcLevel(mon.level)).font(.system(size: 7)).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func tokenDeltaRow(_ tokens: Int) -> some View {
@@ -575,24 +692,35 @@ struct TradeView: View {
 
     // MARK: Completed / status messages
 
+    /// Same result-card shape `BattleView.resultView` uses — icon badge + bold title, a solid
+    /// theme-adaptive card (not text floating directly on the window background), centered with
+    /// `Spacer`s, one full-size primary action. The old version was a bare left-aligned list with no
+    /// visual weight at all for what's meant to be the payoff screen of the whole flow.
     private func completedView(received: [MonState], tokens: Int, from: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if !received.isEmpty {
-                ScrollView {
-                    VStack(spacing: 6) {
-                        ForEach(received) { mon in
-                            TradeOfferRow(store: companion, mon: mon, isSelected: false, onTap: nil)
-                        }
+        VStack {
+            Spacer(minLength: 0)
+            VStack(spacing: 14) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 36)).foregroundStyle(.green)
+                Text(l.tradeCompletedTitle).font(.system(size: 22, weight: .bold)).foregroundStyle(.primary)
+                Text(l.tradeCompletedSummary(from)).font(.system(size: 12)).foregroundStyle(.secondary)
+                if !received.isEmpty || tokens > 0 {
+                    VStack(spacing: 10) {
+                        if !received.isEmpty { offerGrid(received, slots: received.count) }
+                        if tokens > 0 { tokenDeltaRow(tokens) }
                     }
+                    .frame(maxWidth: 320)
                 }
-                .frame(height: min(CGFloat(received.count) * 66, 200))
+                Button(l.tradeDoneButton) { trade.cancel(); onClose() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
             }
-            if tokens > 0 {
-                tokenDeltaRow(tokens)
-            }
-            Text(l.tradeCompletedSummary(from)).font(.caption).foregroundStyle(.secondary)
-            Button(l.tradeDoneButton) { trade.cancel(); onClose() }.buttonStyle(.borderedProminent)
+            .padding(28)
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func statusView(message: String, showsSpinner: Bool, showsRetry: Bool = false) -> some View {
@@ -604,39 +732,6 @@ struct TradeView: View {
             if showsRetry {
                 Button(l.tradeTryAgainButton) { trade.cancel() }.buttonStyle(.bordered)
             }
-        }
-    }
-}
-
-/// One mon row on the trade screen — sprite + level/rarity/shiny. Not selectable when onTap is nil
-/// (the review/completed screens).
-private struct TradeOfferRow: View {
-    let store: CompanionStore
-    let mon: MonState
-    let isSelected: Bool
-    let onTap: (() -> Void)?
-
-    var body: some View {
-        let row = HStack(spacing: 10) {
-            SpriteView(speciesID: mon.currentID, size: 44, shiny: mon.isShiny)
-                .frame(width: 44, height: 44)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(store.l.pcLevel(mon.level)).font(.system(size: 11, weight: .bold))
-                    if mon.isShiny { Text("✨").font(.system(size: 10)) }
-                }
-                Text(store.l.rarityLabel(mon.rarity)).font(.system(size: 9)).foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding(8)
-        .background(Color.secondary.opacity(isSelected ? 0.16 : 0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-
-        if let onTap {
-            Button(action: onTap) { row }.buttonStyle(.plain)
-        } else {
-            row
         }
     }
 }

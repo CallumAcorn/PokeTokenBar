@@ -67,6 +67,11 @@ final class TradeStore {
         case waitingForJoin(sessionId: String, shareURL: URL?)
         case waitingForCounterpart(sessionId: String)
         case reviewingCounterpart(sessionId: String, counterpart: Offer)
+        /// I've tapped Confirm; the counterpart hasn't yet (still `"offered"` server-side, but I've
+        /// added my own uuid to the confirmed set). Distinct from `reviewingCounterpart` so the
+        /// button tap has a visible effect instead of the screen just sitting there unchanged until
+        /// the counterpart also confirms — see `confirm()`/`backOut()`.
+        case confirmed(sessionId: String, counterpart: Offer)
         case completed(received: [MonState], tokens: Int, from: String)
         case failed(TradeClient.TradeError)
         case expired
@@ -94,15 +99,22 @@ final class TradeStore {
     private let pollIntervalNanoseconds: UInt64
     private var pollTask: Task<Void, Never>?
     /// The mons I offered in the trade currently in progress — on completion, these ids get removed
-    /// and the counterpart's mons get added.
-    private var myOfferedMonIDs: [String] = []
+    /// and the counterpart's mons get added. `private(set)`, not private: the review screen reads
+    /// this (resolved against `companion.party`, since the mons are still mine until completion) to
+    /// show "your offer" next to the counterpart's, not just theirs.
+    private(set) var myOfferedMonIDs: [String] = []
     /// The token stake I offered in the trade currently in progress — moves my own `spentTokens`
-    /// ledger on completion, same timing as `myOfferedMonIDs`.
-    private var myOfferedTokens = 0
+    /// ledger on completion, same timing as `myOfferedMonIDs`. Also read by the review screen.
+    private(set) var myOfferedTokens = 0
     /// Session ids already applied via `applyCompletion` — unlike `removeFromParty`/`addTradedMon`,
     /// `CompanionStore.applyTradeTokens` is a cumulative ledger move, not idempotent by id, so a
     /// late-arriving second "completed" poll for the same session must not re-apply it.
     private var completedSessionIDs: Set<String> = []
+    /// Whether I've confirmed the trade currently in progress — tracked separately from `phase`
+    /// because the server keeps reporting `"offered"` (not yet `"completed"`) for as long as only
+    /// one side has confirmed, and `pollOnce` must not downgrade `.confirmed` back to
+    /// `.reviewingCounterpart` on the next tick just because the status string hasn't changed yet.
+    private var hasConfirmed = false
 
     init(companion: CompanionStore, online: OnlineStore, fileURL: URL? = nil, session: URLSession = .shared,
          pollIntervalNanoseconds: UInt64 = 2_000_000_000) {
@@ -226,8 +238,10 @@ final class TradeStore {
             switch response.status {
             case "offered":
                 if let c = response.counterpart {
-                    phase = .reviewingCounterpart(sessionId: sessionId,
-                                                   counterpart: Offer(displayName: c.displayName, pokemon: c.pokemon, tokens: c.tokens))
+                    let offer = Offer(displayName: c.displayName, pokemon: c.pokemon, tokens: c.tokens)
+                    phase = hasConfirmed
+                        ? .confirmed(sessionId: sessionId, counterpart: offer)
+                        : .reviewingCounterpart(sessionId: sessionId, counterpart: offer)
                 } else {
                     phase = .waitingForCounterpart(sessionId: sessionId)
                 }
@@ -258,16 +272,32 @@ final class TradeStore {
     // MARK: Confirm / complete
 
     func confirm() async {
-        guard case .reviewingCounterpart(let sessionId, _) = phase else { return }
+        guard case .reviewingCounterpart(let sessionId, let counterpart) = phase else { return }
         do {
             _ = try await TradeClient.confirm(serverURL: online.serverURL, sessionId: sessionId, uuid: online.clientUUID, session: session)
             // Applying completion is handled by the next polling tick (once the server returns
             // completed) — not applied optimistically here: if the other side hasn't confirmed yet,
             // the server still returns "offered", and if I'd already removed my mon by then, there'd
             // be no way to undo it if the other side cancels or the trade expires.
+            hasConfirmed = true
+            phase = .confirmed(sessionId: sessionId, counterpart: counterpart)
         } catch {
             fail(error)
         }
+    }
+
+    /// Takes back a confirm — the only way to genuinely leave a trade after tapping Confirm, not
+    /// just stop looking at the screen (which would leave the server still holding my confirmation,
+    /// so the trade could complete on the counterpart's side the moment they confirm too). Re-checks
+    /// `phase` after the network round trip: if the counterpart confirmed while this call was in
+    /// flight, the trade already completed server-side and it's too late to back out — don't
+    /// clobber that with a local `cancel()`.
+    func backOut() async {
+        guard case .confirmed(let sessionId, _) = phase else { return }
+        hasConfirmed = false
+        _ = try? await TradeClient.unconfirm(serverURL: online.serverURL, sessionId: sessionId, uuid: online.clientUUID, session: session)
+        guard case .confirmed = phase else { return }
+        cancel()
     }
 
     /// Puts up the failure screen, then automatically returns to the offer picker (same as tapping
@@ -313,6 +343,7 @@ final class TradeStore {
     func cancel() {
         pollTask?.cancel()
         pollTask = nil
+        hasConfirmed = false
         if case .completed = phase {} else { releaseReservation() }
         phase = .idle
     }

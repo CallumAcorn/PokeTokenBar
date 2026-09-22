@@ -390,6 +390,52 @@ final class TradeStoreNetworkTests: XCTestCase {
         XCTAssertEqual(companion.state.spentTokens, -300)
         XCTAssertTrue(trade.reservedMonIDs.isEmpty, "both offered mons' reservations release on completion")
     }
+
+    /// [Regression] Tapping Confirm used to leave the screen looking completely unchanged (still
+    /// `.reviewingCounterpart`) until the *other* side also confirmed — no visible sign the tap did
+    /// anything. It must move to a distinct `.confirmed` phase, and backing out of that phase must
+    /// actually tell the server (not just reset local state, which would leave the server still
+    /// holding this side's confirmation).
+    func testConfirmMovesToConfirmedPhaseAndBackOutReleasesBoth() async {
+        let companionURL = FileManager.default.temporaryDirectory.appendingPathComponent("trade-net-\(UUID().uuidString).json")
+        let companion = CompanionStore(provider: TradeStubProvider(), clock: { self.fixedNow }, fileURL: companionURL, rng: SeededRNG(seed: 7))
+        let offered = mon(baseID: 1)
+        _ = companion.addTradedMon(offered, from: "Seed")
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [QueuedTradeStubURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let online = OnlineStore(defaults: UserDefaults(suiteName: "TradeStoreNetworkTests.\(UUID().uuidString)")!, session: session)
+        online.serverURL = "https://mock.test"
+        let reservationsURL = FileManager.default.temporaryDirectory.appendingPathComponent("trade-net-reservations-\(UUID().uuidString).json")
+        // Long enough that the background poll loop's *next* tick never fires during this test, so
+        // it can't race the direct confirm()/backOut() calls below over the same response queue.
+        let trade = TradeStore(companion: companion, online: online, fileURL: reservationsURL, session: session, pollIntervalNanoseconds: 60_000_000_000)
+
+        QueuedTradeStubURLProtocol.responses = [
+            (200, encode(StubCreate(sessionId: "sess-1"))),
+            (200, encode(StubStatus(status: "offered", counterpart: StubCounterpart(displayName: "Gary", pokemon: [], tokens: 0)))),
+        ]
+        await trade.createTrade(offering: [offered])
+        let reviewing = await waitUntil {
+            if case .reviewingCounterpart = trade.phase { return true }
+            return false
+        }
+        XCTAssertTrue(reviewing, "expected .reviewingCounterpart before confirming, got \(trade.phase)")
+
+        QueuedTradeStubURLProtocol.responses = [(200, encode(StubStatus(status: "offered", counterpart: nil)))]
+        await trade.confirm()
+        guard case .confirmed = trade.phase else {
+            return XCTFail("expected .confirmed right after confirm(), got \(trade.phase)")
+        }
+        XCTAssertTrue(trade.reservedMonIDs.contains(offered.id), "still reserved — the trade hasn't completed or been abandoned")
+
+        QueuedTradeStubURLProtocol.responses = [(200, encode(StubStatus(status: "offered", counterpart: nil)))]
+        await trade.backOut()
+        XCTAssertEqual(trade.phase, .idle, "backing out returns to idle, same as a plain cancel")
+        XCTAssertFalse(trade.reservedMonIDs.contains(offered.id), "backing out releases the reservation")
+        XCTAssertTrue(companion.party.contains { $0.id == offered.id }, "the mon was never actually handed over")
+    }
 }
 
 // MARK: SaveTransfer.sanitizedMon

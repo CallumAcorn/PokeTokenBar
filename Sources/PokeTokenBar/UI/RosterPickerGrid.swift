@@ -60,7 +60,7 @@ struct RosterPickerGrid: View {
                 } else {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4]))
-                        .frame(height: 54)
+                        .frame(height: 62)   // matches the taller tile now that it carries a name line too
                         .dropDestination(for: String.self) { items, _ in moveDropped(items, toSlot: slot) }
                 }
             }
@@ -82,9 +82,14 @@ struct RosterPickerGrid: View {
 
     private func tile(_ mon: MonState, selected: Bool, size: CGFloat) -> some View {
         Button { toggle(mon.id) } label: {
-            VStack(spacing: 2) {
+            VStack(spacing: 1) {
                 SpriteView(speciesID: mon.currentID, size: size, shiny: mon.isShiny)
-                Text(companion.l.pcLevel(mon.level)).font(.system(size: 8, weight: .semibold)).lineLimit(1)
+                // Always a real name, never async — every mon here is owned by this trainer, so
+                // it's already dex-unlocked (unlike TradeView's counterpart column, which needs
+                // CompanionStore.resolvedSpeciesName's network fallback for an unseen species).
+                Text(companion.speciesName(mon.currentID)).font(.system(size: 8, weight: .semibold))
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                Text(companion.l.pcLevel(mon.level)).font(.system(size: 7)).foregroundStyle(.secondary).lineLimit(1)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)

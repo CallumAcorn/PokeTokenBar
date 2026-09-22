@@ -254,6 +254,16 @@ final class CompanionStore {
         state.dexUnlocked[speciesID]?.names.flatMap { state.language.resolveName($0) } ?? "#\(speciesID)"
     }
 
+    /// Same value as `speciesName` when the species is already known (free, no network); otherwise
+    /// resolves it live via `line(baseID:)`. Needed for a trade counterpart's Pokémon — accepting a
+    /// trade doesn't require having ever seen that species before, unlike everything else this app
+    /// shows a name for (always something owned, hence already dex-unlocked).
+    func resolvedSpeciesName(baseID: Int, currentID: Int) async -> String {
+        let known = speciesName(currentID)
+        guard known.hasPrefix("#"), let line = await line(baseID: baseID) else { return known }
+        return line.localizedName(currentID, state.language)
+    }
+
     /// 이름이 없는 구버전 졸업 항목의 체인 이름을 채운다(도감 격자 진입 시 1회).
     ///
     /// 격자는 저장된 이름만 읽으므로 백필이 없으면 칸이 종 번호(`#41`)로 남는다. 포획 로그는 행이

@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var updater: UpdateChecker!
     private var online: OnlineStore!
     private var trade: TradeStore!
+    private var tradeWindow: TradeWindowController!
     private var battle: BattleStore!
     private var battleWindow: BattleWindowController!
     private var spectator: SpectatorStore!
@@ -96,6 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         updater = UpdateChecker()
         online = OnlineStore()
         trade = TradeStore(companion: companion, online: online)
+        tradeWindow = TradeWindowController(companion: companion, trade: trade, online: online)
+        navigation.onOpenTradeWindow = { [weak self] in self?.tradeWindow.show() }
         battle = BattleStore(companion: companion, online: online)
         spectator = SpectatorStore()
         battleWindow = BattleWindowController(companion: companion, battle: battle, spectator: spectator, online: online)
@@ -571,8 +574,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let url = urls.first else { return }
         if let link = TradeDeepLink(url: url) {
             trade.handleIncomingLink(link)
-            openPopover()
-            navigation.showTrade = true
+            tradeWindow.show()
         } else if let link = BattleDeepLink(url: url) {
             battle.handleIncomingLink(link)
             battleWindow.show()
