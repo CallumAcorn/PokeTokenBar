@@ -88,7 +88,7 @@ struct SpectatorView: View {
                 let terrain = BattleView.backgroundTerrain(for: type)
                 battleBackgroundImage = BattleView.loadBackgroundImage(terrain: terrain)
 
-                for names in Self.teamPreviewNames(view.log ?? []).values {
+                for names in BattleClient.teamPreviewSpeciesNames(view.log ?? []).values {
                     for name in names where speciesIDByName[name] == nil {
                         if let id = await companion.speciesID(name: name) { speciesIDByName[name] = id }
                     }
@@ -256,16 +256,6 @@ struct SpectatorView: View {
     // their own callers — same "different caller, not worth sharing a type for" reasoning both of
     // those already give.
 
-    private static func teamPreviewNames(_ log: [String]) -> [String: [String]] {
-        var result: [String: [String]] = [:]
-        for line in log {
-            let parts = line.components(separatedBy: "|")
-            guard parts.count >= 4, parts[1] == "poke" else { continue }
-            let species = parts[3].components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? parts[3]
-            result[parts[2], default: []].append(species)
-        }
-        return result
-    }
 
     /// The name last `|switch|<sideIdent>a: ...|<Name>, L<level>...|...` put on the field for
     /// `side` ("p1"/"p2") — always the mon currently active there, since a new switch line is the
@@ -286,7 +276,7 @@ struct SpectatorView: View {
     // to split lines left/right below, not because either side is privileged here.
 
     private func logPanel(_ log: [String], p1DisplayName: String) -> some View {
-        let p1Names = Self.teamPreviewNames(log)["p1"] ?? []
+        let p1Names = BattleClient.teamPreviewSpeciesNames(log)["p1"] ?? []
         return VStack(alignment: .leading, spacing: 0) {
             Text(l.battleLogTitle).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 6)

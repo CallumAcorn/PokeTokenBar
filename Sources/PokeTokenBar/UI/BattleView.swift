@@ -1281,7 +1281,7 @@ struct BattleView: View {
         // instead of whichever mon happens to be active *now*. Runs once per time the panel opens
         // (no `id:`), which is enough — team preview data never changes mid-battle.
         .task {
-            let names = Set(Self.teamPreviewSpeciesNames(log).values.flatMap { $0 })
+            let names = Set(BattleClient.teamPreviewSpeciesNames(log).values.flatMap { $0 })
             for name in names where opponentSpeciesIDByName[name] == nil {
                 if let id = await companion.speciesID(name: name) { opponentSpeciesIDByName[name] = id }
             }
@@ -1345,7 +1345,7 @@ struct BattleView: View {
     /// exhaustive — an unhandled line kind is just omitted, not a functional problem for what's
     /// meant to be a readable recap.
     static func formattedLogLines(_ log: [String], myDisplayName: String) -> [ChatLogLine] {
-        let teamPreview = teamPreviewSpeciesNames(log)
+        let teamPreview = BattleClient.teamPreviewSpeciesNames(log)
         func name(_ ident: String) -> String { displayName(for: ident, teamPreview: teamPreview) }
         return log.compactMap { rawLine -> ChatLogLine? in
             let parts = rawLine.components(separatedBy: "|")
@@ -1430,23 +1430,6 @@ struct BattleView: View {
         return Int(name[dashRange.upperBound...])
     }
 
-    /// Team preview (`|poke|p1|Pikachu, L50|`, one line per roster slot, in roster order) reveals
-    /// every mon's species for *both* sides right at battle start — including bench mons never sent
-    /// out yet — which is exactly the same information a real Pokémon battle's own team preview
-    /// screen shows. Keyed by side ("p1"/"p2") to an ordered list of species names, so a nickname's
-    /// index (`monIndex`) looks its species straight up instead of needing this app's own dex/name
-    /// data (which is keyed by *ownership* — see `CompanionStore.speciesName` — and would show a
-    /// placeholder for an opponent species the player has never caught themselves).
-    private static func teamPreviewSpeciesNames(_ log: [String]) -> [String: [String]] {
-        var result: [String: [String]] = [:]
-        for line in log {
-            let parts = line.components(separatedBy: "|")
-            guard parts.count >= 4, parts[1] == "poke" else { continue }
-            let species = parts[3].components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? parts[3]
-            result[parts[2], default: []].append(species)
-        }
-        return result
-    }
 
     /// "p1a: Ash-0" -> "Pikachu" via `teamPreviewSpeciesNames`; falls back to the raw nickname
     /// (`shortMonName`) only if team preview data is missing for this identity — shouldn't happen in

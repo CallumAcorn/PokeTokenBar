@@ -255,4 +255,25 @@ final class BattleClientPrimitiveDerivationTests: XCTestCase {
         XCTAssertEqual(BattleClient.cappedActiveMoves(normal)?.count, 3)
         XCTAssertNil(BattleClient.cappedActiveMoves(nil))
     }
+
+    /// 팀 프리뷰 로그는 서버가 주고, 뽑힌 이름마다 PokéAPI 요청이 한 번씩 나간다. 서버가 보낸 서로 다른
+    /// 이름 수만큼 요청이 증폭되면 안 된다 — 실제 대전은 p1/p2 × 최대 6마리가 전부다.
+    func testTeamPreviewIsCappedToTwoSidesOfSix() {
+        var log: [String] = []
+        for side in ["p1", "p2", "p3", "evil"] {
+            for n in 0..<200 { log.append("|poke|\(side)|Species\(side)\(n), L50|") }
+        }
+        let names = BattleClient.teamPreviewSpeciesNames(log)
+        XCTAssertEqual(Set(names.keys), ["p1", "p2"], "p1/p2 외의 진영 키가 통과했다")
+        XCTAssertEqual(names.values.reduce(0) { $0 + $1.count }, 2 * BattleClient.maxRosterSize,
+                       "서버가 준 이름 수만큼 PokéAPI 요청이 나갈 수 있었다")
+    }
+
+    /// 정상 팀 프리뷰는 그대로 — 순서와 종명 파싱(레벨 접미사 제거)이 보존돼야 한다.
+    func testNormalTeamPreviewParsesUnchanged() {
+        let log = ["|poke|p1|Pikachu, L50, F|", "|poke|p1|Mr. Mime, L48|", "|poke|p2|Ho-Oh, L60|"]
+        let names = BattleClient.teamPreviewSpeciesNames(log)
+        XCTAssertEqual(names["p1"], ["Pikachu", "Mr. Mime"])
+        XCTAssertEqual(names["p2"], ["Ho-Oh"])
+    }
 }

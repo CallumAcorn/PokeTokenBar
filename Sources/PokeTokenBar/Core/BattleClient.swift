@@ -277,13 +277,27 @@ enum BattleClient {
     /// out — kept as its own small copy of the parse `BattleView` (the SwiftUI screen) already does
     /// for its chat recap; different callers, pure wire-format knowledge, not worth sharing a type
     /// across the Core/UI boundary for.
-    private static func teamPreviewSpeciesNames(_ log: [String]) -> [String: [String]] {
+    /// 팀 프리뷰(`|poke|<side>|<species>, ...|`)에서 진영별 종명을 뽑는다. **이 파서는 여기 하나뿐이다.**
+    ///
+    /// 로그는 서버가 주고, 서버는 초대·관전 링크로 지정될 수 있어 신뢰 대상이 아니다. 호출부들이 뽑힌
+    /// 이름마다 `speciesID(name:)` 로 PokéAPI 를 한 번씩 부르므로(순차 await), 자르지 않으면 서버가 보낸
+    /// 서로 다른 이름 수만큼 요청이 나가고 그동안 화면이 멈춘다. `slug` 제한(#25)은 URL 경로를 지킬 뿐
+    /// **요청 수**는 지키지 못한다 — 이 상한이 그 몫이다.
+    ///
+    /// 실제 대전은 두 진영(`p1`/`p2`) × 최대 `maxRosterSize` 마리가 전부라, 그 밖의 진영 키나 초과분은
+    /// 정상 대전에서 나올 수 없고 잘라도 잃는 정보가 없다.
+    ///
+    /// 예전엔 같은 파서가 `BattleClient`·`BattleView`·`SpectatorView` 세 곳에 복사돼 있었다. 셋 다 상한이
+    /// 없었고, 고치려면 세 번 고쳐야 했다 — 복사본이 늘수록 다음 복사본에서 빠뜨린다. 그래서 합쳤다.
+    static func teamPreviewSpeciesNames(_ log: [String]) -> [String: [String]] {
         var result: [String: [String]] = [:]
         for line in log {
             let parts = line.components(separatedBy: "|")
             guard parts.count >= 4, parts[1] == "poke" else { continue }
+            let side = parts[2]
+            guard side == "p1" || side == "p2", (result[side]?.count ?? 0) < maxRosterSize else { continue }
             let species = parts[3].components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? parts[3]
-            result[parts[2], default: []].append(species)
+            result[side, default: []].append(species)
         }
         return result
     }
