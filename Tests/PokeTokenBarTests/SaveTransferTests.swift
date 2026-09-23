@@ -472,7 +472,10 @@ final class SaveTransferTests: XCTestCase {
         let s = envelope.state
 
         XCTAssertEqual(s.usedSinceInstall, SaveTransfer.maxTokenValue)
-        XCTAssertEqual(s.spentTokens, 0, "음수는 0 으로")
+        // 거래 도입 전에는 "음수는 0 으로"였다 — 그땐 지출만 있고 받는 일이 없었다. 거래로 받은 토큰은
+        // 음수 spentTokens 로 남는 게 정상이라, 0 으로 자르면 재시작마다 받은 토큰이 지워진다.
+        // 이 테스트가 지키려던 건 "극단값이 트랩을 못 낸다"이고, 대칭 클램프로도 그건 그대로 지켜진다.
+        XCTAssertEqual(s.spentTokens, -SaveTransfer.maxTokenValue, "음수는 보존하되 크기는 묶는다")
         XCTAssertEqual(s.eggUsage, SaveTransfer.maxTokenValue)
         XCTAssertEqual(s.claimedTodayTokensByProvider?["test"], 0)
         XCTAssertEqual(s.party.first?.usedAtStage, SaveTransfer.maxTokenValue)
@@ -502,7 +505,8 @@ final class SaveTransferTests: XCTestCase {
 
         let s = store(at: url)
         XCTAssertEqual(s.state.usedSinceInstall, SaveTransfer.maxTokenValue)
-        XCTAssertEqual(s.state.spentTokens, 0)
+        // Int.min 이 트랩 없이 대칭 경계로 묶이는지 — 0 이 아니라 -maxTokenValue (위 테스트와 같은 이유).
+        XCTAssertEqual(s.state.spentTokens, -SaveTransfer.maxTokenValue)
         XCTAssertEqual(s.state.eggUsage, SaveTransfer.maxTokenValue)
         XCTAssertNil(s.state.claimedTodayTokensByProvider, "구버전 aggregate field는 프로바이더별 ledger로 추정하지 않는다")
 

@@ -55,6 +55,35 @@ final class BattleClientDecodingTests: XCTestCase {
         let decoded = try JSONDecoder().decode(Wrapper.self, from: json)
         XCTAssertEqual(decoded.battles.first?.createdAt, 1787665470123)
     }
+
+    // MARK: Spectator wire format — see spectator.md
+
+    func testDecodesSpectatorViewWithBothSidesRestricted() throws {
+        let json = Data("""
+        {"status":"active","turn":2,
+         "p1":{"displayName":"Ash","active":{"speciesID":1,"name":"Ash-0","fainted":false,"hpFraction":0.8},"rosterSize":1},
+         "p2":{"displayName":"Gary","active":{"speciesID":4,"name":"Gary-0","fainted":false,"hpFraction":0.75},"rosterSize":1},
+         "hostLeadSpeciesID":1,"log":["|turn|1"]}
+        """.utf8)
+        let view = try JSONDecoder().decode(BattleClient.SpectatorView.self, from: json)
+        XCTAssertEqual(view.p1?.displayName, "Ash")
+        XCTAssertEqual(view.p2?.active?.speciesID, 4)
+        XCTAssertNil(view.winner, "not decided yet")
+    }
+
+    func testDecodesSpectatorViewWinnerAsPSideNotWinLoss() throws {
+        let json = Data(#"{"status":"completed","turn":3,"winner":"p2"}"#.utf8)
+        let view = try JSONDecoder().decode(BattleClient.SpectatorView.self, from: json)
+        XCTAssertEqual(view.winner, "p2")
+    }
+
+    func testDecodesLiveBattleListing() throws {
+        let json = Data(#"{"battles":[{"sessionId":"abc","p1DisplayName":"Ash","p2DisplayName":"Gary","turn":3,"createdAt":1787665470123}]}"#.utf8)
+        struct Wrapper: Decodable { let battles: [BattleClient.LiveBattle] }
+        let decoded = try JSONDecoder().decode(Wrapper.self, from: json)
+        XCTAssertEqual(decoded.battles.first?.p1DisplayName, "Ash")
+        XCTAssertEqual(decoded.battles.first?.turn, 3)
+    }
 }
 
 // MARK: Primitive encoding — field names must match pkmnAdapter.ts's isMonPrimitive exactly
@@ -225,5 +254,26 @@ final class BattleClientPrimitiveDerivationTests: XCTestCase {
         }
         XCTAssertEqual(BattleClient.cappedActiveMoves(normal)?.count, 3)
         XCTAssertNil(BattleClient.cappedActiveMoves(nil))
+    }
+
+    /// 팀 프리뷰 로그는 서버가 주고, 뽑힌 이름마다 PokéAPI 요청이 한 번씩 나간다. 서버가 보낸 서로 다른
+    /// 이름 수만큼 요청이 증폭되면 안 된다 — 실제 대전은 p1/p2 × 최대 6마리가 전부다.
+    func testTeamPreviewIsCappedToTwoSidesOfSix() {
+        var log: [String] = []
+        for side in ["p1", "p2", "p3", "evil"] {
+            for n in 0..<200 { log.append("|poke|\(side)|Species\(side)\(n), L50|") }
+        }
+        let names = BattleClient.teamPreviewSpeciesNames(log)
+        XCTAssertEqual(Set(names.keys), ["p1", "p2"], "p1/p2 외의 진영 키가 통과했다")
+        XCTAssertEqual(names.values.reduce(0) { $0 + $1.count }, 2 * BattleClient.maxRosterSize,
+                       "서버가 준 이름 수만큼 PokéAPI 요청이 나갈 수 있었다")
+    }
+
+    /// 정상 팀 프리뷰는 그대로 — 순서와 종명 파싱(레벨 접미사 제거)이 보존돼야 한다.
+    func testNormalTeamPreviewParsesUnchanged() {
+        let log = ["|poke|p1|Pikachu, L50, F|", "|poke|p1|Mr. Mime, L48|", "|poke|p2|Ho-Oh, L60|"]
+        let names = BattleClient.teamPreviewSpeciesNames(log)
+        XCTAssertEqual(names["p1"], ["Pikachu", "Mr. Mime"])
+        XCTAssertEqual(names["p2"], ["Ho-Oh"])
     }
 }

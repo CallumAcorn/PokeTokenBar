@@ -64,6 +64,10 @@ final class BattleStore {
     /// True only while a `refreshOpenBattles()` call is in flight — lets the browse screen show a
     /// spinner on the very first load instead of flashing "no open battles" for the round trip.
     private(set) var isLoadingOpenBattles = false
+    /// The spectate-browse list — `GET /battles/live`, same on-demand/not-continuously-polled shape
+    /// as `openBattles` above and for the same reason (a few seconds stale is harmless here too).
+    private(set) var liveBattles: [BattleClient.LiveBattle] = []
+    private(set) var isLoadingLiveBattles = false
     /// The roster this side submitted — still needed since `PublicMon` (`you.roster`) is just
     /// species/name/fainted/HP, no moveset. `you.activeMoves` (Gen 5 move audit, Fix B) now
     /// supplies the active mon's live move slots directly, but switch UI etc. still resolve a
@@ -190,7 +194,23 @@ final class BattleStore {
     func refreshOpenBattles() async {
         isLoadingOpenBattles = true
         defer { isLoadingOpenBattles = false }
-        openBattles = (try? await BattleClient.openBattles(serverURL: online.serverURL, session: session)) ?? []
+        do {
+            openBattles = try await BattleClient.openBattles(serverURL: online.serverURL, session: session)
+        } catch {
+            AppLog.write("refreshOpenBattles failed: \(error) (serverURL=\(online.serverURL))")
+            openBattles = []
+        }
+    }
+
+    func refreshLiveBattles() async {
+        isLoadingLiveBattles = true
+        defer { isLoadingLiveBattles = false }
+        do {
+            liveBattles = try await BattleClient.liveBattles(serverURL: online.serverURL, session: session)
+        } catch {
+            AppLog.write("refreshLiveBattles failed: \(error) (serverURL=\(online.serverURL))")
+            liveBattles = []
+        }
     }
 
     // MARK: Polling

@@ -19,7 +19,6 @@ enum PopoverMetrics {
 @Observable
 final class PopoverNavigation {
     var showSettings = false
-    var showTrade = false
     var tab: PopoverTab = .home
     /// 프로바이더 탭 선택 — reset() 대상이 아님(팝오버를 다시 열어도 보던 서비스 유지).
     var providerID: String?
@@ -28,10 +27,12 @@ final class PopoverNavigation {
     /// chrome and real estate the 360pt popover strip can't give it). Same closure-bridging shape
     /// FloatingPetController.onOpenPopover already uses to cross the AppKit/SwiftUI boundary.
     var onOpenBattleWindow: (() -> Void)?
+    /// Same as `onOpenBattleWindow`, set by AppDelegate to `TradeWindowController.show` — trading
+    /// moved out of the popover for the same reason battling did (trading-overhaul.md).
+    var onOpenTradeWindow: (() -> Void)?
 
     func reset() {
         showSettings = false
-        showTrade = false
         tab = .home
     }
 }
@@ -57,12 +58,7 @@ struct PopoverView: View {
         // 이후 팝오버의 모든 버튼 클릭을 차단할 수 있음 — 팝오버 내부 화면 전환으로 처리
         @Bindable var nav = nav
         Group {
-            if nav.showTrade {
-                TradeView(onClose: { nav.showTrade = false })
-                    .environment(companion)
-                    .environment(trade)
-                    .environment(online)
-            } else if nav.showSettings {
+            if nav.showSettings {
                 SettingsView(onClose: { nav.showSettings = false })
                     .environment(store)
                     .environment(companion)
@@ -795,9 +791,16 @@ struct PopoverView: View {
             }
             Spacer()
             Button {
-                nav.showTrade = true
+                nav.onOpenTradeWindow?()
             } label: {
                 Image(systemName: "arrow.left.arrow.right")
+                    // Same "something to come back to" dot BattleView's entry point uses — a trade
+                    // window can be closed (hidden) without ending an in-progress session either.
+                    .overlay(alignment: .topTrailing) {
+                        if trade.phase != .idle {
+                            Circle().fill(.red).frame(width: 6, height: 6).offset(x: 3, y: -3)
+                        }
+                    }
             }
             .buttonStyle(.borderless)
             .help(l.tradeEntryPointHelp)

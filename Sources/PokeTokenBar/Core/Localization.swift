@@ -631,23 +631,59 @@ struct L {
 
     // MARK: 거래
     var tradeTitle: String { t("거래", "Trade", "交換", "Intercambio") }
-    var tradePickOffer: String { t("보낼 포켓몬을 골라주세요", "Pick a Pokémon to offer", "送るポケモンを選んでください", "Elige un Pokémon para ofrecer") }
+    var tradePickOffer: String { t("제안할 포켓몬과 토큰을 골라주세요", "Pick what to offer — Pokémon and/or tokens", "提案するポケモンとトークンを選んでください", "Elige qué ofrecer: Pokémon y/o tokens") }
     var tradeNoBenchedMons: String { t("PC에 훈련 중이 아닌 포켓몬이 없어요.\n먼저 훈련 대상을 바꾸거나 새 알을 부화시켜 보세요.", "You don't have any benched Pokémon to offer.\nSwitch your training focus or hatch a new egg first.", "PCに育成中でないポケモンがいません。\nまず育成対象を切り替えるか、新しい卵を孵化させてください。", "No tienes ningún Pokémon en el banco para ofrecer.\nCambia tu Pokémon en entrenamiento o eclosiona un huevo primero.") }
-    var tradeCreateButton: String { t("이 포켓몬으로 거래 시작", "Start trade with this Pokémon", "このポケモンで交換を開始", "Iniciar intercambio con este Pokémon") }
+    var tradeCreateButton: String { t("거래 시작", "Start trade", "交換を開始", "Iniciar intercambio") }
     var tradeWaitingForJoin: String { t("친구가 링크를 열기를 기다리는 중…", "Waiting for a friend to open the link…", "友達がリンクを開くのを待っています…", "Esperando a que un amigo abra el enlace…") }
+    /// Browse leads on the chooser screen now (see tradeBrowseSubtitle) — this session already shows
+    /// up there (`GET /trades/open`) the instant it's created, same "link is the backup path" note
+    /// battleWaitingHelpText carries for battles.
+    var tradeWaitingHelpText: String {
+        t("참가하고 싶은 사람은 열린 거래 찾아보기에서도 이 거래를 바로 볼 수 있어요.",
+          "Anyone looking to join can also find this trade by browsing open trades.",
+          "参加したい人は、開いている交換一覧からもこの取引をすぐに見つけられます。",
+          "Cualquiera que quiera unirse también puede encontrar este intercambio buscando intercambios abiertos.")
+    }
     var tradeShareLink: String { t("링크 공유", "Share link", "リンクを共有", "Compartir enlace") }
     var tradeCopyLink: String { t("링크 복사", "Copy link", "リンクをコピー", "Copiar enlace") }
     var tradeCopied: String { t("복사됨", "Copied", "コピーしました", "Copiado") }
     var tradeWaitingForCounterpart: String { t("상대가 포켓몬을 고르는 중…", "Waiting for the other trainer to pick…", "相手がポケモンを選んでいます…", "Esperando a que el otro entrenador elija…") }
+    /// Screen prompt above the side-by-side "your offer" / "their offer" comparison — no longer
+    /// mon-specific wording ("...is offering this Pokémon") since an offer can be 0-6 mons and/or
+    /// tokens now (trading-overhaul.md).
     func tradeReviewOffer(_ name: String) -> String {
-        t("\(name)님이 이 포켓몬을 제안했어요", "\(name) is offering this Pokémon", "\(name) さんがこのポケモンを提案しました", "\(name) te ofrece este Pokémon")
+        t("\(name)님과의 거래를 검토하세요", "Review the trade with \(name)", "\(name) さんとの交換内容を確認してください", "Revisa el intercambio con \(name)")
+    }
+    /// Right-hand column header on the review screen, paired with `tradeYourOffer` for the left.
+    var tradeTheirOffer: String { t("상대의 제안", "Their offer", "相手の提案", "Su oferta") }
+    /// Shown on `TradeStore.Phase.confirmed` — I've confirmed, the counterpart hasn't yet. Distinct
+    /// from `tradeWaitingForCounterpart` (which covers the earlier "they haven't offered anything
+    /// at all yet" wait) so the copy actually reflects that *I* already acted.
+    var tradeYouConfirmedWaiting: String {
+        t("확정했어요 — 상대의 확정을 기다리는 중…", "You confirmed — waiting for the other trainer…",
+          "確定しました — 相手の確定を待っています…", "Confirmaste — esperando al otro entrenador…")
     }
     var tradeConfirmButton: String { t("거래 확정", "Confirm trade", "交換を確定", "Confirmar intercambio") }
     var tradeCancelButton: String { t("취소", "Cancel", "キャンセル", "Cancelar") }
-    func tradeCompleted(_ received: String, from: String) -> String {
-        t("\(from)님에게서 \(received)을(를) 받았어요!", "You received \(received) from \(from)!", "\(from) さんから \(received) を受け取りました！", "¡Recibiste a \(received) de \(from)!")
+    /// Result-card title (BattleView.resultView's own "big bold headline" shape) — the completion
+    /// screen's facelift, sitting above `tradeCompletedSummary`'s subtitle line.
+    var tradeCompletedTitle: String { t("거래 완료!", "Trade complete!", "交換完了！", "¡Intercambio completo!") }
+    /// Multi-mon/token trade completion — replaced the old single-mon "you received X" wording
+    /// (trading-overhaul.md), since the receive list itself now renders above this line.
+    func tradeCompletedSummary(_ from: String) -> String {
+        t("\(from)님과의 거래가 완료됐어요!", "Your trade with \(from) is complete!", "\(from) さんとの交換が完了しました！", "¡Tu intercambio con \(from) se completó!")
     }
     var tradeDoneButton: String { t("완료", "Done", "完了", "Listo") }
+    /// Label over the offer picker's numeric token stake field.
+    var tradeTokenStakeLabel: String { t("토큰 제안", "Token stake", "トークンの提案", "Oferta de tokens") }
+    func tradeTokenStakeAvailable(_ amount: String) -> String {
+        t("보유: \(amount)", "Balance: \(amount)", "所持: \(amount)", "Saldo: \(amount)")
+    }
+    var tradeTokenStakeMaxButton: String { t("최대", "Max", "最大", "Máx") }
+    /// The token half of an offer/received preview — "+250M tokens".
+    func tradeTokenDelta(_ amount: String) -> String {
+        t("+\(amount) 토큰", "+\(amount) tokens", "+\(amount) トークン", "+\(amount) tokens")
+    }
     var tradeFailedTitle: String { t("거래에 실패했어요", "Trade failed", "交換に失敗しました", "El intercambio falló") }
     var tradeAuthErrorMessage: String {
         t("서버에 연결할 수 없어요. 설정에서 서버 주소가 정확한지, 테스트가 성공했는지 확인해 주세요.",
@@ -701,6 +737,20 @@ struct L {
         t("이 거래는 이미 진행됐어요 — 새로 시작해주세요.", "This trade already moved on — try starting a new one.",
           "この交換はすでに進行しています — 新しく始めてください。", "Este intercambio ya avanzó — intenta empezar uno nuevo.")
     }
+    /// "How do you want to start?" screen — mirrors battleStartPrompt, same three-way chooser shape
+    /// (browse leads, create, join via link) trading-overhaul.md asks trading to adopt too.
+    var tradeStartPrompt: String { t("어떻게 시작할까요?", "How do you want to start?", "どうやって始めますか？", "¿Cómo quieres empezar?") }
+    var tradeBrowseOpen: String { t("열린 거래 찾아보기", "Browse open trades", "募集中の交換を見る", "Buscar intercambios abiertos") }
+    var tradeBrowseSubtitle: String { t("참가할 거래 찾기", "Find a trade to join", "参加できる交換を探す", "Busca un intercambio para unirte") }
+    var tradeCreateSubtitle: String { t("포켓몬·토큰을 고르고 초대 링크를 공유하세요", "Pick Pokémon and/or tokens, then share an invite link", "ポケモン・トークンを選んで招待リンクを共有", "Elige Pokémon y/o tokens, y comparte un enlace") }
+    var tradeJoinViaLinkButton: String { t("링크로 참가", "Join via link", "リンクで参加", "Unirse con un enlace") }
+    var tradeJoinViaLinkSubtitle: String { t("친구가 보낸 초대 링크를 붙여넣으세요", "Paste a link a friend sent you", "友達から届いたリンクを貼り付け", "Pega un enlace que te haya enviado un amigo") }
+    var tradePasteLinkPrompt: String { t("거래 링크를 붙여넣으세요", "Paste the trade link below", "下に交換リンクを貼り付けてください", "Pega el enlace del intercambio abajo") }
+    var tradeBrowsePrompt: String { t("참가할 거래를 골라주세요", "Pick a trade to join", "参加する交換を選んでください", "Elige un intercambio para unirte") }
+    var tradeNoOpenTrades: String { t("지금 열려 있는 거래가 없어요", "No open trades right now", "現在募集中の交換はありません", "No hay intercambios abiertos ahora mismo") }
+    /// Label over the offer picker's picked-mons grid — deliberately not `battleYourTeam`
+    /// ("Your team" reads as a battle roster, not an outgoing trade offer).
+    var tradeYourOffer: String { t("보내는 포켓몬", "Your offer", "送るポケモン", "Tu oferta") }
 
     // MARK: 배틀
     var battleTitle: String { t("배틀", "Battle", "バトル", "Batalla") }
@@ -721,6 +771,15 @@ struct L {
     /// value `battleOpenRosterSize`'s row already shows in the browse list, just surfaced here too so
     /// two people can confirm they're looking at the same session over voice/text without the link.
     var battleSessionCodeLabel: String { t("세션 코드", "Session code", "セッションコード", "Código de sesión") }
+    /// Shown on the waiting-for-opponent screen, under the share link — names *both* ways in now
+    /// that Browse leads (see `battleBrowseSubtitle`), so the link doesn't read as the only option
+    /// once it's been visually demoted to a small button on the chooser screen.
+    var battleWaitingHelpText: String {
+        t("친구에게 배틀 목록에서 참가하라고 알려주거나, 이 링크를 보내세요",
+          "Let them know to join from the battle list — or just send this link",
+          "友達にバトル一覧から参加するよう伝えるか、このリンクを送ってください",
+          "Diles que se unan desde la lista de batallas, o simplemente envía este enlace")
+    }
     /// The instant gap between tapping Create/Join and there being anything real to show yet — see
     /// `BattleStore.Phase.starting`'s doc comment.
     var battleStartingTitle: String { t("배틀 시작 중…", "Starting battle…", "バトルを開始しています…", "Iniciando batalla…") }
@@ -737,6 +796,7 @@ struct L {
     var battleInvalidInviteLink: String {
         t("유효한 배틀 링크가 아니에요", "That's not a valid battle link", "有効なバトルリンクではありません", "Ese no es un enlace de batalla válido")
     }
+    var battlePasteFromClipboardHelp: String { t("클립보드에서 붙여넣기", "Paste from clipboard", "クリップボードから貼り付け", "Pegar desde el portapapeles") }
     func battleJoinPrompt(_ server: String) -> String {
         t("\(server)에서 온 배틀 초대예요. 참가할까요?", "You've been invited to a battle on \(server). Join?", "\(server) からのバトルの招待です。参加しますか？", "Te han invitado a una batalla en \(server). ¿Quieres unirte?")
     }
@@ -793,6 +853,16 @@ struct L {
         t("\(pokemon)의 \(move) 사용!", "\(pokemon) used \(move)!", "\(pokemon)の\(move)！", "¡\(pokemon) usó \(move)!")
     }
     var battlePP: String { t("PP", "PP", "PP", "PP") }
+
+    // MARK: 관전 (Spectator) — see spectator.md
+    var battleSpectateButton: String { t("관전", "Spectate", "観戦", "Ver") }
+    var spectatorTitle: String { t("관전 중", "Watching", "観戦中", "Viendo") }
+    var spectatorConnecting: String { t("배틀에 연결하는 중…", "Connecting to the battle…", "バトルに接続しています…", "Conectando a la batalla…") }
+    /// The pre-join 409 — someone shared a spectate link before their opponent ever joined.
+    var spectatorNotStarted: String { t("아직 상대가 참가하지 않았어요", "Nobody's joined this battle yet", "まだ相手が参加していません", "Nadie se ha unido a esta batalla todavía") }
+    func spectatorTurn(_ n: Int) -> String { t("\(n)턴", "Turn \(n)", "\(n)ターン目", "Turno \(n)") }
+    var spectatorDraw: String { t("무승부", "Draw", "引き分け", "Empate") }
+    func spectatorWinner(_ name: String) -> String { t("\(name) 승리!", "\(name) wins!", "\(name) の勝利！", "¡\(name) gana!") }
     // MARK: Battle effect chips — short floating labels next to a sprite (parseEffectChips), shown
     // alongside the hit-flash for whatever a move (or an end-of-turn tick like Leech Seed's drain)
     // actually did: a stat stage, a status, a cure, an HP swing, a faint.
@@ -849,9 +919,16 @@ struct L {
     // MARK: Mode-chooser subtitles — one line of context under each big start-flow button.
     var battleCreateSubtitle: String { t("팀을 고르고 초대 링크를 공유하세요", "Pick a team and share an invite link", "チームを選んで招待リンクを共有", "Elige un equipo y comparte un enlace") }
     var battleJoinViaLinkSubtitle: String { t("친구가 보낸 초대 링크를 붙여넣으세요", "Paste a link a friend sent you", "友達から届いたリンクを貼り付け", "Pega un enlace que te haya enviado un amigo") }
-    var battleBrowseSubtitle: String { t("상대를 기다리고 있는 배틀 찾기", "Find a battle waiting for an opponent", "対戦相手を待っているバトルを探す", "Busca una batalla que espera oponente") }
+    /// Browse is now the primary way in — this card covers both joining an open lobby and watching
+    /// a live one (two tabs on the same screen, see `browseListStep`), so the subtitle names both
+    /// rather than just joining.
+    var battleBrowseSubtitle: String { t("참가하거나 관전할 배틀 찾기", "Find a battle to join or watch", "参加・観戦できるバトルを探す", "Busca una batalla para unirte o ver") }
     var battlePasteLinkPrompt: String { t("배틀 링크를 붙여넣으세요", "Paste the battle link below", "下にバトルリンクを貼り付けてください", "Pega el enlace de la batalla abajo") }
     var battleBrowsePrompt: String { t("참가할 배틀을 골라주세요", "Pick a battle to join", "参加するバトルを選んでください", "Elige una batalla para unirte") }
+    /// The two tabs on the browse screen — see above.
+    var battleBrowseJoinTab: String { t("참가", "Join", "参加", "Unirse") }
+    var battleBrowseWatchTab: String { t("관전", "Watch", "観戦", "Ver") }
+    var battleNoLiveBattles: String { t("지금 진행 중인 배틀이 없어요", "No battles in progress right now", "現在進行中のバトルはありません", "No hay batallas en curso ahora mismo") }
     var battleForfeitButton: String { t("기권", "Forfeit", "降参", "Rendirse") }
     var battleForfeitConfirmTitle: String { t("이 배틀을 기권할까요?", "Forfeit this battle?", "このバトルを降参しますか？", "¿Rendirte en esta batalla?") }
 

@@ -56,6 +56,9 @@ struct TradeDeepLink: Equatable {
 /// (decision: the reservation list is a session concern, not a save-file concern) — persisted to
 /// its own small file instead, so SaveTransfer's trust boundary and field classification stay
 /// untouched.
+///
+/// Multi-mon + token offers (trading-overhaul.md): an offer is 0-6 mons plus a token stake, mirroring
+/// `battles.md`'s roster shape rather than the single-mon offer this store originally carried.
 @MainActor
 @Observable
 final class TradeStore {
@@ -64,31 +67,61 @@ final class TradeStore {
         case waitingForJoin(sessionId: String, shareURL: URL?)
         case waitingForCounterpart(sessionId: String)
         case reviewingCounterpart(sessionId: String, counterpart: Offer)
-        case completed(received: MonState, from: String)
+        /// I've tapped Confirm; the counterpart hasn't yet (still `"offered"` server-side, but I've
+        /// added my own uuid to the confirmed set). Distinct from `reviewingCounterpart` so the
+        /// button tap has a visible effect instead of the screen just sitting there unchanged until
+        /// the counterpart also confirms — see `confirm()`/`backOut()`.
+        case confirmed(sessionId: String, counterpart: Offer)
+        case completed(received: [MonState], tokens: Int, from: String)
         case failed(TradeClient.TradeError)
         case expired
     }
     struct Offer: Equatable {
         let displayName: String
-        let pokemon: MonState
+        let pokemon: [MonState]
+        let tokens: Int
     }
 
     private(set) var phase: Phase = .idle
     private(set) var reservedMonIDs: Set<String> = []
+    /// The lobby browse list — `GET /trades/open`, refreshed on demand by the offer-picker UI, not
+    /// polled continuously — same "a few seconds stale is harmless" reasoning as
+    /// `BattleStore.openBattles`.
+    private(set) var openTrades: [TradeClient.OpenTrade] = []
+    /// True only while a `refreshOpenTrades()` call is in flight — lets the browse screen show a
+    /// spinner on the first load instead of flashing "no open trades" for the round trip.
+    private(set) var isLoadingOpenTrades = false
 
     private let companion: CompanionStore
     private let online: OnlineStore
     private let fileURL: URL
     private let session: URLSession
+    private let pollIntervalNanoseconds: UInt64
     private var pollTask: Task<Void, Never>?
-    /// The mon I offered in the trade currently in progress — on completion, this id gets removed
-    /// and the counterpart's mon gets added.
-    private var myOfferedMonID: String?
+    /// The mons I offered in the trade currently in progress — on completion, these ids get removed
+    /// and the counterpart's mons get added. `private(set)`, not private: the review screen reads
+    /// this (resolved against `companion.party`, since the mons are still mine until completion) to
+    /// show "your offer" next to the counterpart's, not just theirs.
+    private(set) var myOfferedMonIDs: [String] = []
+    /// The token stake I offered in the trade currently in progress — moves my own `spentTokens`
+    /// ledger on completion, same timing as `myOfferedMonIDs`. Also read by the review screen.
+    private(set) var myOfferedTokens = 0
+    /// Session ids already applied via `applyCompletion` — unlike `removeFromParty`/`addTradedMon`,
+    /// `CompanionStore.applyTradeTokens` is a cumulative ledger move, not idempotent by id, so a
+    /// late-arriving second "completed" poll for the same session must not re-apply it.
+    private var completedSessionIDs: Set<String> = []
+    /// Whether I've confirmed the trade currently in progress — tracked separately from `phase`
+    /// because the server keeps reporting `"offered"` (not yet `"completed"`) for as long as only
+    /// one side has confirmed, and `pollOnce` must not downgrade `.confirmed` back to
+    /// `.reviewingCounterpart` on the next tick just because the status string hasn't changed yet.
+    private var hasConfirmed = false
 
-    init(companion: CompanionStore, online: OnlineStore, fileURL: URL? = nil, session: URLSession = .shared) {
+    init(companion: CompanionStore, online: OnlineStore, fileURL: URL? = nil, session: URLSession = .shared,
+         pollIntervalNanoseconds: UInt64 = 2_000_000_000) {
         self.companion = companion
         self.online = online
         self.session = session
+        self.pollIntervalNanoseconds = pollIntervalNanoseconds
         self.fileURL = fileURL ?? Self.defaultURL()
         reservedMonIDs = Self.loadReservations(from: self.fileURL)
     }
@@ -117,16 +150,18 @@ final class TradeStore {
         try? data.write(to: fileURL, options: .atomic)
     }
 
-    // MARK: Starting — create / join
+    // MARK: Starting — create / join / browse
 
-    func createTrade(offering mon: MonState) async {
+    func createTrade(offering mons: [MonState], tokens: Int = 0) async {
         cancel()
-        myOfferedMonID = mon.id
-        reservedMonIDs.insert(mon.id)
+        myOfferedMonIDs = mons.map(\.id)
+        myOfferedTokens = tokens
+        reservedMonIDs.formUnion(myOfferedMonIDs)
         saveReservations()
         do {
             let sessionId = try await TradeClient.create(serverURL: online.serverURL, uuid: online.clientUUID,
-                                                          displayName: online.displayName, offering: mon, session: session)
+                                                          displayName: online.displayName, offering: mons, tokens: tokens,
+                                                          session: session)
             let shareURL = OnlineStore.endpointURL(from: online.serverURL, path: "/t/\(sessionId)")
             phase = .waitingForJoin(sessionId: sessionId, shareURL: shareURL)
             startPolling(sessionId: sessionId)
@@ -151,20 +186,33 @@ final class TradeStore {
         pendingInvite = nil
     }
 
-    func joinTrade(sessionId: String, server: String, offering mon: MonState) async {
+    func joinTrade(sessionId: String, server: String, offering mons: [MonState], tokens: Int = 0) async {
         cancel()
-        myOfferedMonID = mon.id
-        reservedMonIDs.insert(mon.id)
+        myOfferedMonIDs = mons.map(\.id)
+        myOfferedTokens = tokens
+        reservedMonIDs.formUnion(myOfferedMonIDs)
         saveReservations()
         pendingInvite = nil
         do {
             try await TradeClient.join(serverURL: server, sessionId: sessionId, uuid: online.clientUUID,
-                                       displayName: online.displayName, offering: mon, session: session)
+                                       displayName: online.displayName, offering: mons, tokens: tokens, session: session)
             phase = .waitingForCounterpart(sessionId: sessionId)
             startPolling(sessionId: sessionId, server: server)
         } catch {
             releaseReservation()
             fail(error)
+        }
+    }
+
+    /// The lobby browse list — mirrors `BattleStore.refreshOpenBattles`.
+    func refreshOpenTrades() async {
+        isLoadingOpenTrades = true
+        defer { isLoadingOpenTrades = false }
+        do {
+            openTrades = try await TradeClient.openTrades(serverURL: online.serverURL, session: session)
+        } catch {
+            AppLog.write("refreshOpenTrades failed: \(error) (serverURL=\(online.serverURL))")
+            openTrades = []
         }
     }
 
@@ -178,7 +226,7 @@ final class TradeStore {
             while !Task.isCancelled {
                 await self.pollOnce(sessionId: sessionId, serverURL: serverURL)
                 if Task.isCancelled { return }
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await Task.sleep(nanoseconds: self.pollIntervalNanoseconds)
             }
         }
     }
@@ -190,13 +238,17 @@ final class TradeStore {
             switch response.status {
             case "offered":
                 if let c = response.counterpart {
-                    phase = .reviewingCounterpart(sessionId: sessionId, counterpart: Offer(displayName: c.displayName, pokemon: c.pokemon))
+                    let offer = Self.incomingOffer(c)
+                    phase = hasConfirmed
+                        ? .confirmed(sessionId: sessionId, counterpart: offer)
+                        : .reviewingCounterpart(sessionId: sessionId, counterpart: offer)
                 } else {
                     phase = .waitingForCounterpart(sessionId: sessionId)
                 }
             case "completed":
-                if let c = response.counterpart, let mine = myOfferedMonID {
-                    applyCompletion(Offer(displayName: c.displayName, pokemon: c.pokemon), myOfferedMonID: mine)
+                if let c = response.counterpart, !completedSessionIDs.contains(sessionId) {
+                    completedSessionIDs.insert(sessionId)
+                    applyCompletion(Self.incomingOffer(c))
                 }
                 pollTask?.cancel()
             default:
@@ -220,16 +272,32 @@ final class TradeStore {
     // MARK: Confirm / complete
 
     func confirm() async {
-        guard case .reviewingCounterpart(let sessionId, _) = phase else { return }
+        guard case .reviewingCounterpart(let sessionId, let counterpart) = phase else { return }
         do {
             _ = try await TradeClient.confirm(serverURL: online.serverURL, sessionId: sessionId, uuid: online.clientUUID, session: session)
             // Applying completion is handled by the next polling tick (once the server returns
             // completed) — not applied optimistically here: if the other side hasn't confirmed yet,
             // the server still returns "offered", and if I'd already removed my mon by then, there'd
             // be no way to undo it if the other side cancels or the trade expires.
+            hasConfirmed = true
+            phase = .confirmed(sessionId: sessionId, counterpart: counterpart)
         } catch {
             fail(error)
         }
+    }
+
+    /// Takes back a confirm — the only way to genuinely leave a trade after tapping Confirm, not
+    /// just stop looking at the screen (which would leave the server still holding my confirmation,
+    /// so the trade could complete on the counterpart's side the moment they confirm too). Re-checks
+    /// `phase` after the network round trip: if the counterpart confirmed while this call was in
+    /// flight, the trade already completed server-side and it's too late to back out — don't
+    /// clobber that with a local `cancel()`.
+    func backOut() async {
+        guard case .confirmed(let sessionId, _) = phase else { return }
+        hasConfirmed = false
+        _ = try? await TradeClient.unconfirm(serverURL: online.serverURL, sessionId: sessionId, uuid: online.clientUUID, session: session)
+        guard case .confirmed = phase else { return }
+        cancel()
     }
 
     /// Puts up the failure screen, then automatically returns to the offer picker (same as tapping
@@ -252,24 +320,37 @@ final class TradeStore {
         }
     }
 
-    /// Applies a completed trade — idempotent (both removeFromParty/addTradedMon are a no-op for
-    /// an id already handled). Safe for a late-arriving poll to call this again.
-    private func applyCompletion(_ counterpart: Offer, myOfferedMonID: String) {
-        companion.removeFromParty(myOfferedMonID)
-        companion.addTradedMon(counterpart.pokemon, from: counterpart.displayName)
+    /// 서버가 준 상대 제안 → 정규화된 `Offer`. 제안이 만들어지는 곳은 이 한 군데뿐이어야 한다 — 호출부가
+    /// 늘어도 정규화를 빠뜨릴 수 없게.
+    private static func incomingOffer(_ c: TradeClient.StatusResponse.Counterpart) -> Offer {
+        let clean = TradeClient.sanitizedIncomingOffer(pokemon: c.pokemon, tokens: c.tokens)
+        return Offer(displayName: c.displayName, pokemon: clean.pokemon, tokens: clean.tokens)
+    }
+
+    /// Applies a completed trade — idempotent (both removeFromParty/addTradedMon/applyTradeTokens
+    /// are a no-op for an id/delta already handled — see each's own doc comment). Safe for a
+    /// late-arriving poll to call this again.
+    private func applyCompletion(_ counterpart: Offer) {
+        for id in myOfferedMonIDs { companion.removeFromParty(id) }
+        for mon in counterpart.pokemon { companion.addTradedMon(mon, from: counterpart.displayName) }
+        // Sender's ledger moves by what I sent (pays for my own gift) and what I received (frees up
+        // balance) — see CompanionStore.applyTradeTokens's doc comment for the sign convention.
+        companion.applyTradeTokens(spentDelta: myOfferedTokens - counterpart.tokens)
         releaseReservation()
-        phase = .completed(received: counterpart.pokemon, from: counterpart.displayName)
+        phase = .completed(received: counterpart.pokemon, tokens: counterpart.tokens, from: counterpart.displayName)
     }
 
     private func releaseReservation() {
-        if let id = myOfferedMonID { reservedMonIDs.remove(id) }
-        myOfferedMonID = nil
+        reservedMonIDs.subtract(myOfferedMonIDs)
+        myOfferedMonIDs = []
+        myOfferedTokens = 0
         saveReservations()
     }
 
     func cancel() {
         pollTask?.cancel()
         pollTask = nil
+        hasConfirmed = false
         if case .completed = phase {} else { releaseReservation() }
         phase = .idle
     }

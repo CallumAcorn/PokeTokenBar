@@ -140,6 +140,8 @@ enum SaveTransfer {
     /// 다운스트림 산술 지점마다 막으면 새 지점이 생길 때마다 재발하므로, 값이 **들어오는 경계 한 곳**에서
     /// 정규화한다. 대상은 실제로 산술에 쓰이는 필드뿐이다 — 도감·인벤토리 항목은 잘라내지 않는다(데이터 손실).
     private static func clampToken(_ v: Int) -> Int { min(max(0, v), maxTokenValue) }
+    /// 부호 있는 장부용 — 음수를 보존하면서 크기만 묶는다.
+    static func clampSignedToken(_ v: Int) -> Int { min(max(-maxTokenValue, v), maxTokenValue) }
 
     /// Trust-boundary clamp for a single individual — shared by both the party-array sweep
     /// (sanitized) and a mon received via trade (CompanionStore.addTradedMon). A trade payload is
@@ -181,7 +183,11 @@ enum SaveTransfer {
     static func sanitized(_ state: CompanionState) -> CompanionState {
         var s = state
         s.usedSinceInstall = clampToken(s.usedSinceInstall)
-        s.spentTokens = clampToken(s.spentTokens)
+        // spentTokens 는 **부호 있는 장부**다 — 거래로 토큰을 받으면 음수가 되는 게 정상이다(받은 만큼
+        // 지출이 줄어든다, `applyTradeTokens`). 다른 수치처럼 `0...max` 로 자르면 받은 토큰이 **재시작할
+        // 때마다 0 으로 지워진다**(거래 기능 도입 후 실측: -350 → 0). 대칭으로 자른다 — 오버플로 트랩은
+        // 여전히 막고(|값| ≤ maxTokenValue 라 `usedSinceInstall - spentTokens` 가 Int 범위 안), 정당한 음수는 보존한다.
+        s.spentTokens = clampSignedToken(s.spentTokens)
         s.eggUsage = clampToken(s.eggUsage)
         s.claimedTodayTokensByProvider = s.claimedTodayTokensByProvider?.reduce(into: [:]) { result, entry in
             result[entry.key] = clampToken(entry.value)

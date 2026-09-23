@@ -254,6 +254,16 @@ final class CompanionStore {
         state.dexUnlocked[speciesID]?.names.flatMap { state.language.resolveName($0) } ?? "#\(speciesID)"
     }
 
+    /// Same value as `speciesName` when the species is already known (free, no network); otherwise
+    /// resolves it live via `line(baseID:)`. Needed for a trade counterpart's Pokémon — accepting a
+    /// trade doesn't require having ever seen that species before, unlike everything else this app
+    /// shows a name for (always something owned, hence already dex-unlocked).
+    func resolvedSpeciesName(baseID: Int, currentID: Int) async -> String {
+        let known = speciesName(currentID)
+        guard known.hasPrefix("#"), let line = await line(baseID: baseID) else { return known }
+        return line.localizedName(currentID, state.language)
+    }
+
     /// 이름이 없는 구버전 졸업 항목의 체인 이름을 채운다(도감 격자 진입 시 1회).
     ///
     /// 격자는 저장된 이름만 읽으므로 백필이 없으면 칸이 종 번호(`#41`)로 남는다. 포획 로그는 행이
@@ -1292,6 +1302,22 @@ final class CompanionStore {
                                   source: .trade(from: displayName)))
         save()
         return true
+    }
+
+    /// Moves a trade's token stake through the same ledger `buy`/`buyEgg` already move
+    /// (`spentTokens`), not a new balance — see trading-overhaul.md's "Token mechanism." Positive
+    /// `spentDelta` is tokens sent (pays for the gift, same direction a purchase moves the ledger);
+    /// negative is tokens received (frees up balance, and can legitimately push `spentTokens`
+    /// negative — see that doc for why that's correct, not a bug). A no-op for `0` so a plain
+    /// mon-for-mon trade never touches the field.
+    func applyTradeTokens(spentDelta: Int) {
+        guard spentDelta != 0 else { return }
+        // 거래가 쌓이면 이 누적이 경계를 넘을 수 있다 — 넘치는 덧셈은 트랩이므로 포화시킨다.
+        // (들어오는 제안은 `TradeClient.sanitizedIncomingOffer` 에서 이미 잘리지만, 영속 상태에 대한
+        // 산술은 입력 경로를 믿지 않고 여기서도 묶는다.)
+        let (sum, overflow) = state.spentTokens.addingReportingOverflow(spentDelta)
+        state.spentTokens = SaveTransfer.clampSignedToken(overflow ? (spentDelta < 0 ? Int.min : Int.max) : sum)
+        save()
     }
 
     /// 지급 판정(순수·엣지 트리거) — 한도 창이 100% 를 새로 넘어선 순간에만 지급.

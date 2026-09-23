@@ -93,6 +93,41 @@ enum BattleClient {
         let log: [String]?
         let result: String?  // "win" | "loss" | "draw"
     }
+    // MARK: Spectating — see spectator.md
+
+    /// The same restricted shape `battleView` already gives a participant's *opponent* (species/
+    /// name/fainted/HP-fraction on the active mon, bench size only) — a spectator gets this for
+    /// both sides, never the "you" privilege (real moveset, exact roster) either participant has
+    /// over their own mon. No new privilege level, just this one rendered twice server-side.
+    struct SpectatorSide: Codable, Equatable {
+        let displayName: String
+        let active: PublicMon?
+        let rosterSize: Int
+    }
+    struct SpectatorView: Codable, Equatable {
+        let status: String   // "waiting" | "active" | "completed"
+        let turn: Int
+        let p1: SpectatorSide?
+        let p2: SpectatorSide?
+        let hostLeadSpeciesID: Int?
+        let log: [String]?
+        let winner: String?  // "p1" | "p2" | "draw" — never "win"/"loss", which only mean something
+                              // relative to a participant; see spectatorView in battles.ts.
+    }
+
+    /// No `uuid` — spectating needs none of the participant auth `status(...)` requires (see
+    /// `GET /battles/:id/spectate`'s own doc comment server-side).
+    static func spectate(serverURL: String, sessionId: String,
+                          session: URLSession = .shared) async throws(BattleError) -> SpectatorView {
+        guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/\(sessionId)/spectate") else {
+            throw .invalidServerURL
+        }
+        let req = request(url, method: "GET")
+        let data = try await send(req, session: session)
+        guard let decoded = try? JSONDecoder().decode(SpectatorView.self, from: data) else { throw .decoding }
+        return decoded
+    }
+
     struct OpenBattle: Codable, Equatable {
         let sessionId: String
         let displayName: String
@@ -100,6 +135,17 @@ enum BattleClient {
         /// Epoch milliseconds, a raw `Date.now()` from the server — NOT an ISO 8601 string, unlike
         /// `MonState`'s embedded dates in a trade payload. Decode as a number; convert manually
         /// (`Date(timeIntervalSince1970: createdAt / 1000)`) if a `Date` is ever needed for display.
+        let createdAt: Double
+    }
+
+    /// A battle already underway, browsable for spectating — `GET /battles/live`'s entries. Browse
+    /// is now the primary way in for both joining (`OpenBattle`) and spectating; a shared link is
+    /// the backup, not the default.
+    struct LiveBattle: Codable, Equatable {
+        let sessionId: String
+        let p1DisplayName: String
+        let p2DisplayName: String
+        let turn: Int
         let createdAt: Double
     }
 
@@ -119,6 +165,7 @@ enum BattleClient {
     private struct UUIDPayload: Encodable { let uuid: String }
     private struct CreateResponse: Decodable { let sessionId: String }
     private struct OpenListResponse: Decodable { let battles: [OpenBattle] }
+    private struct LiveListResponse: Decodable { let battles: [LiveBattle] }
 
     /// Per-request deadline. URLRequest's default is 60s, which is far longer than the quit path
     /// is willing to wait: `applicationShouldTerminate` fires a leave and must let the app die
@@ -215,6 +262,14 @@ enum BattleClient {
         return decoded.battles
     }
 
+    static func liveBattles(serverURL: String, session: URLSession = .shared) async throws(BattleError) -> [LiveBattle] {
+        guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/live") else { throw .invalidServerURL }
+        let req = request(url, method: "GET")
+        let data = try await send(req, session: session)
+        guard let decoded = try? JSONDecoder().decode(LiveListResponse.self, from: data) else { throw .decoding }
+        return decoded.battles
+    }
+
     // MARK: Opponent roster reveal (gym badges)
 
     /// Team preview (`|poke|p1|Pikachu, L50|`, one line per roster slot, in roster order) reveals
@@ -222,13 +277,27 @@ enum BattleClient {
     /// out — kept as its own small copy of the parse `BattleView` (the SwiftUI screen) already does
     /// for its chat recap; different callers, pure wire-format knowledge, not worth sharing a type
     /// across the Core/UI boundary for.
-    private static func teamPreviewSpeciesNames(_ log: [String]) -> [String: [String]] {
+    /// 팀 프리뷰(`|poke|<side>|<species>, ...|`)에서 진영별 종명을 뽑는다. **이 파서는 여기 하나뿐이다.**
+    ///
+    /// 로그는 서버가 주고, 서버는 초대·관전 링크로 지정될 수 있어 신뢰 대상이 아니다. 호출부들이 뽑힌
+    /// 이름마다 `speciesID(name:)` 로 PokéAPI 를 한 번씩 부르므로(순차 await), 자르지 않으면 서버가 보낸
+    /// 서로 다른 이름 수만큼 요청이 나가고 그동안 화면이 멈춘다. `slug` 제한(#25)은 URL 경로를 지킬 뿐
+    /// **요청 수**는 지키지 못한다 — 이 상한이 그 몫이다.
+    ///
+    /// 실제 대전은 두 진영(`p1`/`p2`) × 최대 `maxRosterSize` 마리가 전부라, 그 밖의 진영 키나 초과분은
+    /// 정상 대전에서 나올 수 없고 잘라도 잃는 정보가 없다.
+    ///
+    /// 예전엔 같은 파서가 `BattleClient`·`BattleView`·`SpectatorView` 세 곳에 복사돼 있었다. 셋 다 상한이
+    /// 없었고, 고치려면 세 번 고쳐야 했다 — 복사본이 늘수록 다음 복사본에서 빠뜨린다. 그래서 합쳤다.
+    static func teamPreviewSpeciesNames(_ log: [String]) -> [String: [String]] {
         var result: [String: [String]] = [:]
         for line in log {
             let parts = line.components(separatedBy: "|")
             guard parts.count >= 4, parts[1] == "poke" else { continue }
+            let side = parts[2]
+            guard side == "p1" || side == "p2", (result[side]?.count ?? 0) < maxRosterSize else { continue }
             let species = parts[3].components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? parts[3]
-            result[parts[2], default: []].append(species)
+            result[side, default: []].append(species)
         }
         return result
     }
