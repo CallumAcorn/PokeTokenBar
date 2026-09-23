@@ -118,6 +118,12 @@ expect "build-app.sh 가 hardened runtime 으로 서명" "grep -q 'options runti
 # 바이너리 배포로 돌아간다면 SHA256SUMS·서명 게이트·EXPECTED_LEAF 핀을 함께 되살려야 한다.
 refute "release.sh 가 릴리스에 바이너리를 첨부하지 않음" "grep -qE 'ditto -c -k|release (create|upload).*\.zip' scripts/release.sh"
 refute "워크플로 액션이 전부 커밋 SHA 로 고정" "grep -rnE 'uses: .*@(v[0-9]+|main|master)\$' .github/workflows/"
+# ATS 는 두 겹 중 바깥 겹이다. 안쪽은 `OnlineStore.isAllowedScheme`(원격 평문 HTTP 거부, 루프백만 허용).
+# 로컬 개발 서버를 위해 `NSAllowsLocalNetworking` 은 true 가 됐지만(#35) — 앱 게이트가 다시 루프백으로
+# 좁힌다 — 아래 두 키가 true 로 바뀌면 **임의 원격 호스트로 평문**이 열리고 앱 게이트 하나만 남는다.
+# 이 키들을 지키는 검사가 없어서 #35 의 ATS 변경도 조용히 통과했다.
+expect "ATS: 임의 원격 평문 로드 금지 유지" "grep -q '<key>NSAllowsArbitraryLoads</key><false/>' scripts/build-app.sh"
+expect "ATS: 웹 콘텐츠 임의 평문 로드 금지 유지" "grep -q '<key>NSAllowsArbitraryLoadsInWebContent</key><false/>' scripts/build-app.sh"
 
 rm -rf build/verify
 echo
