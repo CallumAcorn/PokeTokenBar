@@ -198,6 +198,42 @@ final class TradeCompanionStoreTests: XCTestCase {
     /// A positive delta (tokens sent) moves the ledger the same direction a shop purchase does;
     /// a negative delta (tokens received) frees up balance; `0` is a no-op so a plain mon-for-mon
     /// trade never touches the field.
+    /// 거래로 받은 토큰은 음수 spentTokens 로 남는다 — 로드 경계가 이걸 0 으로 자르면 재시작마다 받은
+    /// 토큰이 사라진다. 수정 전 실측: -350 → 0.
+    func testTradeCreditSurvivesAReload() {
+        let s = store()
+        s.applyTradeTokens(spentDelta: -350)
+        XCTAssertEqual(SaveTransfer.sanitized(s.state).spentTokens, -350, "받은 토큰이 로드 시 지워졌다")
+    }
+
+    /// 음수 "선물"은 받는 쪽 지갑을 빼 가는 절도 벡터다 — 신뢰경계에서 0 으로 잘려야 한다.
+    func testNegativeCounterpartTokensCannotDrainTheWallet() {
+        let clean = TradeClient.sanitizedIncomingOffer(pokemon: [], tokens: -1_000_000_000)
+        XCTAssertEqual(clean.tokens, 0, "음수 토큰이 통과해 지갑을 빼 갈 수 있었다")
+    }
+
+    /// 아주 큰 값·Int.min 은 지갑 산술(`usedSinceInstall - spentTokens`)에서 트랩을 낸다.
+    /// 경계에서 묶이고, 영속 상태 누적도 포화해야 한다.
+    func testExtremeCounterpartTokensAreBoundedAndCannotTrap() {
+        for hostile in [Int.max, Int.min, SaveTransfer.maxTokenValue * 10] {
+            let clean = TradeClient.sanitizedIncomingOffer(pokemon: [], tokens: hostile)
+            XCTAssertTrue((0...SaveTransfer.maxTokenValue).contains(clean.tokens), "\(hostile) 가 경계를 통과했다")
+        }
+        let s = store()
+        s.applyTradeTokens(spentDelta: Int.min)   // 포화 안 하면 여기서 트랩
+        s.applyTradeTokens(spentDelta: Int.min)
+        _ = s.availableTokens                     // 매 렌더마다 읽는 값 — 여기서도 트랩 나면 안 된다
+        XCTAssertGreaterThanOrEqual(s.state.spentTokens, -SaveTransfer.maxTokenValue)
+    }
+
+    /// 보낼 때만 6 으로 막고 받을 때 상한이 없으면 상대가 보내는 대로 파티에 다 들어온다.
+    func testIncomingPokemonAreCappedAtTheOfferLimit() {
+        let flood = (0..<50).map { _ in MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1],
+                                                  stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1) }
+        XCTAssertEqual(TradeClient.sanitizedIncomingOffer(pokemon: flood, tokens: 0).pokemon.count,
+                       TradeClient.maxOfferSize, "받는 쪽에 상한이 없었다")
+    }
+
     func testApplyTradeTokensMovesSpentTokensBySignedDelta() {
         let s = store()
         XCTAssertEqual(s.state.spentTokens, 0)

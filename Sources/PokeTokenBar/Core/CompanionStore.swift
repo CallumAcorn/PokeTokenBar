@@ -1312,7 +1312,11 @@ final class CompanionStore {
     /// mon-for-mon trade never touches the field.
     func applyTradeTokens(spentDelta: Int) {
         guard spentDelta != 0 else { return }
-        state.spentTokens += spentDelta
+        // 거래가 쌓이면 이 누적이 경계를 넘을 수 있다 — 넘치는 덧셈은 트랩이므로 포화시킨다.
+        // (들어오는 제안은 `TradeClient.sanitizedIncomingOffer` 에서 이미 잘리지만, 영속 상태에 대한
+        // 산술은 입력 경로를 믿지 않고 여기서도 묶는다.)
+        let (sum, overflow) = state.spentTokens.addingReportingOverflow(spentDelta)
+        state.spentTokens = SaveTransfer.clampSignedToken(overflow ? (spentDelta < 0 ? Int.min : Int.max) : sum)
         save()
     }
 

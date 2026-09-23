@@ -238,7 +238,7 @@ final class TradeStore {
             switch response.status {
             case "offered":
                 if let c = response.counterpart {
-                    let offer = Offer(displayName: c.displayName, pokemon: c.pokemon, tokens: c.tokens)
+                    let offer = Self.incomingOffer(c)
                     phase = hasConfirmed
                         ? .confirmed(sessionId: sessionId, counterpart: offer)
                         : .reviewingCounterpart(sessionId: sessionId, counterpart: offer)
@@ -248,7 +248,7 @@ final class TradeStore {
             case "completed":
                 if let c = response.counterpart, !completedSessionIDs.contains(sessionId) {
                     completedSessionIDs.insert(sessionId)
-                    applyCompletion(Offer(displayName: c.displayName, pokemon: c.pokemon, tokens: c.tokens))
+                    applyCompletion(Self.incomingOffer(c))
                 }
                 pollTask?.cancel()
             default:
@@ -318,6 +318,13 @@ final class TradeStore {
             guard let self, case .failed = self.phase else { return }
             self.cancel()
         }
+    }
+
+    /// 서버가 준 상대 제안 → 정규화된 `Offer`. 제안이 만들어지는 곳은 이 한 군데뿐이어야 한다 — 호출부가
+    /// 늘어도 정규화를 빠뜨릴 수 없게.
+    private static func incomingOffer(_ c: TradeClient.StatusResponse.Counterpart) -> Offer {
+        let clean = TradeClient.sanitizedIncomingOffer(pokemon: c.pokemon, tokens: c.tokens)
+        return Offer(displayName: c.displayName, pokemon: clean.pokemon, tokens: clean.tokens)
     }
 
     /// Applies a completed trade — idempotent (both removeFromParty/addTradedMon/applyTradeTokens

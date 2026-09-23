@@ -9,6 +9,26 @@ enum TradeClient {
     /// whole create/join request with `400` past 6.
     static let maxOfferSize = 6
 
+    /// 상대가 보낸 제안을 신뢰경계에서 정규화한다. 이 값은 **상대 플레이어가 서버를 통해 보낸 것**이고,
+    /// 서버 자체도 초대 링크로 지정될 수 있어 신뢰 대상이 아니다(`OnlineStore.isAllowedScheme` 와 같은 전제).
+    ///
+    /// **토큰은 반드시 `0...maxTokenValue` 로 자른다.** 정규화 전에는 이 값이 지갑 산술
+    /// (`myOfferedTokens - counterpart.tokens`, 이어서 `spentTokens += delta`)에 그대로 들어갔다:
+    /// - **음수**를 "주면" delta 가 커져 받는 쪽 지갑이 **빠져나간다**. 선물처럼 보이는 거래가 실제로는 절도다.
+    /// - **아주 큰 양수**는 spentTokens 를 크게 음수로 만들고, 매 렌더마다 읽는
+    ///   `availableTokens = usedSinceInstall - spentTokens` 에서 오버플로 트랩이 난다.
+    /// - **`Int.min`** 은 뺄셈 자체에서 트랩이다.
+    /// 음수 선물은 정상 거래에서 나올 수 없으므로 0 으로 자르는 데 손실이 없다.
+    ///
+    /// **포켓몬 수는 `maxOfferSize` 로 자른다.** 보낼 때 피커가 6 으로 막을 뿐 받는 쪽에는 상한이
+    /// 없어서, 상대가 보내는 대로 파티에 전부 들어갔다. 7마리 이상은 정상 거래에서 나올 수 없다.
+    ///
+    /// 제안이 만들어지는 **두 곳 모두**(검토 화면·완료)에서 이 함수를 거치므로, 악의적인 값이 화면에
+    /// 표시되는 일도, 지갑에 닿는 일도 없다.
+    static func sanitizedIncomingOffer(pokemon: [MonState], tokens: Int) -> (pokemon: [MonState], tokens: Int) {
+        (Array(pokemon.prefix(maxOfferSize)), min(max(0, tokens), SaveTransfer.maxTokenValue))
+    }
+
     struct StatusResponse: Codable {
         let status: String   // "open" | "offered" | "completed"
         let counterpart: Counterpart?
