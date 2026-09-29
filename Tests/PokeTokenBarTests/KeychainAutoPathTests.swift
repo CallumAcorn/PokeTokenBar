@@ -20,6 +20,10 @@ final class KeychainAutoPathTests: XCTestCase {
         let savedGate = KeychainAccessGate.isDisabled
         KeychainAccessGate.isDisabled = false
         defer { KeychainAccessGate.isDisabled = savedGate }
+        // 게이트를 열되 키체인은 가짜로 — 프로바이더의 실제 규율을 돌리면서 사용자 키체인은 안 건드린다.
+        AppEnv.allowLiveLimitsFetchForTesting = true
+        KeychainReader.stubStatusForTesting = errSecItemNotFound
+        defer { AppEnv.allowLiveLimitsFetchForTesting = false; KeychainReader.stubStatusForTesting = nil }
 
         for probe in Self.automaticProbes {
             KeychainReader.resetQueryCountForTesting()
@@ -40,6 +44,10 @@ final class KeychainAutoPathTests: XCTestCase {
         let savedGate = KeychainAccessGate.isDisabled
         KeychainAccessGate.isDisabled = false
         defer { KeychainAccessGate.isDisabled = savedGate }
+        // 게이트를 열되 키체인은 가짜로 — 프로바이더의 실제 규율을 돌리면서 사용자 키체인은 안 건드린다.
+        AppEnv.allowLiveLimitsFetchForTesting = true
+        KeychainReader.stubStatusForTesting = errSecItemNotFound
+        defer { AppEnv.allowLiveLimitsFetchForTesting = false; KeychainReader.stubStatusForTesting = nil }
 
         KeychainReader.resetQueryCountForTesting()
         _ = try? await AntigravityRateLimitsProvider().fetch(allowKeychainPrompt: true)

@@ -606,4 +606,33 @@ final class CredentialGateCoverageTests: XCTestCase {
                            "prompt=\(allowPrompt): 매칭 0건이어야 한다 (status=\(status))")
         }
     }
+
+    /// 테스트가 사용자의 실제 파일을 고쳐 쓰면 안 된다. 실측: 게이트 전에는 전체 테스트 한 번이 사용자
+    /// `usage-cache.json` 을 726,929 → 763,881 바이트로 바꿨다. 주입 경로는 언제나 허용(테스트가 임시
+    /// 파일로 영속화를 검증하는 방식), 기본 경로는 실앱에서만.
+    func testStoresOnlyTouchTheUserLocationInsideTheApp() {
+        let tmp = URL(fileURLWithPath: "/tmp/x.json")
+        XCTAssertTrue(AppEnv.persistsToUserLocation(injectedFileURL: tmp, isBundledApp: false),
+                      "주입한 경로는 테스트에서도 영속화돼야 한다")
+        XCTAssertFalse(AppEnv.persistsToUserLocation(injectedFileURL: nil, isBundledApp: false),
+                       "기본(사용자) 경로를 테스트가 건드렸다")
+        XCTAssertTrue(AppEnv.persistsToUserLocation(injectedFileURL: nil, isBundledApp: true),
+                      "실앱에서는 기본 경로로 영속화해야 한다")
+    }
+
+    /// 커서 로컬 DB 의 손상된 토큰 수가 `parseCursorBubble` 의 `input + output` 합산에서 트랩을 내면 안 된다.
+    /// 예전 `intValue` 사본은 상한이 없어 `NSNumber.intValue` 가 `Int.max` 로 포화했고, 둘을 더하는 순간 죽었다.
+    /// 수정 전 실측: SIGTRAP(signal 5).
+    func testCorruptCursorTokenCountsCannotTrap() {
+        let huge = NSNumber(value: Double.greatestFiniteMagnitude)
+        let bubble: [String: Any] = [
+            "tokenCount": ["inputTokens": huge, "outputTokens": huge],
+            "createdAt": "2026-09-29T00:00:00Z",
+            "modelType": "gpt-5",
+        ]
+        let entry = LocalAdditionalUsageReader.parseCursorBubble(bubble, key: "k", modifiedSince: .distantPast)
+        let e = try? XCTUnwrap(entry)
+        XCTAssertNotNil(e, "파싱 자체는 돼야 한다")
+        XCTAssertLessThanOrEqual(e?.total ?? 0, 2 * LocalUsageReader.maxParsedTokenValue)
+    }
 }

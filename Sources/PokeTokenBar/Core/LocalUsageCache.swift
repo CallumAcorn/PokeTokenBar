@@ -102,6 +102,8 @@ actor LocalUsageCache {
     private let grokRoots: [URL]?
     private let piRoots: [URL]?
     private let fileURL: URL
+    /// false 면 디스크를 읽지도 쓰지도 않는다 — `AppEnv.persistsToUserLocation` 참조.
+    private let persists: Bool
     private let now: @Sendable () -> Date
     /// throwing probe 를 쓴다 — 읽기 실패(throw)와 "metadata 없음"(`nil`)은 인덱스에 남길지가 다르다.
     private let codexProbe: @Sendable (URL) throws -> String?
@@ -132,6 +134,7 @@ actor LocalUsageCache {
         self.grokRoots = grokRoots
         self.piRoots = piRoots
         self.fileURL = fileURL ?? Self.defaultFileURL
+        self.persists = AppEnv.persistsToUserLocation(injectedFileURL: fileURL)
         self.now = now
         self.codexProbe = codexProbe
     }
@@ -364,7 +367,7 @@ actor LocalUsageCache {
     private func ensureLoaded() {
         guard !loaded else { return }
         loaded = true
-        guard let raw = try? Data(contentsOf: fileURL) else { return }
+        guard persists, let raw = try? Data(contentsOf: fileURL) else { return }
         // zlib 압축 스냅샷(현행) → 실패 시 평문 JSON(구버전 캐시) 폴백
         let data = (try? (raw as NSData).decompressed(using: .zlib) as Data) ?? raw
         guard let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
@@ -407,7 +410,7 @@ actor LocalUsageCache {
 
     /// 변경이 있으면 디스크에 저장(최소 60초 간격으로 throttle — 잦은 쓰기 방지).
     private func saveIfNeeded() {
-        guard dirty else { return }
+        guard persists, dirty else { return }
         if let last = lastSave, now().timeIntervalSince(last) < 60 { return }
         prune()
         let snap = Snapshot(
