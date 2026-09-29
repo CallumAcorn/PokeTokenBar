@@ -1115,10 +1115,22 @@ enum LocalAdditionalUsageReader {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    /// 외부 파일(커서 DB·Kiro·OpenCode 로그)의 토큰 수 — 음수는 0, 상한은 `LocalUsageReader.maxParsedTokenValue`.
+    ///
+    /// 이 함수는 `LocalUsageReader.intValue` 의 **별도 사본**이다. 그쪽은 합산 오버플로 크래시 뒤에 상한을
+    /// 얻었지만(defect-log '외부에서 오는 모든 수치'), 이 사본은 하한만 있고 상한이 없었다. `NSNumber.intValue`
+    /// 는 `Int.max` 로 포화하므로, 손상된 값 하나가 합산에서 `+` 오버플로 트랩을 낸다 — 커서 로컬 DB 의
+    /// `tokenCount` 가 정확히 이 경로를 탄다(`parseCursorBubble`). 상류 #307 과 같은 수정.
+    /// 사본이 둘이면 수정도 두 번이다. 상한은 새로 만들지 않고 그쪽 값을 그대로 쓴다.
     private static func intValue(_ value: Any?) -> Int {
-        if let number = value as? NSNumber { return max(0, number.intValue) }
+        let cap = LocalUsageReader.maxParsedTokenValue
+        if let number = value as? NSNumber {
+            let d = number.doubleValue
+            guard d.isFinite, d > 0 else { return 0 }
+            return d >= Double(cap) ? cap : Int(d)
+        }
         if let string = value as? String, let number = Int(string.trimmingCharacters(in: .whitespaces)) {
-            return max(0, number)
+            return min(max(0, number), cap)
         }
         return 0
     }

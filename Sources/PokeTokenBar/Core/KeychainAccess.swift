@@ -28,8 +28,14 @@ enum KeychainReader {
 
     static func resetQueryCountForTesting() { queryCount = 0 }
 
+    /// 테스트용 대체 백엔드. 설정하면 `SecItemCopyMatching` 대신 이 값을 돌려준다 — 조회 **횟수**는
+    /// 그대로 세면서 실제 키체인에는 닿지 않는다. 키체인 규율 테스트가 사용자의 실제 키체인을 읽고
+    /// (`allowKeychainPrompt: true` 면 프롬프트까지 띄우며) 돌던 것을 막는다.
+    nonisolated(unsafe) static var stubStatusForTesting: OSStatus?
+
     static func copyMatching(_ query: [String: Any], _ result: inout CFTypeRef?) -> OSStatus {
         queryCount += 1
+        if let stub = stubStatusForTesting { return stub }
         return SecItemCopyMatching(query as CFDictionary, &result)
     }
 }

@@ -24,12 +24,21 @@ enum ModelPricing {
         "claude-opus-4-7":            .perMillion(5, 25, 6.25, 0.5),
         "claude-sonnet-4-6":          .perMillion(3, 15, 3.75, 0.3),
         "claude-haiku-4-5-20251001":  .perMillion(1, 5, 1.25, 0.1),
+        // Claude 5 계열 — 명시 행(상류 #304·Opus 5.5 행). 패밀리 폴백이 이 포크엔 남아 있어 "Unavailable"은
+        // 안 됐지만, 폴백 단가가 **틀린** 모델이 있었다: `claude-opus-5-5` 는 폴백이 Opus 5 단가
+        // (5, 25, 6.25, 0.5)를 매겼는데 실제는 (4, 20, 5, 0.2) — 입력·출력·캐시쓰기 25%, **캐시 읽기 2.5배**
+        // 과대계상. 캐시 읽기가 실사용의 대부분이라 총액이 크게 부풀었다. `claude-sonnet-5` 도 폴백이
+        // Sonnet 4 단가로 1.5배 과대. `claude-opus-5` 는 폴백과 같은 값이지만 명시해 둔다(폴백 변경에 안 흔들리게).
+        "claude-opus-5":              .perMillion(5, 25, 6.25, 0.5),
+        "claude-opus-5-5":            .perMillion(4, 20, 5, 0.2),
+        "claude-sonnet-5":            .perMillion(2, 10, 2.5, 0.2),
         "claude-fable-5":             .perMillion(10, 50, 12.5, 1.0), // LiteLLM 스냅샷 가격 등재됨(2026-08) — 기존 미가격 $0 플레이스홀더 대체
         // Fable 5.1: Fable 5 와 기본 단가는 같지만 cache read 만 $0.25/MTok(입력의 0.025배)로 내려갔다.
         // 이 줄이 없으면 `fable` 패밀리 폴백이 Fable 5 의 $1.00 을 적용해 **비용을 4배 부풀린다**(상류 #277).
         "claude-fable-5-1":           .perMillion(10, 50, 12.5, 0.25),
         "gpt-5.5":                    .perMillion(5, 30, 0, 0.5),
         // Gemini — 공식 API 단가(기본 티어, ≤200K 프롬프트). 캐시는 read 단가만(스토리지 시간요금 제외).
+        "gemini-2.5-flash-lite":      .perMillion(0.10, 0.40, 0, 0.01),   // 상류 #309
         "gemini-2.5-pro":             .perMillion(1.25, 10, 0, 0.3125),
         "gemini-2.5-flash":           .perMillion(0.30, 2.5, 0, 0.075),
         "gemini-2.0-flash":           .perMillion(0.10, 0.4, 0, 0.025),

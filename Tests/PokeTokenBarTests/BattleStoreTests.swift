@@ -151,7 +151,16 @@ final class BattleStoreNetworkTests: XCTestCase {
         let session = URLSession(configuration: config)
         let online = OnlineStore(defaults: UserDefaults(suiteName: "BattleStoreNetworkTests.\(UUID().uuidString)")!, session: session)
         online.serverURL = "https://mock.test"
-        return BattleStore(companion: companion, online: online, session: session, pollIntervalNanoseconds: pollIntervalNanoseconds)
+        let store = BattleStore(companion: companion, online: online, session: session, pollIntervalNanoseconds: pollIntervalNanoseconds)
+        // SpectatorStoreTests 와 같은 누수: 멈추지 않은 스토어가 다음 테스트가 정적 공유 큐에 넣은 응답을
+        // 먼저 가져간다. 거기서 CI 간헐 실패로 드러났고, 같은 패턴을 복사한 이 파일은 스토어를 하나도 안
+        // 멈추고 있었다(아직 터지지 않았을 뿐). 부류째 고친다.
+        addTeardownBlock { await store.cancel() }
+        return store
+    }
+
+    override func setUp() async throws {
+        QueuedStubURLProtocol.responses = []
     }
 
     /// [Mirrors TradeStoreFailureTests] A 401 must not be a dead end — self-heals back to idle.

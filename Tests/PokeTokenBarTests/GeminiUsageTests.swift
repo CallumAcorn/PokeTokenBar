@@ -97,6 +97,14 @@ final class GeminiUsageTests: XCTestCase {
         // 통과하지만, cache read 만 $1.00 → $0.25 로 내려가 있다. 명시 행이 없으면 캐시 비용을
         // **4배** 부풀린다 — 캐시 읽기가 대부분인 실사용에서 총액이 눈에 띄게 틀어진다(상류 #277).
         XCTAssertEqual(ModelPricing.rate(for: "claude-fable-5-1"), .perMillion(10, 50, 12.5, 0.25))
+        // Opus 5.5 는 폴백(`contains("opus")` → Opus 5 단가)이 **틀린** 값을 매기던 모델이다. 명시 행이
+        // 없으면 캐시 읽기가 0.5 로 새어 2.5배 과대가 된다 — 캐시 읽기가 대부분인 실사용에서 총액이 부푼다.
+        XCTAssertEqual(ModelPricing.rate(for: "claude-opus-5-5"), .perMillion(4, 20, 5, 0.2))
+        XCTAssertEqual(ModelPricing.cost(model: "claude-opus-5-5", input: 0, output: 0,
+                                         cacheWrite: 0, cacheRead: 1_000_000), 0.2,
+                       accuracy: 0.0001, "폴백으로 새면 0.5 가 된다")
+        XCTAssertEqual(ModelPricing.rate(for: "claude-sonnet-5"), .perMillion(2, 10, 2.5, 0.2),
+                       "폴백은 Sonnet 4 단가(3,15)로 1.5배 과대")
         XCTAssertEqual(ModelPricing.cost(model: "claude-fable-5-1", input: 0, output: 0,
                                          cacheWrite: 0, cacheRead: 1_000_000), 0.25,
                        accuracy: 0.0001, "패밀리 폴백으로 새면 1.00 이 된다")

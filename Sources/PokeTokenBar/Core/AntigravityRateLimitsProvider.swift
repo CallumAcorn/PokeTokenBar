@@ -17,6 +17,9 @@ public struct AntigravityRateLimitsProvider: AntigravityLimitsProviding, Sendabl
     public init() {}
 
     public func fetch(allowKeychainPrompt: Bool = false) async throws -> AntigravityRateLimitStatus {
+        // 테스트가 사용자의 실제 토큰으로 원격을 부르지 않게 — `AppEnv.allowsLiveLimitsFetch` 참조.
+        // Keychain 읽기보다 **먼저** 막는다: 막아야 할 것은 네트워크만이 아니라 자격증명 접근 자체다.
+        guard AppEnv.allowsLiveLimitsFetch else { throw LimitsError.keychainAccessDisabled }
         let token = try await tokenCache.accessToken(allowKeychainPrompt: allowKeychainPrompt)
         do {
             return try await fetchStatus(accessToken: token)
