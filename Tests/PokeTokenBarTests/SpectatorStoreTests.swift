@@ -31,10 +31,20 @@ final class SpectatorStoreTests: XCTestCase {
         return condition()
     }
 
+    /// 스텁 응답 큐는 **정적 공유 상태**다. 이전 테스트가 남긴 스토어가 10ms 마다 계속 폴하면서 다음 테스트가
+    /// 넣은 응답을 먼저 `removeFirst()` 해 가고, 그 테스트의 스토어는 빈 본문을 받아 `.connecting` 에 멈춘다 —
+    /// CI 에서만 간헐적으로 실패한 원인(main fac7ea0 포함, 로컬은 통과). 네 테스트 중 스토어를 멈추는 건
+    /// 하나뿐이었다. 그래서 여기서 만든 스토어는 **전부** 테스트 끝에 멈추고, 큐는 테스트마다 비운다.
+    override func setUp() async throws {
+        SpectatorQueuedStubURLProtocol.responses = []
+    }
+
     private func makeStore(pollIntervalNanoseconds: UInt64 = 10_000_000) -> SpectatorStore {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SpectatorQueuedStubURLProtocol.self]
-        return SpectatorStore(session: URLSession(configuration: config), pollIntervalNanoseconds: pollIntervalNanoseconds)
+        let store = SpectatorStore(session: URLSession(configuration: config), pollIntervalNanoseconds: pollIntervalNanoseconds)
+        addTeardownBlock { @MainActor in store.stop() }
+        return store
     }
 
     func testStartTransitionsThroughConnectingToWatching() async {
