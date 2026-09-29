@@ -31,6 +31,7 @@ Rows are permanent: a declined commit stays declined until someone deliberately 
 | `skipped` | Not applicable here — the code it touches does not exist in this fork |
 | `declined` | Applicable, and deliberately not wanted |
 | `pending` | Decided to take, not yet applied. Carries the reason it is waiting, so it stays out of UNREVIEWED without being forgotten |
+| `deferred` | Wanted in principle, but it conflicts with how far this fork has diverged, so taking it means a deliberate port that could disturb existing behaviour. Not a decline: revisit by porting, not cherry-picking |
 
 ## Ledger
 
@@ -105,3 +106,64 @@ declined for the same reason, not re-litigated.
 | `232108cf` | #279 | **ported** | Taken as the `claude-fable-5-1` price row only. Without it the `fable` family fallback applies Fable 5's $1.00 cache read instead of $0.25 and **overstates cost 4x**; verified by injection. **The other half of this commit is NOT taken and still needs a decision**: `LocalUsageReader` +77 changes how Codex total-only turns are counted (#278), which is usage attribution rather than pricing. Codex is present on this machine, so it may be wanted |
 | `b6bf676f` | #264 | **declined** | Persistent individual values plus a Pokédex detail page, 1651 insertions across 16 files. **This fork already has IVs** (`MonState.ivs`/`evs`, `StatCalc`, clamped in `sanitizedMon`) built independently, so taking this would run a second parallel implementation into a model that already has one. Same structural fork as #158 and #211 at roughly ten times the size. If the Pokédex detail page is ever wanted, port that piece alone against our model |
 | `78980651` | #275 | **declined** | Ambient Keychain help popover. Its explanation is correct and independently confirms our own root-cause diagnosis, but the remedy it offers is the session key declined as #241: the help body's payoff is "register a session key", and the button is gated on `store.sessionKeyConfigured`, which does not exist here. Taking the meaningful part would steer users toward a full account cookie stored in plaintext. The safe half (explaining why the grant dies) already shipped in our own revocation notice, which offers re-authorising instead |
+| `a9107676` | #333 | taken | Hide providers with zero-token synthetic activity. Applied cleanly |
+| `878a0be2` | #307 | **ported** | Clamp extra-provider token counts. Ported as the `LocalAdditionalUsageProvider.intValue` ceiling only: that separate copy had no upper bound, and `parseCursorBubble`'s `input + output` trapped on a corrupt Cursor record (verified SIGTRAP). The Cursor dashboard half targets `CursorUsageAPI.swift`, which this fork does not have (#197 pending) |
+| `1ef19797` | #304 | **ported** | Claude 5 price rows, without #289's fallback removal. Sonnet 5 had been billed at Sonnet 4's fallback rate, 1.5x high |
+| `832154af` | — | **ported** | Opus 5.5 price row. The fallback billed it at Opus 5's rate: 25% high on input, output and cache writes, 2.5x high on cache reads |
+| `29a4e2d2` | #309 | **ported** | gemini-2.5-flash-lite price row. Pricing only |
+| `d6d24a04` | — | **ported** | Stop tests rewriting the user's files. **Measured on this machine**: one suite run changed the real `usage-cache.json` 726,929 to 763,881 bytes. Ported as `AppEnv.persistsToUserLocation` gating the usage cache; no state file changes after |
+| `671c1ece` | — | **ported** | Stop tests calling live limits endpoints. About ten tests built a `UsageStore` with the real providers, so with a live Keychain grant they called Anthropic with the user's token. Ported as `AppEnv.allowsLiveLimitsFetch` on the Claude and Antigravity fetches. The two Keychain-discipline tests now run against a stubbed Keychain instead of the real one |
+| `e5b48004` | #327 | **declined** | Track several Claude accounts, 3,419 lines. Built on the session key declined as #241 (25 references). Would reintroduce a full account cookie stored in plaintext |
+| `eed5b735` | — | **declined** | Per-account session key. Same reason as #241 |
+| `c9c016d0` | #280 | skipped | Prioritise user account over MCP placeholders. Built on the multi-account Keychain enumeration declined as #232; this fork's single-entry lookup is unaffected |
+| `e76a8e01` | #344 | skipped | Keep forked usage with its original account. Depends on multi-account (#327, declined) |
+| `5bd8d435` | #283 | skipped | Aside usage provider. Not installed, and a new provider adds parsing of untrusted files for no benefit |
+| `aaef5db0` | #274 | skipped | Antigravity nested token file and OAuth refresh. Antigravity not installed |
+| `87c67927` | #325 | skipped | Antigravity CLI/IDE token auto-detect. Not installed |
+| `641e3e80` | #323 | skipped | Localise Antigravity group names. Not installed |
+| `ab6c768d` | #276 | skipped | oh-my-pi per-model usage. Not installed |
+| `8c08e013` | #369 | skipped | Discover the codex bundle inside ChatGPT.app. ChatGPT.app not installed |
+| `3ea40afc` | #363 | skipped | OpenCode v2 sessions. Not installed |
+| `777ee274` | — | skipped | Cursor remaining included usage from the dashboard. Depends on the Cursor dashboard API (#197, still pending) |
+| `e94da861` | #334 | skipped | Re-arm Rare Candy when a limit window resets. **This fork already has it**, independently, as PR #29: the same design, keeping `resets_at` out of the key and re-arming when the recorded value changes. Upstream's also covers Codex windows; Codex limits do not load on this machine, so no loss |
+| `32725093` | #302 | skipped | Re-read the Keychain on limit refresh. This fork already bypasses the token cache on manual refresh. The remainder is the floating-pet footer toggle, tied to the difficulty chain |
+| `09fd6003` | — | declined | Upstream 2.5.4 version bump. Meaningless under this fork's versioning |
+| `42df4e61` | — | declined | Upstream 2.5.5 version bump. Same |
+| `065b2e18` | #297 | declined | Upstream release tour and screenshots. READMEs have diverged |
+| `b63fce25` | — | declined | Upstream screenshots and feature guides. Same |
+| `5e08e6fe` | #296 | declined | Require release notes and contributor attribution. Rewrites `release.sh`, which this fork has heavily reworked (source-only releases, asset waivers, `-hardened` versioning) |
+| `dec297a5` | #254 | declined | 2x growth on repeat hatches. Changes the balance of an existing feature |
+| `69ff39bb` | #289 | declined | Distinguish estimated from unavailable cost by removing the model-family price fallback. Would turn every unpriced model to 'Unavailable'; this fork instead adds explicit rows. 626 lines across 28 files |
+| `b0c6074f` | #244 | deferred | Difficulty multipliers (growth and shop-price slider, default unchanged). Changes shop and growth code paths; awaiting the maintainer's call |
+| `5963293b` | #287 | deferred | Fix for #244: difficulty changes advancing earned progress. Take with #244 |
+| `d4d34e7d` | #284 | deferred | Removes the floating-pet toggle #244 added. Take with #244 |
+| `014fcb28` | #352 | deferred | First-run egg hint follows growth difficulty. Depends on #244 |
+| `2fab082c` | #290 | deferred | Complete selected-language localisation, 835 lines. Heavy churn in the most-diverged file |
+| `10d1a07c` | #288 | deferred | Collect all Unown letter forms, 1,587 lines. Normalises its new state at the save boundary, but builds on the representative pin this fork reimplemented |
+| `4bfae978` | — | deferred | Select collected appearances separately. Builds on #288 |
+| `0912c68c` | #270 | deferred | Monthly day-by-day usage trend, 1,022 lines |
+| `78595ed8` | #332 | deferred | Usage recap for any week, month or year, 1,136 lines |
+| `2eec9afa` | #298 | deferred | Pace marker on quota bars |
+| `68deb094` | #349 | deferred | Colour quota bars by pace. Builds on #298 |
+| `b32717fb` | — | deferred | Colour menu-bar limit percentages like the gauges |
+| `2ecf7d2f` | #246 | deferred | Explain delayed egg hatches and harden retry state |
+| `2e8efddf` | #328 | deferred | Bulk Rare Candy use with growth previews. Touches the candy code fixed in #29 |
+| `13e3bf2a` | — | deferred | Local save auto-backup and corruption recovery, 776 lines. Changes the load path; worth doing as its own reviewed change |
+| `ae7bd9d3` | — | deferred | Search, sort and filters for the Pokédex and catch log, 775 lines |
+| `f0ef5ff3` | — | deferred | Colour dex numbers by rarity |
+| `279e112d` | #370 | deferred | Larger text and sprites in a 4x4 collection grid |
+| `d44329bb` | — | deferred | Fixed-height Home tab with a reserved scroll area |
+| `746d8384` | #356 | deferred | Korean particles matched to the name |
+| `c9514926` | #291 | deferred | Tell shoppers what a released Pokémon keeps. Build fails here: depends on the release feature this fork lacks |
+| `b4ff5de9` | — | deferred | **Protect legendary companions from accidental egg discard.** The most valuable deferral: it prevents losing a legendary. Changes the egg-purchase flow, so it wants a deliberate port |
+| `fe51577e` | #351 | deferred | Show real shiny odds in hatch notifications |
+| `184c5f41` | #282 | deferred | Avoid UI stalls opening large catch logs |
+| `087fd0f7` | #285 | deferred | Dex sprite animation consistency |
+| `fd008e53` | #286 | deferred | Quota graph fill matches remaining display mode |
+| `bb92bd2a` | #292 | deferred | Align quota percentages |
+| `a8b3ba82` | #293 | deferred | Display costs as plain dollars |
+| `1a8a7252` | #295 | deferred | Avoid English flashes loading Pokémon names |
+| `1c695c7d` | #311 | deferred | Show a skipped release in Settings. Safe for update pinning, but conflicts across four forked UI files |
+| `a94b3dae` | — | deferred | Stop unchanged status lines filling the log |
+| `5f6a4f0a` | — | deferred | Log each unpriced model once |
+| `8b2dd955` | — | deferred | Prefer reported Claude cost-state over the price-table estimate |
