@@ -661,4 +661,23 @@ final class CredentialGateCoverageTests: XCTestCase {
         XCTAssertFalse(msg.contains("Codex"), "Claude 사용자에게 'Codex 만 쓰면 무시'는 틀린 안내다")
         XCTAssertNotEqual(msg, UsageStore.friendlyLimitError(LimitsError.credentialFormat, L(.en)))
     }
+
+    /// Reset times drift by seconds between calls; only a real move is a new window.
+    func testWindowContinuityToleratesResetTimeJitter() {
+        typealias W = ExternalUsageCredit.WindowContinuity
+        let t = Date(timeIntervalSince1970: 1_790_000_000)
+        XCTAssertEqual(W.between(t, t.addingTimeInterval(3)), .same)
+        XCTAssertEqual(W.between(t, t.addingTimeInterval(5 * 3600)), .new)
+        XCTAssertEqual(W.between(nil, t), .unknown)
+        XCTAssertEqual(W.between(t, nil), .unknown)
+    }
+
+    /// The cap lifts only to the window's own 100 points; a hostile or garbled reading cannot pay more.
+    func testKnownWindowCreditIsBoundedByOneFullWindow() {
+        let xp = ExternalUsageCredit.credit(previousPercent: 0, currentPercent: 1e9, quietPolls: 1, activePolls: 0,
+                                            rate: 1_000_000, window: .new)
+        XCTAssertEqual(xp, 100 * 1_000_000)
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 0, currentPercent: .infinity, quietPolls: 1,
+                                                activePolls: 0, rate: 1_000_000, window: .new))
+    }
 }
