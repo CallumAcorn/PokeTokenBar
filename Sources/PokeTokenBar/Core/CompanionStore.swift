@@ -672,6 +672,7 @@ final class CompanionStore {
     /// A relaunch simply restarts the accumulation.
     private var lastExternalPercent: Double?
     private var lastExternalLocalTokens: Int?
+    private var lastExternalWindowReset: Date?
     /// Polls since the last five-hour-window tick, split by whether local token counts moved. The
     /// window ticks in whole percents far more often than the seven-day window used to, but
     /// attribution still accumulates across the gap rather than judging the single poll the tick
@@ -692,13 +693,17 @@ final class CompanionStore {
     /// tokens-per-percent to convert with — pass a self-calibrated one
     /// (`CalibrationLog.selfCalibratedTokensPerPercent`) when enough history exists, else the
     /// hardcoded `ExternalUsageCredit.tokensPerPercent`.
-    func creditExternalUsage(percent: Double?, localTokenTotal: Int, limitsReady: Bool, rate: Double) {
+    func creditExternalUsage(percent: Double?, localTokenTotal: Int, limitsReady: Bool, rate: Double,
+                             windowResetsAt: Date? = nil) {
         guard limitsReady, let percent else { return }
 
         // Classify this poll before judging the tick — a tick is only meaningful against the
         // period that produced it.
         if let previousTokens = lastExternalLocalTokens {
-            if localTokenTotal == previousTokens { quietPolls += 1 } else { activePolls += 1 }
+            // The total is today's, so it drops at midnight. After a rollover only a non-zero new
+            // day is local activity; counting the drop itself zeroed every overnight gap's credit.
+            let quiet = localTokenTotal < previousTokens ? localTokenTotal == 0 : localTokenTotal == previousTokens
+            if quiet { quietPolls += 1 } else { activePolls += 1 }
         }
         lastExternalLocalTokens = localTokenTotal
 
@@ -707,24 +712,28 @@ final class CompanionStore {
         let previousPercent = lastExternalPercent
         let quiet = quietPolls
         let active = activePolls
+        let window = ExternalUsageCredit.WindowContinuity.between(lastExternalWindowReset, windowResetsAt)
 
-        // A rise closes the accumulation period whether or not it paid out; a fall or a flat
-        // reading leaves it open so the next tick still sees the whole span.
-        if let previousPercent, percent > previousPercent {
+        // A rise or a new window closes the accumulation period whether or not it paid out; a fall
+        // or a flat reading in the same window leaves it open so the next tick still sees the span.
+        if let previousPercent, percent > previousPercent || window == .new {
             quietPolls = 0
             activePolls = 0
         }
         lastExternalPercent = percent
+        lastExternalWindowReset = windowResetsAt
 
         if let points = ExternalUsageCredit.quietWeightedPercentDelta(
-            previousPercent: previousPercent, currentPercent: percent, quietPolls: quiet, activePolls: active),
+            previousPercent: previousPercent, currentPercent: percent, quietPolls: quiet, activePolls: active,
+            window: window),
            points > 0 {
             externalUsagePointsSinceLaunch += points
         }
 
         guard ExternalUsageCredit.isEnabled,
               let xp = ExternalUsageCredit.credit(previousPercent: previousPercent, currentPercent: percent,
-                                                   quietPolls: quiet, activePolls: active, rate: rate),
+                                                   quietPolls: quiet, activePolls: active, rate: rate,
+                                                   window: window),
               xp > 0 else { return }
         externalUsageXPSinceLaunch += xp
         AppLog.write("external usage credit: +\(xp) xp from five-hour limit movement")

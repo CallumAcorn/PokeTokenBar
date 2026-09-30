@@ -1120,6 +1120,39 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertNotNil(store.limitTokenRefreshError, "남은 시간을 사용자에게 알려야 한다")
     }
 
+    /// 실사용 순서 그대로: 잘 되다가 → Claude Code 가 로그아웃하며 항목을 다시 써 권한까지 날아감(자동 폴은
+    /// 회수로 본다) → 수동 새로고침으로 토큰을 직접 읽어 보니 비어 있음 → 로그인 후 복구.
+    /// 핵심은 로그아웃이 확인된 뒤 "다시 허용하세요"라는 회수 안내가 **다시 뜨지 않는** 것이다.
+    func testSignedOutSupersedesTheRevokedNoticeUntilSignInSucceeds() async {
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(1_000))
+        let ok = claudeLimits(fiveHourUtil: 10)
+        let limits = ScriptedClaudeLimits([.success(ok),
+                                           .failure(LimitsError.keychainInteractionNotAllowed),
+                                           .failure(LimitsError.claudeCodeSignedOut),
+                                           .failure(LimitsError.keychainInteractionNotAllowed),
+                                           .success(ok)])
+        let store = UsageStore(providers: [claude], claudeLimitsProvider: limits,
+                               codexLimitsProvider: FakeCodexLimits(status: nil),
+                               antigravityLimitsProvider: FakeAntigravityLimits(status: nil),
+                               autoRefresh: false, defaults: testDefaults)
+        store.antigravityDataPresent = { false }
+
+        await store.refresh(scheduleEmptyRetry: false)                 // works
+        await store.refresh(scheduleEmptyRetry: false)                 // item rewritten → looks revoked
+        XCTAssertTrue(store.limitsGrantRevoked)
+        XCTAssertFalse(store.limitsSignedOut)
+
+        await store.refreshLimitTokenFromKeychain()                    // user re-allows → token is empty
+        XCTAssertTrue(store.limitsSignedOut, "빈 토큰을 봤는데 로그아웃으로 표시하지 않았다")
+        XCTAssertFalse(store.limitsGrantRevoked, "원인이 로그아웃인데 '다시 허용' 안내가 남았다")
+
+        await store.refresh(scheduleEmptyRetry: false)                 // next auto-poll is refused again
+        XCTAssertFalse(store.limitsGrantRevoked, "로그아웃 확인 뒤 회수 안내가 되살아났다")
+
+        await store.refreshLimitTokenFromKeychain()                    // after `claude auth login`
+        XCTAssertFalse(store.limitsSignedOut, "로그인 후에도 로그아웃 안내가 남았다")
+    }
+
     // MARK: Antigravity 한도 폴 게이트 (설치되지 않은 기기의 무의미한 Keychain 조회)
 
     /// Antigravity 대화 저장소가 없으면 자격증명도 없으므로 조회 자체를 하지 않는다.
@@ -1186,5 +1219,16 @@ private final class CountingAntigravityLimits: AntigravityLimitsProviding, @unch
     func fetch(allowKeychainPrompt: Bool) async throws -> AntigravityRateLimitStatus {
         calls += 1
         throw LimitsError.keychainInteractionNotAllowed
+    }
+}
+
+
+/// 호출마다 정해진 결과를 순서대로 돌려준다 — 실사용 순서를 그대로 재현하는 용도.
+private final class ScriptedClaudeLimits: ClaudeLimitsProviding, @unchecked Sendable {
+    nonisolated(unsafe) var script: [Result<LimitStatus, any Error>]
+    init(_ script: [Result<LimitStatus, any Error>]) { self.script = script }
+    func fetch(allowKeychainPrompt: Bool) async throws -> LimitStatus {
+        guard !script.isEmpty else { throw LimitsError.keychainInteractionNotAllowed }
+        return try script.removeFirst().get()
     }
 }

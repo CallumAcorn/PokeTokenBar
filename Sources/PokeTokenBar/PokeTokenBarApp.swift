@@ -270,7 +270,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         companion.creditExternalUsage(percent: store.externalCreditPercent,
                                       localTokenTotal: store.todayTotalTokens,
                                       limitsReady: store.limitsReady,
-                                      rate: externalUsageRate)
+                                      rate: externalUsageRate,
+                                      windowResetsAt: store.limits?.fiveHour?.resetDate)
     }
 
     // MARK: 메뉴바 애니메이션

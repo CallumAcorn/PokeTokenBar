@@ -181,6 +181,60 @@ final class ExternalUsageCreditStoreTests: XCTestCase {
         XCTAssertEqual(s.externalUsagePointsSinceLaunch, 0)
         XCTAssertEqual(s.trainingMon?.usedAtStage, 0)
     }
+
+    private let w1 = Date(timeIntervalSince1970: 1_790_000_000)
+    private var w2: Date { w1.addingTimeInterval(5 * 3600) }
+
+    /// Measured case: a gap crossed a reset, and the new window read 12% against the old 40%. That was
+    /// a "fall" and paid nothing, though all 12 points arrived after the baseline.
+    func testGapAcrossResetCreditsTheNewWindowFromZero() async {
+        setToggle(true)
+        let s = store()
+        await s.hatch(baseID: 1)
+        s.creditExternalUsage(percent: 40, localTokenTotal: 0, limitsReady: true, rate: 500_000, windowResetsAt: w1)
+        s.creditExternalUsage(percent: 12, localTokenTotal: 0, limitsReady: true, rate: 500_000, windowResetsAt: w2)
+        XCTAssertEqual(s.externalUsagePointsSinceLaunch, 12, accuracy: 0.0001)
+        XCTAssertEqual(s.externalUsageXPSinceLaunch, 12 * 500_000, "알려진 새 창은 5포인트 상한이 아니다")
+    }
+
+    /// An outage keeps the stale reading, so the gap is bridged in one tick. In the same window the
+    /// rise is real and must not be cut to 5 points.
+    func testOutageInSameWindowCreditsTheWholeRise() async {
+        setToggle(true)
+        let s = store()
+        await s.hatch(baseID: 1)
+        s.creditExternalUsage(percent: 10, localTokenTotal: 0, limitsReady: true, rate: 500_000, windowResetsAt: w1)
+        for _ in 0..<20 { s.creditExternalUsage(percent: 10, localTokenTotal: 0, limitsReady: true, rate: 500_000, windowResetsAt: w1) }
+        s.creditExternalUsage(percent: 34, localTokenTotal: 0, limitsReady: true, rate: 500_000, windowResetsAt: w1.addingTimeInterval(1))
+        XCTAssertEqual(s.externalUsageXPSinceLaunch, 24 * 500_000)
+    }
+
+    /// Without reset times the old misread guard still holds.
+    func testUnknownWindowKeepsTheFivePointCap() async {
+        setToggle(true)
+        let s = store()
+        await s.hatch(baseID: 1)
+        s.creditExternalUsage(percent: 10, localTokenTotal: 0, limitsReady: true, rate: 500_000)
+        s.creditExternalUsage(percent: 34, localTokenTotal: 0, limitsReady: true, rate: 500_000)
+        XCTAssertEqual(s.externalUsageXPSinceLaunch, 5 * 500_000)
+    }
+
+    /// Today's total drops at midnight. A drop to 0 is a quiet day so far; the drop itself used to
+    /// count as local activity and zero out every overnight gap.
+    func testMidnightRolloverIsQuietOnlyWhenTheNewDayIsEmpty() async {
+        setToggle(true)
+        let quietNight = store()
+        await quietNight.hatch(baseID: 1)
+        quietNight.creditExternalUsage(percent: 30, localTokenTotal: 9_000_000, limitsReady: true, rate: 500_000, windowResetsAt: w1)
+        quietNight.creditExternalUsage(percent: 8, localTokenTotal: 0, limitsReady: true, rate: 500_000, windowResetsAt: w2)
+        XCTAssertEqual(quietNight.externalUsagePointsSinceLaunch, 8, accuracy: 0.0001)
+
+        let busyMorning = store()
+        await busyMorning.hatch(baseID: 1)
+        busyMorning.creditExternalUsage(percent: 30, localTokenTotal: 9_000_000, limitsReady: true, rate: 500_000, windowResetsAt: w1)
+        busyMorning.creditExternalUsage(percent: 8, localTokenTotal: 200_000, limitsReady: true, rate: 500_000, windowResetsAt: w2)
+        XCTAssertEqual(busyMorning.externalUsagePointsSinceLaunch, 0, "새 날 Claude Code 사용이 있으면 그 상승은 로컬 몫이다")
+    }
 }
 
 // MARK: 지급 (grantCandies — 시드·영속) + 사용 (useRareCandy)

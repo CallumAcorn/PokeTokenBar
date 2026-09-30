@@ -343,9 +343,13 @@ enum ExternalUsageCredit {
     ///
     /// Pure so the rules are testable without a store, a clock or a network.
     static func quietWeightedPercentDelta(previousPercent: Double?, currentPercent: Double?,
-                                          quietPolls: Int, activePolls: Int) -> Double? {
+                                          quietPolls: Int, activePolls: Int,
+                                          window: WindowContinuity = .unknown) -> Double? {
         guard let previousPercent, let currentPercent else { return nil }   // no baseline yet
-        let delta = currentPercent - previousPercent
+        // A new window started from 0, so everything in it arrived since the baseline, even when it
+        // reads lower than the old window did. Without this, a gap that crossed a reset (an outage,
+        // a closed lid) was a "fall" and paid nothing: measured at 195 points against 431 observed.
+        let delta = currentPercent - (window == .new ? 0 : previousPercent)
         guard delta > 0, delta.isFinite else { return nil }        // reset, idle, or garbage
         let observed = quietPolls + activePolls
         guard observed > 0 else { return nil }                     // nothing observed to attribute
@@ -361,17 +365,31 @@ enum ExternalUsageCredit {
     /// looser or tighter rate never changes how many points' worth one interval can pay.
     static func credit(previousPercent: Double?, currentPercent: Double?,
                        quietPolls: Int, activePolls: Int,
-                       rate: Double = Double(tokensPerPercent)) -> Int? {
+                       rate: Double = Double(tokensPerPercent),
+                       window: WindowContinuity = .unknown) -> Int? {
         guard let points = quietWeightedPercentDelta(previousPercent: previousPercent,
                                                      currentPercent: currentPercent,
                                                      quietPolls: quietPolls,
-                                                     activePolls: activePolls) else { return nil }
+                                                     activePolls: activePolls,
+                                                     window: window) else { return nil }
         // `rate` now comes from a file on disk (CalibrationLog), so it is outside-the-app input by
         // the same rule the save file is. `Int(Double)` traps on NaN, infinity and out-of-range, so
         // clamp in Double space and only then convert. Same SIGTRAP class as the usage-log parsers.
-        let capped = min(points * rate, 5 * rate)
+        // The 5-point cap guards against a reset misread as a rise. When both readings carry their
+        // window's reset time that misread cannot happen, so only the window's own 100 bounds it.
+        let capped = min(points * rate, (window == .unknown ? 5 : 100) * rate)
         guard capped.isFinite, capped > 0 else { return nil }
         return Int(min(capped, Double(SaveTransfer.maxTokenValue)))
+    }
+    /// How two five-hour readings relate, judged from their reset times.
+    enum WindowContinuity: Equatable, Sendable {
+        case unknown, same, new
+
+        /// Reset times shift by seconds between calls, so a move under 10 minutes is the same window.
+        static func between(_ previous: Date?, _ current: Date?) -> WindowContinuity {
+            guard let previous, let current else { return .unknown }
+            return abs(current.timeIntervalSince(previous)) < 600 ? .same : .new
+        }
     }
 }
 

@@ -635,4 +635,49 @@ final class CredentialGateCoverageTests: XCTestCase {
         XCTAssertNotNil(e, "파싱 자체는 돼야 한다")
         XCTAssertLessThanOrEqual(e?.total ?? 0, 2 * LocalUsageReader.maxParsedTokenValue)
     }
+
+    /// 로그아웃 상태(계정 OAuth 자리는 있는데 토큰이 빔)는 두 기존 분류 **사이**로 빠져 `credentialFormat` 이 됐고,
+    /// "자격증명을 찾지 못했어요 … Codex 만 쓰면 무시" 가 나갔다. 사용자 리포트의 실제 모양 그대로 재현한다.
+    func testSignedOutCredentialIsClassifiedSeparately() {
+        func d(_ s: String) -> Data { Data(s.utf8) }
+        let signedOut = d(#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}"#)
+        let noToken   = d(#"{"claudeAiOauth":{"refreshToken":"x"}}"#)
+        let missing   = d(#"{"mcpOAuth":{}}"#)
+        let valid     = d(#"{"claudeAiOauth":{"accessToken":"sk-real","expiresAt":9999999999999}}"#)
+
+        XCTAssertTrue(OAuthCredentialData.isSignedOut(signedOut), "리포트의 빈 토큰 모양")
+        XCTAssertTrue(OAuthCredentialData.isSignedOut(noToken), "토큰 키 자체가 없어도 로그아웃")
+        XCTAssertFalse(OAuthCredentialData.isSignedOut(missing), "계정 OAuth 자리가 없으면 기존 재로그인 분류가 맡는다")
+        XCTAssertFalse(OAuthCredentialData.isSignedOut(valid))
+        XCTAssertFalse(OAuthCredentialData.isSignedOut(d("not json")))
+        XCTAssertTrue(OAuthCredentialData.isAccountOAuthMissing(missing), "두 분류가 겹치지 않아야 한다")
+        XCTAssertFalse(OAuthCredentialData.isAccountOAuthMissing(signedOut))
+    }
+
+    /// 로그아웃은 재시도로 절대 안 풀린다 — 안내가 그렇다고 말하고, 실제로 풀린 명령을 줘야 한다.
+    @MainActor func testSignedOutMessageNamesTheCommandAndRulesOutRetry() {
+        let msg = UsageStore.friendlyLimitError(LimitsError.claudeCodeSignedOut, L(.en))
+        XCTAssertTrue(msg.contains("claude auth login"), msg)
+        XCTAssertFalse(msg.contains("Codex"), "Claude 사용자에게 'Codex 만 쓰면 무시'는 틀린 안내다")
+        XCTAssertNotEqual(msg, UsageStore.friendlyLimitError(LimitsError.credentialFormat, L(.en)))
+    }
+
+    /// Reset times drift by seconds between calls; only a real move is a new window.
+    func testWindowContinuityToleratesResetTimeJitter() {
+        typealias W = ExternalUsageCredit.WindowContinuity
+        let t = Date(timeIntervalSince1970: 1_790_000_000)
+        XCTAssertEqual(W.between(t, t.addingTimeInterval(3)), .same)
+        XCTAssertEqual(W.between(t, t.addingTimeInterval(5 * 3600)), .new)
+        XCTAssertEqual(W.between(nil, t), .unknown)
+        XCTAssertEqual(W.between(t, nil), .unknown)
+    }
+
+    /// The cap lifts only to the window's own 100 points; a hostile or garbled reading cannot pay more.
+    func testKnownWindowCreditIsBoundedByOneFullWindow() {
+        let xp = ExternalUsageCredit.credit(previousPercent: 0, currentPercent: 1e9, quietPolls: 1, activePolls: 0,
+                                            rate: 1_000_000, window: .new)
+        XCTAssertEqual(xp, 100 * 1_000_000)
+        XCTAssertNil(ExternalUsageCredit.credit(previousPercent: 0, currentPercent: .infinity, quietPolls: 1,
+                                                activePolls: 0, rate: 1_000_000, window: .new))
+    }
 }
