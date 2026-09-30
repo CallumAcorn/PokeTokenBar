@@ -106,6 +106,27 @@ Antigravity 2.0 and the IDE report real quota, not an estimate. Gemini models an
 If a tool keeps its sessions outside the built-in paths, add your own roots under <b>Settings → Advanced</b> — comma or newline separated, <code>*</code> wildcards, with a live count of how many extra folders currently match. Every provider keeps its own list, so one tool's folders are never handed to another tool's parser, and your custom roots are added to the built-in ones rather than replacing them.
 </td>
 </tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>⚔️ Moves, learnsets and TMs</h3>
+Every Pokémon carries up to four moves with type, category and PP. Its level-up learnset sits underneath, so you can teach a move as soon as it's unlocked, and TMs from the shop teach more. With all four slots full, you pick one to replace.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-moves.png" width="300" alt="PC detail: four moves and the level-up learnset"></td>
+</tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-battle-team.png" width="340" alt="Battle window: picking a team of up to six"><br><br><img src="assets/screenshot-trade.png" width="340" alt="Trade window: browse, start or join a trade"></td>
+<td width="55%" valign="middle">
+<h3>🤝 Battle and trade with friends</h3>
+Pick up to six of your party and battle 1v1 in its own window, or trade Pokémon and tokens. Start from the open lobby or share an invite link, and anyone can watch a live battle. Both are <b>off by default</b>: nothing leaves your machine until you set a server in Settings.
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>🏅 Earn every gym badge</h3>
+Beat an opponent whose team matches a real gym leader, Elite Four member or Champion from Gens 1 to 5, and the badge is yours. Collection → <b>Badges</b> tracks all 65, region by region.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-badges.png" width="300" alt="Badges: gym leaders, Elite Four and Champion by region"></td>
+</tr>
 </table>
 
 ## Also in the box

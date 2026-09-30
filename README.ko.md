@@ -106,6 +106,27 @@ Antigravity 2.0 과 IDE 가 추정치가 아닌 실제 할당량을 보고합니
 어떤 도구가 세션을 기본 경로 밖에 둔다면 <b>설정 → 고급</b>에서 직접 루트를 추가하세요 — 콤마·줄바꿈 구분, <code>*</code> 와일드카드, 지금 몇 개 폴더가 걸리는지 실시간 표시. 프로바이더마다 목록이 따로라 한 도구의 폴더가 다른 도구의 파서로 넘어가지 않고, 추가한 경로는 기본 경로를 대체하는 게 아니라 더해집니다.
 </td>
 </tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>⚔️ 기술, 레벨업 기술표, TM</h3>
+포켓몬마다 타입·분류·PP 가 붙은 기술을 최대 네 개까지 가집니다. 아래에 레벨업 기술표가 있어 해금되는 대로 바로 가르칠 수 있고, 상점의 TM 으로 더 가르칠 수 있어요. 네 칸이 다 차면 바꿀 기술을 고릅니다.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-moves.png" width="300" alt="PC 상세: 기술 네 개와 레벨업 기술표"></td>
+</tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-battle-team.png" width="340" alt="배틀 창: 최대 여섯 마리 팀 고르기"><br><br><img src="assets/screenshot-trade.png" width="340" alt="교환 창: 둘러보기, 시작, 링크로 참가"></td>
+<td width="55%" valign="middle">
+<h3>🤝 친구와 배틀하고 교환하기</h3>
+파티에서 최대 여섯 마리를 골라 전용 창에서 1:1 배틀을 하거나, 포켓몬과 토큰을 교환하세요. 공개 로비에서 시작하거나 초대 링크를 공유하면 되고, 진행 중인 배틀은 누구나 관전할 수 있습니다. 둘 다 <b>기본값은 꺼짐</b>이라 설정에서 서버를 지정하기 전엔 아무것도 기기 밖으로 나가지 않습니다.
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>🏅 체육관 배지 모으기</h3>
+1~5세대의 실제 체육관 관장·사천왕·챔피언과 같은 팀을 가진 상대를 이기면 그 배지를 얻습니다. 컬렉션 → <b>배지</b>에서 지방별로 65개 전부를 확인하세요.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-badges.png" width="300" alt="배지: 지방별 체육관 관장, 사천왕, 챔피언"></td>
+</tr>
 </table>
 
 ## 이 밖에도
