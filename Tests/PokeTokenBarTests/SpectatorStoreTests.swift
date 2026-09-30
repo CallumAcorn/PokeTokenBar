@@ -4,13 +4,24 @@ import XCTest
 // MARK: SpectatorStore — same QueuedStubURLProtocol/waitUntil pattern as BattleStoreTests.swift
 
 private final class SpectatorQueuedStubURLProtocol: URLProtocol {
-    nonisolated(unsafe) static var responses: [(Int, Data)] = []
+    /// Queues are per store (keyed by a session header), so a stopped store's in-flight request can
+    /// no longer take the next test's response. That theft left CI stores stuck on `.connecting`.
+    nonisolated(unsafe) private static var queues: [String: [(Int, Data)]] = [:]
+    nonisolated(unsafe) static var currentKey = ""
+    static let header = "X-Stub-Queue"
     private static let lock = NSLock()
+    static var responses: [(Int, Data)] {
+        get { lock.lock(); defer { lock.unlock() }; return queues[currentKey] ?? [] }
+        set { lock.lock(); queues[currentKey] = newValue; lock.unlock() }
+    }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        let key = request.value(forHTTPHeaderField: Self.header) ?? ""
         Self.lock.lock()
-        let next = Self.responses.isEmpty ? (200, Data()) : Self.responses.removeFirst()
+        var queue = Self.queues[key] ?? []
+        let next = queue.isEmpty ? (200, Data()) : queue.removeFirst()
+        Self.queues[key] = queue
         Self.lock.unlock()
         let response = HTTPURLResponse(url: request.url!, statusCode: next.0, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -36,12 +47,13 @@ final class SpectatorStoreTests: XCTestCase {
     /// CI 에서만 간헐적으로 실패한 원인(main fac7ea0 포함, 로컬은 통과). 네 테스트 중 스토어를 멈추는 건
     /// 하나뿐이었다. 그래서 여기서 만든 스토어는 **전부** 테스트 끝에 멈추고, 큐는 테스트마다 비운다.
     override func setUp() async throws {
-        SpectatorQueuedStubURLProtocol.responses = []
+        SpectatorQueuedStubURLProtocol.currentKey = UUID().uuidString
     }
 
     private func makeStore(pollIntervalNanoseconds: UInt64 = 10_000_000) -> SpectatorStore {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SpectatorQueuedStubURLProtocol.self]
+        config.httpAdditionalHeaders = [SpectatorQueuedStubURLProtocol.header: SpectatorQueuedStubURLProtocol.currentKey]
         let store = SpectatorStore(session: URLSession(configuration: config), pollIntervalNanoseconds: pollIntervalNanoseconds)
         addTeardownBlock { @MainActor in store.stop() }
         return store
