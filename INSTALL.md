@@ -68,8 +68,10 @@ every build, which invalidates the macOS Keychain "Always Allow" grant. The app 
 needing the refresh button until you grant access again. `scripts/create-signing-cert.sh` fixes
 that by creating a stable identity, but it also installs a self-signed certificate as a
 code-signing **trust root** in your login keychain, which is a real and permanent expansion of
-what your Mac trusts. Install it once and rarely rebuild: skip the script. Rebuild regularly and
-want limits to keep working without re-granting: run it, knowing that trade-off.
+what your Mac trusts: malware running as you could sign itself as PokeTokenBar and read your
+Claude token without a prompt. The project recommends skipping it and re-granting once per update
+(click Retry, then Always Allow). It saves only that one prompt, since Claude Code's own token
+refresh also resets the grant.
 
 `build-app.sh` quits any running copy and replaces `/Applications/PokeTokenBar.app`. It touches
 nothing else.

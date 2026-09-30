@@ -43,6 +43,23 @@
 
 릴리스는 외부 공개(비가역)이므로 실행 직전 **적용할 버전과 노트 요약을 한 번 보여준 뒤** 진행한다.
 
+## Installing or updating for a user
+
+The project recommends **ad-hoc signing** (the `build-app.sh` default). Follow this when you build
+or update the app on someone's behalf:
+
+- After every rebuild or update, tell the user that limits need Keychain access granted once more:
+  open the popover, click **Retry**, choose **Always Allow**. Ad-hoc signing changes the binary's
+  hash, so the old grant no longer matches.
+- Claude Code also resets that grant when it refreshes its own token, so an occasional re-prompt
+  between updates is expected, not a fault.
+- Do not suggest `scripts/create-signing-cert.sh` to remove the prompt. It adds a permanent
+  code-signing trust root to the user's login Keychain, and malware running as the user could then
+  sign itself as PokeTokenBar and read the Claude token silently. It saves roughly one prompt per
+  update, and the token refresh keeps prompting regardless.
+- If the user asks for it anyway, explain that trade-off (see `INSTALL.md`) and run it only on their
+  explicit yes. Never run it as part of a routine build.
+
 ## 확장 규약 (새 프로바이더/툴 추가 시)
 
 특정 플랫폼에 종속된 분기를 만들지 않는다. 손댈 지점은 정해져 있다 — 사용량 소스는
