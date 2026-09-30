@@ -324,6 +324,9 @@ struct PopoverView: View {
                 .foregroundStyle(.secondary)
             if selectedSnapshot?.providerID == "claude_code", store.limitsAuthExpired {
                 claudeAuthExpiredNotice
+            } else if selectedSnapshot?.providerID == "claude_code", store.limitsSignedOut {
+                // 로그아웃이 확인된 상태 — 회수 안내("다시 허용하세요")보다 먼저. 허용해도 빈 토큰이 나올 뿐이다.
+                claudeSignedOutNotice
             } else if selectedSnapshot?.providerID == "claude_code", store.limitsGrantRevoked {
                 // 회수된 승인은 "아직 승인 안 함"과 화면상 구분되지 않아, 사용자는 왜 다시 눌러야 하는지
                 // 모른 채 같은 버튼을 반복해 누른다. 이유를 말해 주는 쪽이 유일하게 할 수 있는 일이다.
@@ -582,6 +585,35 @@ struct PopoverView: View {
     /// Claude 세션 만료(401) 안내 — 자동 폴링은 만료 토큰을 스스로 못 고치므로,
     /// "왜 어제 값에 멈췄는지 + 원탭 재시도 + Claude Code 실행 시 자동 갱신" 을 눈에 띄게 노출.
     @ViewBuilder
+    private var claudeSignedOutNotice: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.crop.circle.badge.xmark")
+                    .foregroundStyle(.orange)
+                Text(l.limitsSignedOutTitle)
+                    .font(.caption).fontWeight(.semibold)
+                Spacer()
+                Button {
+                    Task { await store.refreshLimitTokenFromKeychain() }
+                } label: {
+                    if store.isRefreshingLimitToken {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(l.retry)
+                    }
+                }
+                .controlSize(.small)
+                .disabled(store.isRefreshingLimitToken)
+            }
+            // 버튼은 남겨 둔다 — 터미널에서 로그인한 **뒤에** 누르는 용도다. 안내문이 그 순서를 말한다.
+            Text(l.limitRefreshSignedOut)
+                .font(.caption2).foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+        .padding(8)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    }
+
     private var claudeGrantRevokedNotice: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {

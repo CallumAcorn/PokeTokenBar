@@ -9,6 +9,12 @@ enum LimitsError: Error {
     /// 자격증명은 읽혔지만 Claude 계정 OAuth(`claudeAiOauth`)가 없다 — MCP 서버 OAuth 상태만 들어있는 경우.
     /// Claude Code 2.1.x 에서 관측된다. 형식 오류가 아니라 재로그인이 필요한 상태라 따로 구분한다.
     case credentialMissingAccountOAuth
+    /// 계정 OAuth 는 **있는데 토큰이 비었다** — Claude Code 가 로그아웃된 상태(`claude auth status` 가
+    /// `loggedIn: false`). 사용자 리포트 실측: `claudeAiOauth.accessToken`·`refreshToken` 이 길이 0, `expiresAt`
+    /// 은 epoch. 위의 `credentialMissingAccountOAuth`(키 자체가 없음)와 달리 키는 남아 있어서 예전엔 그 검사를
+    /// 빠져나가 `credentialFormat` 으로 떨어졌고, "자격증명을 찾지 못했어요 … Codex 만 쓰면 무시" 라는 엉뚱한
+    /// 안내가 나갔다. 재시도로는 **절대** 안 풀리는 상태라 따로 구분한다 — 사용자가 로그인해야 한다.
+    case claudeCodeSignedOut
     case httpStatus(Int)
     /// 429 — 서버가 지정한 Retry-After(초, 없으면 nil). 폴링 백오프 판단에 사용.
     case rateLimited(retryAfter: TimeInterval?)
@@ -420,9 +426,9 @@ private actor OAuthAccessTokenCache {
         }
         guard let credential = OAuthCredentialData.credential(from: data) else {
             // 항목은 있는데 계정 OAuth 만 없는 상태(MCP OAuth 전용)는 재로그인 안내 대상이라 구분한다.
-            throw OAuthCredentialData.isAccountOAuthMissing(data)
-                ? LimitsError.credentialMissingAccountOAuth
-                : LimitsError.credentialFormat
+            if OAuthCredentialData.isAccountOAuthMissing(data) { throw LimitsError.credentialMissingAccountOAuth }
+            if OAuthCredentialData.isSignedOut(data) { throw LimitsError.claudeCodeSignedOut }
+            throw LimitsError.credentialFormat
         }
         return credential
     }
@@ -477,6 +483,14 @@ enum OAuthCredentialData {
     static func isAccountOAuthMissing(_ data: Data) -> Bool {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
         return (json["claudeAiOauth"] as? [String: Any]) == nil
+    }
+
+    /// 계정 OAuth 자리는 있는데 액세스 토큰이 없거나 빈 문자열 — Claude Code 가 로그아웃된 모양.
+    /// `isAccountOAuthMissing`(자리 자체가 없음)와 겹치지 않게, 자리가 **있을 때만** 참이다.
+    static func isSignedOut(_ data: Data) -> Bool {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let oauth = json["claudeAiOauth"] as? [String: Any] else { return false }
+        return ((oauth["accessToken"] as? String) ?? "").isEmpty
     }
 
     static func credential(from data: Data) -> Credential? {

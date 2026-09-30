@@ -1031,6 +1031,22 @@ struct L {
         }
         return t("Claude 한도 조회 실패 (\(status)).", "Failed to fetch Claude limits (\(status)).", "Claude の上限取得に失敗しました (\(status))。", "No se pudieron obtener los límites de Claude (\(status)).", "Échec de récupération des limites Claude (\(status)).", "Não foi possível obter os limites do Claude (\(status)).")
     }
+    /// 로그아웃 상태 — 재시도로는 안 풀린다는 걸 분명히 한다. 명령은 리포트에서 **실제로 풀린** 쪽을 쓴다:
+    /// `claude login` 은 이 상태에서 "OAuth session expired and could not be refreshed" 로 바로 실패했고,
+    /// 전체 OAuth 흐름인 `claude auth login` 이 고쳤다.
+    var limitRefreshSignedOut: String {
+        t("Claude Code 가 로그아웃돼 있어요. 터미널에서 `claude auth login` 을 실행한 뒤 새로고침하세요. 재시도만으로는 해결되지 않아요.",
+          "Claude Code isn't signed in. Run `claude auth login` in a terminal, then refresh. Retrying on its own won't fix this.",
+          "Claude Code がサインアウトしています。ターミナルで `claude auth login` を実行してから更新してください。再試行だけでは直りません。",
+          "Claude Code no tiene la sesión iniciada. Ejecuta `claude auth login` en una terminal y luego actualiza. Reintentar por sí solo no lo soluciona.",
+          "Claude Code n'est pas connecté. Lancez `claude auth login` dans un terminal, puis actualisez. Réessayer seul ne suffira pas.",
+          "O Claude Code não está com sessão iniciada. Execute `claude auth login` num terminal e depois atualize. Tentar de novo sozinho não resolve.")
+    }
+    var limitsSignedOutTitle: String {
+        t("Claude Code 가 로그아웃됐어요", "Claude Code is signed out", "Claude Code がサインアウトしました",
+          "Claude Code cerró la sesión", "Claude Code est déconnecté", "O Claude Code terminou a sessão")
+    }
+
     var limitRefreshNoCredential: String {
         t("Claude 자격증명을 찾지 못했어요. Claude Code 에 로그인하면 한도가 표시됩니다. Codex만 쓴다면 무시해도 돼요.",
           "No Claude credential found. Sign in to Claude Code to see limits. If you only use Codex you can ignore this.",

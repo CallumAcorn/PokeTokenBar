@@ -29,6 +29,12 @@ final class UsageStore {
     /// See `updateGrantRevoked` for why this is separate from `limitsAuthExpired` (that one is the
     /// server rejecting a token; this one is the Keychain refusing to hand one over).
     private(set) var limitsGrantRevoked = false
+    /// Claude Code 자체가 로그아웃된 상태 — 토큰 자리가 비어 있다(`LimitsError.claudeCodeSignedOut`).
+    /// **`limitsGrantRevoked` 보다 우선한다.** 로그아웃할 때 Claude Code 가 항목을 다시 써서 권한도 함께
+    /// 초기화되므로 자동 폴에서는 회수와 구별이 안 되고, "다시 허용하면 된다"는 회수 안내가 뜬다 — 그런데
+    /// 허용해 봐야 비어 있는 토큰이 나올 뿐이다. 수동 새로고침으로 토큰을 직접 읽은 뒤에야 알 수 있으므로
+    /// 그때 이 값을 세우고, 틀린 안내를 이 안내로 바꾼다.
+    private(set) var limitsSignedOut = false
     /// Whether a silent read has ever worked in this process. Distinguishes "your grant was
     /// revoked" from "you have never granted access", which need different words.
     private var hadWorkingSilentRead = false
@@ -780,6 +786,7 @@ final class UsageStore {
                 limitsAuthExpired = false
                 limitsGrantRevoked = false
                 hadWorkingSilentRead = true
+                limitsSignedOut = false
                 resetLimitsBackoff()
                 AppLog.write("limits refreshed fiveHour=\(limits?.fiveHour?.utilization?.description ?? "nil") sevenDay=\(limits?.sevenDay?.utilization?.description ?? "nil")")
             } catch {
@@ -851,6 +858,7 @@ final class UsageStore {
             limitsAuthExpired = false
             limitsGrantRevoked = false
             hadWorkingSilentRead = true
+            limitsSignedOut = false
             limitTokenRefreshError = nil
             resetLimitsBackoff()
             AppLog.write("limits refreshed by user action fiveHour=\(limits?.fiveHour?.utilization?.description ?? "nil") sevenDay=\(limits?.sevenDay?.utilization?.description ?? "nil")")
@@ -858,6 +866,7 @@ final class UsageStore {
         } catch {
             limitTokenRefreshError = Self.friendlyLimitError(error, L(localizationLanguage))
             if limits == nil { limitsAvailable = false }
+            updateSignedOut(from: error)
             updateAuthExpired(from: error)
             applyLimitsBackoffIfRateLimited(error)
             AppLog.write("limits user refresh failed: \(error)")
@@ -924,9 +933,15 @@ final class UsageStore {
     /// Only counts as revocation if a silent read had previously been observed to work. A machine
     /// that has never granted access is not "revoked", it is simply not set up yet, and conflating
     /// the two would tell every new user their grant had expired.
+    private func updateSignedOut(from error: any Error) {
+        guard case LimitsError.claudeCodeSignedOut = error else { return }
+        limitsSignedOut = true
+        limitsGrantRevoked = false   // 원인이 권한이 아니라 로그아웃임이 확인됐다 — 회수 안내는 틀린 말이 된다
+    }
+
     private func updateGrantRevoked(from error: any Error) {
         guard case LimitsError.keychainInteractionNotAllowed = error else { return }
-        guard hadWorkingSilentRead else { return }
+        guard hadWorkingSilentRead, !limitsSignedOut else { return }
         limitsGrantRevoked = true
     }
 
@@ -964,6 +979,8 @@ final class UsageStore {
             return l.limitRefreshHTTPError(status)
         case .keychainUnavailable, .credentialFormat:
             return l.limitRefreshNoCredential
+        case .claudeCodeSignedOut:
+            return l.limitRefreshSignedOut
         case .credentialMissingAccountOAuth:
             return l.limitRefreshReauthNeeded
         case .keychainInteractionNotAllowed, .keychainAccessDisabled:
