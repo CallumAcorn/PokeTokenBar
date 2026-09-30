@@ -1787,12 +1787,7 @@ private struct MonDetailView: View {
                         .background(rarityColor(mon.rarity)).foregroundStyle(.white)
                         .clipShape(Capsule())
                     if isTraining {
-                        Text(store.l.dexRaising.uppercased())
-                            .font(.system(size: 8, weight: .bold))
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(Color.accentColor.opacity(0.14))
-                            .foregroundStyle(Color.accentColor)
-                            .clipShape(Capsule())
+                        RaisingBadge(label: store.l.dexRaising)
                     }
                 }
                 typeBadges
@@ -2403,12 +2398,7 @@ private struct DexEntryRow: View {
                     .background(rarityColor(entry.rarity)).foregroundStyle(.white)
                     .clipShape(Capsule())
                 if store.isTrainingLogEntry(entry) {
-                    Text(store.l.dexRaising.uppercased())
-                        .font(.system(size: 8, weight: .bold))
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Color.accentColor.opacity(0.14))
-                        .foregroundStyle(Color.accentColor)
-                        .clipShape(Capsule())
+                    RaisingBadge(label: store.l.dexRaising)
                 }
                 if entry.isShiny {
                     // 이모지는 스크린리더가 일관되게 읽지 못해 명사 라벨을 붙인다(도감 칸과 동일 규칙).
@@ -2435,5 +2425,20 @@ private struct DexEntryRow: View {
                 resolved = await store.dexResolveChainNames(entry)
             }
         }
+    }
+}
+
+/// Accent text on a 14% accent tint was near-invisible on the popover's grey. Primary text keeps
+/// contrast in both appearances; the outline keeps it distinct from the solid rarity pill beside it.
+private struct RaisingBadge: View {
+    let label: String
+    var body: some View {
+        Text(label.uppercased())
+            .font(.system(size: 8, weight: .bold))
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .foregroundStyle(.primary)
+            .background(Color.accentColor.opacity(0.28))
+            .overlay(Capsule().strokeBorder(Color.accentColor, lineWidth: 1))
+            .clipShape(Capsule())
     }
 }
