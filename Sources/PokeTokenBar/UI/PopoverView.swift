@@ -164,10 +164,12 @@ struct PopoverView: View {
                 Text(TokenFormatter.compact(store.todayTotalTokens))
                     .font(.system(size: 28, weight: .bold))
                     .monospacedDigit()
-                Text(TokenFormatter.grouped(store.todayTotalTokens))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                if store.todayTotalTokens >= 1_000 {
+                    Text(TokenFormatter.grouped(store.todayTotalTokens))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
                 Spacer()
                 if store.showsCost {
                     Text(TokenFormatter.cost(todayCost))

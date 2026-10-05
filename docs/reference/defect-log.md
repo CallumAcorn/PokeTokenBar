@@ -16,6 +16,100 @@ read_when:
 
 ## 판정·데이터
 
+- **An idle day must not erase historical usage.** The store admitted enrichment-only snapshots
+  only for a positive active block, so providers with no usage today lost their week/month totals
+  and chart. Earlier tests deliberately rejected even positive historical totals to hide unused
+  provider tabs; that conflated "unused today" with "no recorded usage". Keep snapshots when a
+  block, period, or daily series has positive tokens, while excluding non-nil all-zero summaries.
+  `UsageStoreTests` covers each history source independently, nil today/nil block, repeated
+  refresh, enrichment failure, successful empty replacement, and ledger recording. The source
+  sweep found this carrier gate was the shared loss point; today-based burn/limit eligibility
+  remains intentionally scoped to current activity. Preserve carriers during phase 1 to avoid
+  hiding the chart between refresh phases. Removing the history predicates makes the historical
+  carrier regression fail; restoring them passes all three history regression tests.
+
+- **Species ownership is not an individual's appearance.** A species-level shiny flag means
+  at least one shiny was collected; using it for the selected individual's badge mislabeled
+  normal catches, and earlier evolution pages offered no way to choose their normal appearance.
+  Track normal and shiny ownership separately, let detail pages select an owned appearance,
+  and keep the selected profile, sprite, and badge consistent. Catch-log rows must always use
+  their own persisted color. Existing tests checked aggregate ownership and reload predicates,
+  while the catch-log rendering fixture contained only normal individuals; they did not exercise
+  mixed-color records together. Cover both acquisition orders and native rendering with distinct
+  synthetic sprite colors, without modifying user saves or bundling third-party artwork.
+  Native appearance tests must wait for the expected rendered sprite with a bounded deadline,
+  then assert both expected pixels and absence of the previous color. A fixed 100ms sleep passed
+  locally but sampled the previous sprite in macOS 15 CI: the header had updated while the
+  sprite's independent SwiftUI `.task(id:)` had not finished rendering. Keep transition-index
+  diagnostics and prove a permanently stale sprite still fails after the readiness deadline.
+
+- **Bundled CLI discovery must cover the shipped app layout.** ChatGPT moved Codex from
+  `Contents/Resources/codex` into `Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`.
+  After an update removed the cached executable, GUI discovery returned nil and hid the limits.
+  Fake-response tests bypassed the production candidate list. `CodexRateLimitsProviderTests`
+  now checks both bundle layouts in the default candidates and preserves dedicated-install
+  precedence; removing the new candidate must fail the regression. The source sweep found
+  this provider is the only owner of ChatGPT CLI bundle paths.
+
+- **Localized metadata names must not replace persistent API identifiers.** The dex rendered
+  ability, move, and type slugs directly, while existing tests covered species names and profile
+  metadata rather than these visible labels. All five detail-view name sites now use a shared
+  selected-language → English resolver, with a formatted identifier only after a completed response or failed request.
+  Pending metadata must show a neutral placeholder, not an English identifier that flashes before
+  translation. Keep a synchronous presentation snapshot for the first frame on detail reentry;
+  the API client remains responsible for freshness. Test pending, loaded, partial, and failed
+  states separately—the old test incorrectly asserted English during loading.
+  Preserve every API language in the cache, normalize legacy language-code casing, and derive
+  supported API codes from `AppLanguage` so future languages need no second allowlist.
+  Fetch names from mounted detail rows rather than profile preparation. `PokemonNameLocalizationTests`
+  covers locale selection, missing translations, future languages, native text rendering, request
+  reuse, disk restoration, and offline retry without changing profile identifiers.
+  Existing saves need a name-cache version as well: nonempty dictionaries from the old allowlist
+  are not complete multilingual responses. `DexNameMigrationTests` covers legacy JSON, duplicate
+  catches, offline/partial recovery, progress preservation, and an unavailable language that must
+  not trigger repeated fetches. Restoring the old nil-only backfill filter makes the regression fail.
+  Catch-log rows must resolve legacy entries even when old names exist, and prefer persisted
+  multilingual names over previously rendered strings after a language change.
+
+- **Translate at display time, including errors and accessibility labels.** Storing translated
+  error strings left session-key and quota-refresh failures in the previous language. Store the
+  failure and resolve it through the shared language selector. `LocalizationErrorsTests` switches
+  languages while a real store error remains visible and checks diagnostic preservation.
+  English UI literals bypassed the Hangul-only source guard; `LanguageSurfaceRegressionTests`
+  now covers usage labels, hidden control labels, selected-language backup dates, and Gen-V
+  `light-ball-egg`/`form-change` methods alongside native rendering in all supported languages.
+
+- **Balance numbers in copy come from the runtime value, never a literal.** The shiny hatch
+  notification said "(1/64)" in every language after the Shiny Charm made the real odds 1/48, and
+  the first-run egg hint kept "~5M tokens" after the growth slider could move the hatch point
+  (fixed separately).
+  The copy was written before the modifiers existed, and `LocalizationInterpolationTests` only
+  checks that placeholders survive, so a number with no placeholder was never compared with the
+  value the game uses. Pass the value the logic uses (`CompanionStore.shinyDenominator`, the
+  difficulty-scaled threshold) into the string. When a message describes an earlier roll whose
+  inputs are not saved, such as a Ditto reveal after hatch, leave the number out rather than guess.
+  When adding a modifier (charm, difficulty, boost), grep `Localization.swift` for the constants
+  it changes. `ShinyCharmTests` checks the notification odds with and without the charm.
+
+- **Cost availability is not a numeric zero.** Codex providers overwrote priced totals with zero
+  while leaving cost UI enabled; earlier tests asserted that subscription policy instead of
+  comparing the public provider result with priced log entries. Preserve explicit source zero,
+  unknown model/token breakdown, and source/estimate provenance separately through daily, period,
+  block, and merged chart totals. An unknown portion must mark a total partial, never complete.
+  `UsageCostTests` exercises Codex JSONL through cold/warm cache and the provider, source-zero vs
+  missing, mixed totals, menu/chart projections, legacy decoding, and native localized rendering.
+  The Codex regression must fail if its provider again overwrites the returned cost with zero.
+  Session/turn aggregates (Hermes/Aside), Cursor bubbles without cache buckets, and Kiro text
+  estimates cannot be passed to request-size-dependent pricing as if they were single requests.
+  Parser semantic changes require the corresponding disk-cache version bump.
+
+- **프로필 레벨은 난이도와 반복 부화 보정을 반영한 단계 진행에서 계산한다.** #244/#254의 임계값을
+  낮춰도 #264가 원시 토큰을 기본 졸업 비용으로 나누면 졸업한 개체가 레벨 5 또는 52에 남는다.
+  완료 단계의 기본 비용과 현재 단계의 실제 임계 대비 진행률을 합산해 표준 성장량을 영속한다.
+  난이도 증가·가져오기는 이미 얻은 성장량과 레벨을 낮추지 않으며, 졸업 기록을 만들기 전에 100을
+  확정한다. 메타몽 공개는 희귀도 간 성장 단위를 환산하고 개체 정보만 재설정한다.
+  `ProfileGrowthIntegrationTests`는 난이도 양 끝·반복 부화·설정 변경·재시작·가져오기·사탕·오프라인을 검증한다.
+
 - **옵셔널 tautology.** 옵셔널 필드라도 *생산자가 항상 채우면* `x != nil` 은 항상 참이다. "값이 있나"는
   의미값으로 검사한다(예: `totalTokens > 0`, 또는 진짜 nil 가능한 필드 `activeBlock`). — weekTotal 회귀(#56).
 - **사용량 엔트리의 존재는 실제 사용의 증거가 아니다.** Claude 는 로컬 세션 시작 과정에서 토큰 필드가

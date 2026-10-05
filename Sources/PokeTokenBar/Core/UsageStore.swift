@@ -755,17 +755,17 @@ final class UsageStore {
                 today = nil         // 성공했지만 오늘 데이터 없음 (예: Codex 미사용)
             }
 
-            if today != nil {
-                newSnapshots.append(ProviderSnapshot(
-                    providerID: provider.id,
-                    displayName: provider.displayName,
-                    today: today,
-                    activeBlock: prevBlock,
-                    weekTotal: prevWeek,
-                    monthTotal: prevMonth,
-                    fetchedAt: Date(),
-                    reportsCost: provider.reportsCost))
-            }
+            let snapshot = ProviderSnapshot(
+                providerID: provider.id,
+                displayName: provider.displayName,
+                today: today,
+                activeBlock: prevBlock,
+                weekTotal: prevWeek,
+                monthTotal: prevMonth,
+                fetchedAt: Date(),
+                reportsCost: provider.reportsCost)
+            // Keep history visible while phase 2 refreshes it, including on idle days.
+            if snapshot.hasDisplayableUsage { newSnapshots.append(snapshot) }
         }
         snapshots = newSnapshots
 
@@ -787,21 +787,17 @@ final class UsageStore {
             }
             for await (id, enrichment) in group {
                 guard let index = snapshots.firstIndex(where: { $0.providerID == id }) else {
-                    // 캐리어 스냅샷은 "**실제 활성 5h 블록**이 있을 때만" 만든다(어제 늦은밤 코딩이 5h
-                    // 윈도우에 남아 자정 후 오늘 토큰 0인 경우 — burn/forecast/companion 보존). 주/월
-                    // 누적만으로 만들면, weekTotal 이 옵셔널이 아니라(토큰 0이어도 non-nil) 오늘·최근
-                    // 미사용 프로바이더까지 탭이 떠서 "안 썼는데 왜 뜨지" 회귀가 난다. 블록이 있을 때만
-                    // 그 시점의 주/월도 함께 보존한다.
-                    let hasActiveBlock = enrichment.blocksOK
-                        && (enrichment.activeBlock?.totalTokens ?? 0) > 0
-                    if hasActiveBlock, let provider = providers.first(where: { $0.id == id }) {
-                        snapshots.append(ProviderSnapshot(
+                    // An idle day still has useful history. Require positive usage, not merely
+                    // non-nil periods: local providers also return all-zero period summaries.
+                    if let provider = providers.first(where: { $0.id == id }) {
+                        let snapshot = ProviderSnapshot(
                             providerID: id, displayName: provider.displayName, today: nil,
-                            activeBlock: enrichment.activeBlock,
+                            activeBlock: enrichment.blocksOK ? enrichment.activeBlock : nil,
                             weekTotal: enrichment.periodsOK ? enrichment.weekTotal : nil,
                             monthTotal: enrichment.periodsOK ? enrichment.monthTotal : nil,
                             fetchedAt: Date(),
-                            reportsCost: provider.reportsCost))
+                            reportsCost: provider.reportsCost)
+                        if snapshot.hasDisplayableUsage { snapshots.append(snapshot) }
                     }
                     continue
                 }
@@ -812,6 +808,8 @@ final class UsageStore {
                 }
             }
         }
+        // Successful empty enrichment removes obsolete carriers; failed reads retain history.
+        snapshots.removeAll { !$0.hasDisplayableUsage }
 
         // ── 한도 조회 (Keychain 프롬프트로 블로킹될 수 있어 마지막)
         if disableKeychainAccess {
@@ -1284,5 +1282,14 @@ final class UsageStore {
         if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: dir.appendingPathComponent("last-snapshot.json"), options: .atomic)
         }
+    }
+}
+
+private extension ProviderSnapshot {
+    var hasDisplayableUsage: Bool {
+        today != nil
+            || (activeBlock?.totalTokens ?? 0) > 0
+            || (weekTotal?.totalTokens ?? 0) > 0
+            || (monthTotal?.totalTokens ?? 0) > 0
     }
 }
