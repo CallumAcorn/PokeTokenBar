@@ -742,8 +742,11 @@ enum StatCalc {
         (2 * base + iv + ev / 4) * level / 100
     }
 
+    /// Main-series rule: Shedinja's HP is always 1, whatever its level or IVs.
+    static let shedinjaSpeciesID = 292
+
     static func compute(base: BaseStats, ivs: StatSpread, evs: StatSpread, level: Int,
-                        nature: PokemonNature?) -> Computed {
+                        nature: PokemonNature?, speciesID: Int? = nil) -> Computed {
         func other(_ base: Int, _ iv: Int, _ ev: Int, _ stat: Stat) -> Int {
             let raw = core(base, iv, ev, level: level) + 5
             guard let nature else { return raw }
@@ -752,7 +755,7 @@ enum StatCalc {
             return raw
         }
         return Computed(
-            hp: core(base.hp, ivs.hp, evs.hp, level: level) + level + 10,
+            hp: speciesID == shedinjaSpeciesID ? 1 : core(base.hp, ivs.hp, evs.hp, level: level) + level + 10,
             attack: other(base.attack, ivs.attack, evs.attack, .attack),
             defense: other(base.defense, ivs.defense, evs.defense, .defense),
             specialAttack: other(base.specialAttack, ivs.specialAttack, evs.specialAttack, .specialAttack),

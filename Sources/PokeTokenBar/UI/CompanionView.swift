@@ -1379,7 +1379,7 @@ private struct MonDetailView: View {
     private var statsSection: some View {
         if let baseStats {
             let computed = StatCalc.compute(base: baseStats, ivs: mon.effectiveIVs, evs: mon.evs,
-                                            level: mon.level, nature: mon.nature)
+                                            level: mon.level, nature: mon.nature, speciesID: mon.currentID)
             VStack(alignment: .leading, spacing: 3) {
                 Text(store.l.pcStatsTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 statRow(store.l.statHP, computed.hp, hyperTrained: mon.hyperTrainedStats.contains(.hp))

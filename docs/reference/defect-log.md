@@ -154,6 +154,33 @@ read_when:
   클램프 자체는 통과해도 `output + thoughts` 처럼 파싱 직후 더하는 곳에서 다시 트랩난다. 합산 여유가 있는
   상한(`maxParsedTokenValue`)을 쓴다. 회귀 가드는 프로바이더별로 **테스트를 쪼개라** — 트랩은 프로세스를
   끝내므로 한 테스트에 몰면 뒤 케이스가 아예 실행되지 않는다.
+  **추출기가 `LocalUsageReader` 밖에 있으면 같은 함정이 그대로 남는다.** OpenCode·Cursor의
+  `LocalAdditionalUsageProvider.intValue` 와 Hermes의 `columnInt` 는 `Int.max` 로 포화시킨 뒤
+  `input + output` 에서 다시 SIGTRAP 했다(`testCursorHugeTokenCountsDoNotTrapOnTheAdd`·
+  `testHermesHugeSessionTokensDoNotTrapOnTheReasoningAdd`). 대시보드 JSON 을 읽는
+  `CursorUsageAPI.intValue` 도 같은 포화 후 `makeEntry` 합에서 트랩한다
+  (`testParseCursorUsageEventClampsHugeTokenCounts`). Kiro 타임스탬프의 `Int64(Double)` 도
+  `Int64.max` 를 넘는 유한값에서 트랩한다. 상한은 더하는 추출기마다 같이 건다.
+
+- **기간 비교의 "데이터가 있는가"는 그 구간의 *가장 오래된* 날로 판정한다.** 사용량 요약이 지난주
+  대비를 낼지 말지를 지난 구간의 **첫 날(=가장 최근 날)** 로 판정했더니, 원장이 구간 중간부터 시작해도
+  비교가 성립했다 — 빠진 날들은 0 으로 합산돼 실측 delta 가 +200% 로 부풀었다(가드의 목적이던 "신규
+  설치가 없던 주 대비 급등을 주장하는" 바로 그 증상). 누락분을 0 으로 세는 합계 위에 커버리지 게이트를
+  올릴 땐, 게이트 기준점이 **합계의 모든 날을 덮는지** 확인한다(`testAHalfCoveredPreviousPeriodIsNotAComparison`).
+  같은 맥락에서 손편집 가능한 `UserDefaults` 를 원장으로 쓰면 키 검증도 **길이가 아니라 파싱**으로
+  한다 — `"0000-00-00"` 처럼 날짜가 아니면서 모든 실제 날짜보다 작게 정렬되는 키는 커버리지를 위조한다.
+  그리고 "0 인가, 모르는가"는 행의 유무로 추론하지 말고 **커버리지 시작일을 따로 저장**한다
+  (`UsageLedger.coveredSince`) — 행은 사용량이 있는 날에만 생기므로, 첫 행 날짜로 커버리지를 추정하면
+  조용했던 기간과 기록 이전 기간이 구별되지 않는다. 오래된 행을 잘라낼 땐 커버리지도 함께 올린다
+  (`testPruningForgetsTheCoverageItDrops`).
+- **본가 공식의 종 예외 — 껍질몬(#292) HP 는 항상 1.** `PokemonStatCalculator` 는 HP 를 일반 공식
+  `((2·base + iv)·level)/100 + level + 10` 으로만 계산해 껍질몬이 Lv50 에 67 HP 로 표시됐다. 토쿠닌
+  (#290) 분기에서 선택될 수 있고 Gen V 상한 안이라 실제로 부화 경로에 있다.
+  **왜 못 걸렀나:** 스탯 테스트는 일반 종(야돈) 하나로 공식만 확인했다. 공식의 종 예외는 그 종을 넣어야만 보인다.
+  **수정:** 종 id 로 HP 1 고정(`shedinjaSpeciesID`). base HP 1 이라는 이유로 판정하지 않는다 — 공식 데이터에
+  base HP 1 인 종은 껍질몬뿐이지만 규칙은 "종" 에 걸린 것이다.
+  **회귀 가드:** `PokemonProfileLogicTests.testShedinjaAlwaysHasOneHP` — Lv1/50/100 모두 1, 다른 스탯은 일반 공식,
+  base HP 1 인 다른 종은 일반 공식. 수정 전 3건 실패 확인.
 
 ## 외부 로그·사용량 소스
 
