@@ -105,6 +105,11 @@ final class GeminiUsageTests: XCTestCase {
                        accuracy: 0.0001, "폴백으로 새면 0.5 가 된다")
         XCTAssertEqual(ModelPricing.rate(for: "claude-sonnet-5"), .perMillion(2, 10, 2.5, 0.2),
                        "폴백은 Sonnet 4 단가(3,15)로 1.5배 과대")
+        XCTAssertEqual(ModelPricing.rate(for: "claude-sonnet-5-5"), .perMillion(2, 10, 2.5, 0.2))
+        XCTAssertEqual(ModelPricing.rate(for: "gpt-6-sol"), .perMillion(2, 10, 2.5, 0.2))
+        XCTAssertEqual(ModelPricing.rate(for: "gpt-6.1-sol"), .perMillion(2, 10, 2.5, 0.1))
+        XCTAssertEqual(ModelPricing.rate(for: "gpt-6-luna"), .perMillion(0.1, 0.5, 0.125, 0.01),
+                       "the generic GPT fallback would price Luna 50x too high")
         XCTAssertEqual(ModelPricing.cost(model: "claude-fable-5-1", input: 0, output: 0,
                                          cacheWrite: 0, cacheRead: 1_000_000), 0.25,
                        accuracy: 0.0001, "패밀리 폴백으로 새면 1.00 이 된다")

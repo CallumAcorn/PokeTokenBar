@@ -32,11 +32,17 @@ enum ModelPricing {
         "claude-opus-5":              .perMillion(5, 25, 6.25, 0.5),
         "claude-opus-5-5":            .perMillion(4, 20, 5, 0.2),
         "claude-sonnet-5":            .perMillion(2, 10, 2.5, 0.2),
-        "claude-fable-5":             .perMillion(10, 50, 12.5, 1.0), // LiteLLM 스냅샷 가격 등재됨(2026-08) — 기존 미가격 $0 플레이스홀더 대체
+        // Upstream #384. Without these rows the family fallbacks price Sonnet 5.5 at Sonnet 4 rates
+        // and every GPT-6 model at the generic $5/$30.
+        "claude-sonnet-5-5":          .perMillion(2, 10, 2.5, 0.2),
+        "claude-fable-5":            .perMillion(10, 50, 12.5, 1.0), // LiteLLM 스냅샷 가격 등재됨(2026-08) — 기존 미가격 $0 플레이스홀더 대체
         // Fable 5.1: Fable 5 와 기본 단가는 같지만 cache read 만 $0.25/MTok(입력의 0.025배)로 내려갔다.
         // 이 줄이 없으면 `fable` 패밀리 폴백이 Fable 5 의 $1.00 을 적용해 **비용을 4배 부풀린다**(상류 #277).
         "claude-fable-5-1":           .perMillion(10, 50, 12.5, 0.25),
         "gpt-5.5":                    .perMillion(5, 30, 0, 0.5),
+        "gpt-6-sol":                  .perMillion(2, 10, 2.5, 0.2),
+        "gpt-6.1-sol":                .perMillion(2, 10, 2.5, 0.1),
+        "gpt-6-luna":                 .perMillion(0.1, 0.5, 0.125, 0.01),
         // Gemini — 공식 API 단가(기본 티어, ≤200K 프롬프트). 캐시는 read 단가만(스토리지 시간요금 제외).
         "gemini-2.5-flash-lite":      .perMillion(0.10, 0.40, 0, 0.01),   // 상류 #309
         "gemini-2.5-pro":             .perMillion(1.25, 10, 0, 0.3125),
