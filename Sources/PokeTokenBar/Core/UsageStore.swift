@@ -61,11 +61,21 @@ final class UsageStore {
             reschedule()
         }
     }
+    /// The Settings sliders overlap (warn 50…95, crit 80…100), so moving one past the other pushes
+    /// the other along by one slider step. Otherwise a window between them raises a critical
+    /// alert below the warning line and the warning tier never fires.
+    static let thresholdGap: Double = 5
     var warnThreshold: Double {
-        didSet { defaults.set(warnThreshold, forKey: "warnThreshold") }
+        didSet {
+            defaults.set(warnThreshold, forKey: "warnThreshold")
+            if critThreshold <= warnThreshold { critThreshold = warnThreshold + Self.thresholdGap }
+        }
     }
     var critThreshold: Double {
-        didSet { defaults.set(critThreshold, forKey: "critThreshold") }
+        didSet {
+            defaults.set(critThreshold, forKey: "critThreshold")
+            if warnThreshold >= critThreshold { warnThreshold = critThreshold - Self.thresholdGap }
+        }
     }
     // 메뉴바 표시 항목 (복수 선택 가능)
     var showTokensInMenu: Bool {
@@ -532,8 +542,9 @@ final class UsageStore {
         self.defaults = defaults
         let d = defaults
         refreshInterval = d.object(forKey: "refreshInterval") as? TimeInterval ?? 120
-        warnThreshold = d.object(forKey: "warnThreshold") as? Double ?? 80
-        critThreshold = d.object(forKey: "critThreshold") as? Double ?? 95
+        let storedCrit = d.object(forKey: "critThreshold") as? Double ?? 95
+        critThreshold = storedCrit
+        warnThreshold = min(d.object(forKey: "warnThreshold") as? Double ?? 80, storedCrit - Self.thresholdGap)
         showTokensInMenu = d.object(forKey: "showTokensInMenu") as? Bool ?? true
         showCostInMenu = d.object(forKey: "showCostInMenu") as? Bool ?? false
         showLimitInMenu = d.object(forKey: "showLimitInMenu") as? Bool ?? false

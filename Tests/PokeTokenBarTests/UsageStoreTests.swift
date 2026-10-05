@@ -857,6 +857,41 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertTrue(store.isLimitWarning)   // fiveHourForecast(beforeReset:true)
     }
 
+    /// The Settings sliders overlap (warn 50…95, crit 80…100). If warn could sit at or above
+    /// crit, a window between them would raise a *critical* alert below the warning line and
+    /// the warning tier could never fire. Moving either slider pushes the other one past it.
+    func testWarningStaysBelowCritical() {
+        let store = makeStore(providers: [])
+        store.critThreshold = 80
+        store.warnThreshold = 95
+        XCTAssertEqual(store.warnThreshold, 95)
+        XCTAssertEqual(store.critThreshold, 100, "raising warn pushes crit above it")
+
+        store.critThreshold = 80
+        XCTAssertEqual(store.critThreshold, 80)
+        XCTAssertEqual(store.warnThreshold, 75, "lowering crit pushes warn below it")
+
+        store.warnThreshold = 60
+        XCTAssertEqual(store.critThreshold, 80, "an already ordered pair is left alone")
+        XCTAssertEqual(testDefaults.double(forKey: "warnThreshold"), 60)
+        XCTAssertEqual(testDefaults.double(forKey: "critThreshold"), 80)
+    }
+
+    func testStoredThresholdsLoadInOrder() {
+        testDefaults.set(95.0, forKey: "warnThreshold")
+        testDefaults.set(80.0, forKey: "critThreshold")
+        let store = makeStore(providers: [])
+        XCTAssertLessThan(store.warnThreshold, store.critThreshold)
+        XCTAssertEqual(store.critThreshold, 80)
+        XCTAssertEqual(store.warnThreshold, 75)
+
+        var tiers: [String: Int] = [:]
+        let alerts = UsageStore.evaluateLimitAlerts(
+            windows: [(key: "k", name: "5h", utilization: 77)],
+            warn: store.warnThreshold, crit: store.critThreshold, tiers: &tiers)
+        XCTAssertEqual(alerts.map(\.isCritical), [false], "77% is a warning, not a critical alert")
+    }
+
     // MARK: burn tier
 
     func testBurnTierThresholds() async {
