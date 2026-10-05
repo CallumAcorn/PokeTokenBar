@@ -689,6 +689,27 @@ read_when:
   넣어 보고, 로컬 장부만 새 기기 기준으로 다시 잡는다(`SaveTransfer.rebasedForThisDevice`). 회귀 가드:
   `testTransferDayTokensStillCountAfterRebase` — 재정렬 없는 대조군을 같이 돌려 결함 조건이 살아 있는지도
   함께 확인한다(테스트가 트리거 브랜치를 실제로 밟는지 보증).
+- **Read a rotated file into memory before any write that can prune it.** Snapshot restore took
+  the pre-restore safety snapshot first; at exactly `maxSnapshotsToKeep` files that 11th snapshot
+  pruned the oldest one, so restoring the oldest entry read a deleted file. The restore test only
+  used two snapshots, below the retention limit where pruning never runs. Load and validate the
+  selected snapshot first, then write the safety snapshot and apply the in-memory data; an
+  unreadable selection must fail before anything is written or pruned.
+  Guards: `testRestoreOldestSnapshotAtRetentionLimit`,
+  `testRestoreUnreadableSnapshotLeavesStateAndSnapshotsUntouched`.
+- **정규화는 "디코드 가능한데 쓰면 트랩인 값"까지 — 체인 내 중복 종 id.** `DexEntry.chainOrder`·
+  `MonState.pathIDs` 에 같은 종이 두 번 들어간 세이브(손편집·외부 불러오기)는 디코드에 성공하지만,
+  도감 이름 조회(`dexResolveChainNames` 오프라인·온라인 양쪽)·놓아주기·졸업이 그 배열로
+  `Dictionary(uniqueKeysWithValues:)` 를 만들어 `Duplicate values for key` 로 앱이 죽는다. 디코드 성공이라
+  `.corrupt` 복구도 안 걸린다.
+  **왜 못 걸렀나:** `sanitized` 는 수치 트랩(토큰 상한·`totalForms`)만 다뤘고, 컬렉션 불변식(중복 없음)은
+  "정상 플레이로는 안 생긴다"는 이유로 검사 대상이 아니었다 — 그러나 이 함수의 존재 이유가 손편집 입력이다.
+  **수정:** `sanitized` 에서 `chainOrder`·`pathIDs`·`plannedPathIDs` 의 첫 등장만 남기고, `stageIndex` 는
+  dedupe 전의 현재 종 위치로 다시 맞춘다. 디스크 로드·스냅샷 복구·불러오기가 모두 이 함수를 지난다.
+  **회귀 가드:** `SaveTransferTests.testDuplicateSpeciesInSavedChainsAreRemovedOnLoad` — 수정 전엔
+  `Fatal error: Duplicate values for key: '1'` 로 프로세스가 죽는 것을 확인.
+  **스윕:** `CompanionStore` 의 나머지(`claimedTodayTokensByProvider` 키)는 딕셔너리 키라 유일하다. 세이브
+  밖의 사용처(로그 스캔·PokéAPI 스탯)는 이 입력 경로가 아니라 범위 밖.
 
 - **경계 정규화는 "산술에 쓰이는 필드" 전수로 돌려라 — 토큰 필드만 훑으면 반드시 하나 빠진다.**
   `SaveTransfer.sanitized` 는 오버플로 트랩으로 인한 영구 크래시 루프를 막으려고 만들었는데, 정작
