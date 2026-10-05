@@ -1942,6 +1942,83 @@ private struct KnownMoveCell: View {
 /// 우회(고정 높이 + maxHeight)가 아니라 회피로 피한다. 페이지 크기가 고정이라 모든 칸이 항상
 /// 렌더되므로 지연 격자(LazyVGrid)도 필요 없다 — 평범한 VStack/HStack 으로 동기 렌더한다.
 /// 미보유 종은 아예 그리지 않는다(물음표·실루엣 칸 없음).
+/// Turns scroll-wheel / trackpad events into single page steps for the Dex grid.
+/// `scrollingDeltaY` already reflects the natural-scrolling setting, so a negative delta always
+/// means "move the content up" (reveal what comes next), exactly like a list would.
+struct DexScrollPager {
+    /// Accumulated trackpad distance (pt) before a gesture flips the page.
+    static let preciseThreshold: CGFloat = 24
+
+    private var accumulated: CGFloat = 0
+    private var firedThisGesture = false
+
+    /// +1 = next page, -1 = previous page, 0 = no change.
+    mutating func step(deltaY: CGFloat, precise: Bool,
+                       phase: NSEvent.Phase, momentumPhase: NSEvent.Phase) -> Int {
+        // Wheel notch: one event per notch, one page per notch.
+        guard precise else { return Self.direction(deltaY) }
+        // The momentum tail belongs to a gesture that has already paged.
+        guard momentumPhase.isEmpty else { return 0 }
+        if phase.contains(.began) || phase.contains(.mayBegin) {
+            accumulated = 0
+            firedThisGesture = false
+        }
+        if phase.contains(.ended) || phase.contains(.cancelled) {
+            accumulated = 0
+            firedThisGesture = false
+            return 0
+        }
+        guard !firedThisGesture else { return 0 }
+        accumulated += deltaY
+        guard abs(accumulated) >= Self.preciseThreshold else { return 0 }
+        let result = Self.direction(accumulated)
+        accumulated = 0
+        // Phase-less precise devices have no gesture boundary, so only latch real gestures.
+        firedThisGesture = !phase.isEmpty
+        return result
+    }
+
+    static func pageAfterScroll(current: Int, pageCount: Int, step: Int) -> Int {
+        min(max(0, current + step), max(0, pageCount - 1))
+    }
+
+    private static func direction(_ deltaY: CGFloat) -> Int {
+        deltaY < 0 ? 1 : (deltaY > 0 ? -1 : 0)
+    }
+}
+
+/// Background view that feeds scroll events over its bounds to `onStep`. A local monitor (not a
+/// `scrollWheel(with:)` override) keeps clicks and hover on the cells above it untouched.
+private struct ScrollWheelPager: NSViewRepresentable {
+    let onStep: (Int) -> Void
+
+    func makeNSView(context: Context) -> PagerView { PagerView() }
+    func updateNSView(_ view: PagerView, context: Context) { view.onStep = onStep }
+
+    final class PagerView: NSView {
+        var onStep: ((Int) -> Void)?
+        private var pager = DexScrollPager()
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, let window = self.window, event.window === window,
+                      self.bounds.contains(self.convert(event.locationInWindow, from: nil))
+                else { return event }
+                let step = self.pager.step(deltaY: event.scrollingDeltaY,
+                                           precise: event.hasPreciseScrollingDeltas,
+                                           phase: event.phase, momentumPhase: event.momentumPhase)
+                if step != 0 { self.onStep?(step) }
+                return nil
+            }
+        }
+    }
+}
+
+
 private struct DexGridView: View {
     let store: CompanionStore
     @State private var selectedRarity: Rarity?
@@ -1968,6 +2045,10 @@ private struct DexGridView: View {
             VStack(alignment: .leading, spacing: 8) {
                 header(all)
                 grid(slice)
+                    .background(ScrollWheelPager { step in
+                        let next = DexScrollPager.pageAfterScroll(current: current, pageCount: pageCount, step: step)
+                        if next != current { page = next }
+                    })
                 footer(current: current, pageCount: pageCount)
             }
             // 이름이 저장돼 있지 않은 구버전 졸업분을 채운다 — 격자는 저장분만 읽으므로 이게 없으면
