@@ -412,6 +412,72 @@ read_when:
   동안은 자동 폴이 그 토큰으로 한도를 계속 갱신하고, 만료되면 stale 표시 후 사용자가 갱신한다. 회귀 가드:
   `testAutoRefreshUsesNoPromptPathManualUsesPromptPath`. (완전 근절은 Developer ID notarization 으로
   '항상 허용' 승인을 안정화하는 것뿐 — 신뢰된 서명 신원이라야 ACL 승인이 지속된다. 미도입.)
+  (설정 갱신·팝오버 `claudeLimitsRefreshRow`, `refreshLimitTokenFromKeychain`)에서만. 파일이 유효
+  토큰을 들고 있으면 매 자동 폴이 그걸 다시 읽고, 파일이 없을 때만 캐시가 버티다가 만료 후 stale.
+  회귀 가드: `testAutoRefreshUsesNoPromptPathManualUsesPromptPath`. (완전 근절은 Developer ID
+  notarization 으로 '항상 허용' 승인을 안정화하는 것뿐 — 신뢰된 서명 신원이라야 ACL 승인이 지속된다.
+  미도입.)
+- **Claude Keychain '항상 허용'은 ACL 리셋으로 유지되지 않는다 — 비간섭 상시 `(?)` 도움말로 세션 키 등록을 유도.**
+  macOS 의 `security add-generic-password -U` 동작상 Claude CLI 가 토큰을 갱신할 때마다 기존 항목의 ACL(항상 허용)이
+  날아간다. 사용자가 시스템 창에서 '항상 허용'을 눌렀음에도 다음 번에 또 암호를 묻는 것은 앱 버그가 아닌 macOS+CLI 한계이므로,
+  시끄러운 팝업 배너 대신 `한도 (공식)` 헤더 옆의 은은한 `(?)` 팝오버 및 설정 세션 키 입력란으로의 원클릭 바운스(#275)를 통해
+  키체인 사용자에게는 0% 노이즈를 유지하면서도 세션 키 우회로를 친절히 안내한다.
+- **Claude 의 `refreshToken` 은 보이지만 우리가 쓰면 안 된다 — 갱신 시 회전되어 Claude Code 를 깨뜨린다.**
+  키체인 항목(`claudeAiOauth`)에는 `accessToken`(수명 ~5h) 옆에 `refreshToken`·`refreshTokenExpiresAt`
+  (~15일)이 함께 들어 있다. "그걸로 갱신하면 키체인 접근이 5시간마다 → 15일마다로 줄겠다"는 발상이
+  자연스럽게 나오는데, **하면 안 된다.** Claude Code 바이너리 확인: 갱신은
+  `POST {baseURL}/v1/oauth/token`(`grant_type=refresh_token`, `client_id`)이고 응답 처리 함수가
+  `ltu(e,t) → { refreshToken: t.refreshToken, … }` 로 **저장된 refreshToken 을 응답의 새 값으로 교체**한다.
+  즉 회전한다. 외부 앱이 대신 갱신하면 Claude Code 의 키체인 사본이 죽은 토큰이 되어 **재로그인**을 요구한다.
+  피하려면 남의 자격증명 저장소에 write 해야 하는데 그건 위 '앱 소유 keychain 항목 금지' 가 막는 영역이다.
+  **Antigravity 와 다른 이유가 여기 있다** — Google 은 회전하지 않아서 `AntigravityTokenCache` 가
+  `refreshToken: refreshToken` 으로 기존 값을 그대로 재사용한다(`refreshGoogleToken`). 두 프로바이더의
+  토큰 규약이 다른 것이지 Claude 쪽 구현 누락이 아니다.
+  반대로 Antigravity 는 이 갱신을 **자동 경로에서도** 써야 한다 — 토큰 파일 없이 수동 갱신으로 키체인에서
+  받은 자격증명은 메모리에 refresh token 을 들고 있는데, 자동 폴이 만료만 보고 `keychainInteractionNotAllowed`
+  를 던져 한도가 ~1시간 뒤부터 수동 클릭 전까지 stale 이었다(#415). 회귀:
+  `testAutoPollRefreshesAnExpiredKeychainCredentialWithoutKeychain`.
+  **확실도:** 회전은 "Claude Code 가 응답의 토큰으로 교체 저장한다"에서 추론한 것이고 실제로 갱신을
+  걸어 확인하지는 않았다 — 틀렸을 때의 대가가 사용자의 주 도구 로그인 파손이라 시험 자체를 하지 않았다.
+  판단 근거는 확률이 아니라 비대칭이다: **잘 돼야 #241 세션 키가 이미 더 완전하게 주는 것(간격 축소 vs
+  프롬프트 제거)의 열화판이고, 잘못되면 Claude Code 가 깨진다.**
+  같은 맥락에서 기각된 것: **사용자 경로에 무프롬프트 선시도를 덧대는 것**(Antigravity 방식). ACL 이
+  승인돼 있으면 프롬프트 쿼리도 조용히 통과하고, 미승인이면 무프롬프트는 실패해 결국 프롬프트를 띄운다 —
+  두 경로의 결과가 같아 얻는 게 없다. 패턴이 다른 프로바이더에 있다는 것만으로 이식하지 마라.
+- **인메모리 토큰 캐시는 만료만 보면 안 된다 — 원본 파일이 다른 유효 토큰으로 바뀌었는지도 본다.**
+  `/login` 으로 계정을 갈아타면 `~/.claude/.credentials.json` 이 새 토큰으로 덮이지만, 캐시가 옛
+  토큰의 `expiresAt` 까지 그걸 무시하면 공식 5h/주 바가 이전 계정에 붙고 컴패니언 EXP 만 로컬
+  jsonl 로 계속 오른다(#227). 자동 폴은 키체인을 안 읽으므로 **파일 peek 를 캐시 히트보다 앞에**
+  둔다. 파일이 없거나 `"claudeAiOauth": null` 이면 캐시를 유지(로그아웃·`CLAUDE_CONFIG_DIR` 잔여
+  파일 — 기존 `credentialsFileIsAccountOAuthMissing` 과 같은 이유). 같은 부류: Antigravity
+  `jetski-standalone-oauth-token` 은 파일 로드 시 `expiresAt=nil` 이라 캐시가 만료로 풀리지 않는다.
+  회귀: `testClaudeAutoPollPicksUpInPlaceAccountSwitch`·`testAntigravityAutoPollPicksUpTokenFileSwitch`.
+  캐시-우선 early return 을 되돌리면 이 두 테스트가 실패해야 한다.
+- **파일이 없는 Keychain-only 설치는 사용자 갱신도 만료만 보면 이전 계정에 붙는다.** #227 은
+  파일이 새 유효 토큰으로 덮이는 경우를 고쳤다. 파일이 없으면 같은 메모리 캐시가 남고, 같은 Team 의
+  다른 메일은 401 을 안 주므로 invalidate 경로에 안 들어간다. Refresh 를 눌러도 Keychain 을 안 읽고
+  로그는 "keychain"이라고 남긴다(#300). 사용자 동작(`allowKeychainPrompt: true`)만
+  `bypassCache: true`. 자동 폴은 그대로 캐시 — 키체인 다이얼로그를 되살리면 #210 이 돌아온다.
+  같은 한 줄: `AntigravityRateLimitsProvider.fetch`. 회귀:
+  `testManualRefreshRereadsKeychainWhenCachedTokenIsStillValid`. `bypassCache` 를 빼면
+  Authorization 이 `token-account-a` 로 남고 Keychain 조회가 0 이다.
+- **`kSecMatchLimitAll` 과 `kSecReturnData` 는 같이 못 쓴다 — macOS 가 errSecParam(-50) 으로 거절한다.**
+  "서비스에 항목이 여럿일 수 있으니 전부 받아서 유효한 걸 고르자"는 발상 자체는 옳지만(#229), 한 번의
+  `SecItemCopyMatching` 으로 *모든 항목의 데이터*를 받는 쿼리는 **파라미터 단계에서** 거절된다. 항목이
+  없어서가 아니라 조합이 무효라서라, ACL 승인·항목 존재·재로그인 어느 것으로도 우회되지 않는다.
+  결과는 조용한 전면 실패였다 — Keychain 에만 자격증명이 있는 사용자(파일 `~/.claude/.credentials.json`
+  없음)는 수동 갱신을 눌러도 `keychainUnavailable(-50)` 만 나고 공식 한도가 **영구히** 안 떴다.
+  → 두 단계로 나눈다: ① `kSecMatchLimitAll` + `kSecReturnAttributes` 로 `acct` 목록만 열거
+  ② 계정마다 `kSecMatchLimitOne` + `kSecReturnData` 로 단건 조회. 계정 속성을 못 얻으면 스코프 없는
+  단건 읽기로 폴백한다(항목이 하나뿐인 흔한 경우).
+  **5-whys(왜 못 걸렀나):** 테스트가 `extractDataItems(from:)` 라는 순수 파서만 합성 배열로 검증했다.
+  결함은 그 함수가 아니라 **그 함수에 값을 넘겨주는 쿼리**에 있었고, `SecItemCopyMatching` 은 테스트
+  경로에 아예 없었다 — 결함 트리거와 다른 경로로 통과하는 전형이다. 딕셔너리 모양만 단정하는 테스트도
+  같은 이유로 부족하다: 어떤 키 조합이 무효인지는 **Security 프레임워크만 안다.**
+  가드: `testKeychainQueriesAreAcceptedBySecurityFramework` — 존재하지 않는 서비스명(매칭 0건이라
+  ACL·프롬프트에 안 닿음)으로 프로덕션 쿼리를 실제 API 에 던져 `errSecParam` 이 아님을 단정한다.
+  기대값이 "성공"이 아니라 **"파라미터가 유효하다"(`errSecItemNotFound`)** 인 게 요점이다.
+  `kSecMatchLimitAll` 을 데이터 쿼리에 되돌리면 이 테스트가 빨개진다(주입 확인 완료).
 - **자격증명 "없음"과 "계정 로그인 없음"은 다른 안내다.** Claude Code 2.1.x 의 `Claude Code-credentials`
   항목이 MCP 서버 OAuth(`mcpOAuth`) 상태만 담고 계정 토큰(`claudeAiOauth`)은 안 담는 경우가 있다. 이때
   파싱 실패를 형식 오류로 뭉뚱그리면 "재로그인하면 된다"를 안내 못 해 한도 섹션이 원인 불명으로 사라진다.
