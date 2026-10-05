@@ -24,4 +24,41 @@ final class UpdateCheckerTests: XCTestCase {
         XCTAssertTrue(UpdateChecker.isNewer("2.0.1", than: "2.0"))   // 2.0.1 > 2.0.0
         XCTAssertFalse(UpdateChecker.isNewer("2.0", than: "2.0.0"))  // 동일
     }
+
+    // MARK: Cooldown and tag validation (upstream #321, ported)
+
+    @MainActor func testFailedCheckDoesNotStartTheCooldown() async {
+        nonisolated(unsafe) var calls = 0
+        nonisolated(unsafe) var reply: UpdateChecker.LatestRelease?
+        let checker = UpdateChecker(currentVersion: "2.5.1-hardened.11", clock: { Date(timeIntervalSince1970: 0) },
+                                          fetchLatest: { calls += 1; return reply })
+        await checker.check()
+        XCTAssertEqual(calls, 1)
+        reply = .init(tag: "v2.5.1-hardened.12", url: "https://github.com/CallumAcorn/PokeTokenBar/releases/tag/v2.5.1-hardened.12")
+        await checker.check()
+        XCTAssertEqual(calls, 2, "a failed check must not block the next attempt for 30 minutes")
+        let shown = checker.available?.version
+        XCTAssertEqual(shown, "2.5.1-hardened.12")
+        await checker.check()
+        XCTAssertEqual(calls, 2, "a successful check does start the cooldown")
+    }
+
+    @MainActor func testUntrustedURLIsAFailedCheck() async {
+        nonisolated(unsafe) var calls = 0
+        let checker = UpdateChecker(currentVersion: "2.5.1-hardened.11", clock: { Date(timeIntervalSince1970: 0) },
+                                          fetchLatest: { calls += 1; return .init(tag: "v9.9.9", url: "http://evil.example/x") })
+        await checker.check()
+        await checker.check()
+        XCTAssertEqual(calls, 2)
+        let shown = checker.available
+        XCTAssertNil(shown)
+    }
+
+    func testReleaseTagValidationAcceptsTheForkScheme() {
+        XCTAssertEqual(UpdateChecker.normalizedReleaseVersion("v2.5.1-hardened.12"), "2.5.1-hardened.12")
+        XCTAssertEqual(UpdateChecker.normalizedReleaseVersion("2.6.0"), "2.6.0")
+        XCTAssertNil(UpdateChecker.normalizedReleaseVersion("v2.6.0-beta.1"))
+        XCTAssertNil(UpdateChecker.normalizedReleaseVersion("latest"))
+        XCTAssertNil(UpdateChecker.normalizedReleaseVersion("2.6"))
+    }
 }

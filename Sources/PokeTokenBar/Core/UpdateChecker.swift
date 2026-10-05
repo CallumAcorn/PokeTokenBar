@@ -33,36 +33,73 @@ final class UpdateChecker {
     nonisolated static let caskToken = "poke-token-bar-hardened"
     private let clock: () -> Date
     private var lastChecked: Date?
+    /// Injected so tests can fail or succeed without the network.
+    private let fetchLatest: () async -> LatestRelease?
+    /// A failed check no longer starts the cooldown, so overlapping popover opens must not stack
+    /// concurrent GitHub calls (upstream #321).
+    private var checkInFlight = false
 
-    init(currentVersion: String? = nil, clock: @escaping () -> Date = Date.init) {
+    struct LatestRelease: Equatable, Sendable {
+        let tag: String
+        let url: String
+    }
+
+    init(currentVersion: String? = nil, clock: @escaping () -> Date = Date.init,
+         fetchLatest: (() async -> LatestRelease?)? = nil) {
         self.currentVersion = currentVersion
             ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"
         self.clock = clock
+        self.fetchLatest = fetchLatest ?? { await Self.liveLatestRelease() }
     }
 
     /// 최신 릴리스 조회 → 새 버전이고 사용자가 그 버전을 'skip' 하지 않았으면 available 설정.
-    /// minInterval 보다 자주 호출되면 무시(레이트리밋 보호).
+    /// minInterval applies only between **successful** checks (rate-limit protection). A network
+    /// failure, an untrusted URL or a malformed tag does not start it, so reopening retries.
     func check(minInterval: TimeInterval = 1800) async {
+        if checkInFlight { return }
         if let last = lastChecked, clock().timeIntervalSince(last) < minInterval { return }
+        checkInFlight = true
+        defer { checkInFlight = false }
+
+        guard let release = await fetchLatest(),
+              Self.isTrustedReleaseURL(release.url),
+              let latest = Self.normalizedReleaseVersion(release.tag) else { return }
         lastChecked = clock()
-        guard let url = URL(string: "https://api.github.com/repos/\(Self.repo)/releases/latest") else { return }
+        let skipped = UserDefaults.standard.string(forKey: "skippedUpdateVersion")
+        if Self.isNewer(latest, than: currentVersion), latest != skipped {
+            available = Available(version: latest, url: release.url)
+        } else {
+            available = nil
+        }
+    }
+
+    /// The URL goes to NSWorkspace.open, so only https on github.com (no scheme hijack).
+    nonisolated static func isTrustedReleaseURL(_ string: String) -> Bool {
+        guard let url = URL(string: string), url.scheme == "https", url.host == "github.com" else { return false }
+        return true
+    }
+
+    /// Release tag to comparable version, or nil unless it is this fork's scheme:
+    /// `MAJOR.MINOR.PATCH` with an optional `-hardened.N`, optionally `v`-prefixed. Upstream's
+    /// version accepted only plain `MAJOR.MINOR.PATCH`, which would have rejected every fork tag.
+    nonisolated static func normalizedReleaseVersion(_ tag: String) -> String? {
+        var v = Substring(tag.trimmingCharacters(in: .whitespacesAndNewlines))
+        if v.first == "v" || v.first == "V" { v = v.dropFirst() }
+        guard v.range(of: #"^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(-hardened\.[0-9]{1,9})?$"#,
+                      options: .regularExpression) != nil else { return nil }
+        return String(v)
+    }
+
+    private nonisolated static func liveLatestRelease() async -> LatestRelease? {
+        guard let url = URL(string: "https://api.github.com/repos/\(Self.repo)/releases/latest") else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tag = json["tag_name"] as? String,
-              let html = json["html_url"] as? String,
-              // 응답 필드가 NSWorkspace.open 으로 가므로 https + github.com 만 허용(스킴 하이재킹 방지)
-              let htmlURL = URL(string: html), htmlURL.scheme == "https", htmlURL.host == "github.com"
-        else { return }
-        let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-        let skipped = UserDefaults.standard.string(forKey: "skippedUpdateVersion")
-        if Self.isNewer(latest, than: currentVersion), latest != skipped {
-            available = Available(version: latest, url: html)
-        } else {
-            available = nil
-        }
+              let html = json["html_url"] as? String else { return nil }
+        return LatestRelease(tag: tag, url: html)
     }
 
     /// 이 버전은 다시 알리지 않음.
