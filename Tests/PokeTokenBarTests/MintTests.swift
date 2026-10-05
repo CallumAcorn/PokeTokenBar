@@ -144,6 +144,21 @@ final class MintTests: XCTestCase {
         XCTAssertEqual(s.availableTokens, 300_000_000 - Mint.price)
     }
 
+    /// Multi-buy (upstream #371): the whole quantity is charged, nothing over the balance cap is
+    /// sold, and a refused quantity changes nothing (no partial purchase).
+    func testBuyManyChargesEachAndRefusesBeyondTheBalance() {
+        let s = store(mint: 0, used: 350_000_000)
+        XCTAssertEqual(s.maxBuyCount(.mint), 3)
+        XCTAssertFalse(s.buy(.mint, count: 4))
+        XCTAssertFalse(s.buy(.mint, count: 0))
+        XCTAssertEqual(s.state.spentTokens, 0, "a refused quantity must not charge anything")
+        XCTAssertTrue(s.buy(.mint, count: 3))
+        XCTAssertEqual(s.itemCount(.mint), 3)
+        XCTAssertEqual(s.state.spentTokens, 3 * Mint.price)
+        XCTAssertEqual(s.maxBuyCount(.mint), 0)
+        XCTAssertEqual(s.maxBuyCount(.shinyCharm), 0, "passive items stay one-off, and this balance can't afford one")
+    }
+
     func testCannotBuyMintBelowPrice() {
         let s = store(mint: 0, used: Mint.price - 1)
         XCTAssertFalse(s.canBuy(.mint))
