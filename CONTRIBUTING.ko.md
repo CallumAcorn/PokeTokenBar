@@ -65,8 +65,7 @@ CI도 모든 풀 리퀘스트에서 같은 명령을 실행합니다. 테스트 
   (`Sources/PokeTokenBar/Core/UsageStore.swift`)에 등록합니다. 이 두 곳은 기본 진입점이며,
   수정 범위가 두 파일로 제한되지는 않습니다. 소스에 맞춰 리더, 공유 캐시 연동,
   사용자 지정 스캔 경로, 테스트도 추가하거나 수정하세요.
-  [프로바이더 확장 규약](docs/reference/provider-extension.md)과
-  [프로바이더 기여 체크리스트](https://github.com/chattymin/PokeTokenBar/issues/115)를 따르세요.
+  [프로바이더 확장 규약](docs/reference/provider-extension.md)을 따르세요.
 - **범용 동작은 모든 프로바이더에 걸쳐 집계해야 합니다** (오늘/주/월 합계, burn tier,
   companion 리듬). 범용 계산을 한 프로바이더에만 붙이지 말고, 범용 경로에
   `providerID == "..."` 리터럴 분기를 추가하지 마세요. 프로바이더 고유 동작

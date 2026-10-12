@@ -68,8 +68,7 @@ The app is provider-agnostic by design. When extending it, follow these rules
   (`Sources/PokeTokenBar/Core/UsageStore.swift`). These are the core entry points,
   not a two-file limit. Depending on the source, also add or update its reader,
   shared cache integration, custom scan roots, and tests. Follow the
-  [provider extension guide](docs/reference/provider-extension.md) and the
-  [provider contribution checklist](https://github.com/chattymin/PokeTokenBar/issues/115).
+  [provider extension guide](docs/reference/provider-extension.md).
 - **Generic behavior must aggregate across all providers** (today/week/month
   totals, burn tier, companion rhythm). Do not attach a generic calculation to a
   single provider, and do not add `providerID == "..."` literal branches on
