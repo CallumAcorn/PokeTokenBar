@@ -151,6 +151,7 @@ struct L {
     // MARK: 대표 포켓몬
     var floatingPetSectionTitle: String { t("플로팅 펫", "Floating Pet", "フローティングペット", "Mascota flotante", "Compagnon flottant", "Mascote flutuante") }
     var floatingPetEnableLabel: String { t("플로팅 펫 표시", "Show floating pet", "フローティングペットを表示", "Mostrar mascota flotante", "Afficher le compagnon flottant", "Mostrar mascote flutuante") }
+    var floatingPetHideLabel: String { t("플로팅 펫 숨기기", "Hide floating pet", "フローティングペットを隠す", "Ocultar mascota flotante", "Masquer le compagnon flottant", "Ocultar mascote flutuante") }
     var floatingPetHint: String {
         t("포켓몬이 화면 위에 떠 있어요 — 드래그로 위치를 옮길 수 있어요",
           "Your Pokémon floats over the screen — drag to reposition",

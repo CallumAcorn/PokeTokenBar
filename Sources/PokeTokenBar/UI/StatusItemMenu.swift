@@ -18,12 +18,12 @@ enum StatusItemMenu {
     }
 
     /// `nil` elements are separators.
-    static func entries(l: L, todayTokens: Int, todayCost: UsageCost?, floatingPetEnabled: Bool) -> [Entry?] {
+    static func entries(l: L, todayTokens: Int, todayCost: Double?, floatingPetEnabled: Bool) -> [Entry?] {
         [
             Entry(title: summary(l: l, todayTokens: todayTokens, todayCost: todayCost), keyEquivalent: "", action: nil),
             nil,
             Entry(title: l.refreshNow, keyEquivalent: "r", action: .refresh),
-            Entry(title: l.dexTitle, keyEquivalent: "d", action: .openDex),
+            Entry(title: l.collection, keyEquivalent: "d", action: .openDex),
             Entry(title: l.settings + "…", keyEquivalent: ",", action: .openSettings),
             Entry(title: floatingPetEnabled ? l.floatingPetHideLabel : l.floatingPetEnableLabel,
                   keyEquivalent: "", action: .toggleFloatingPet),
@@ -34,10 +34,10 @@ enum StatusItemMenu {
 
     /// "Today's tokens 19.4M · $5.09". The cost is left out when no provider reports one,
     /// matching the popover header.
-    static func summary(l: L, todayTokens: Int, todayCost: UsageCost?) -> String {
+    static func summary(l: L, todayTokens: Int, todayCost: Double?) -> String {
         let tokens = "\(l.todayTokens) \(TokenFormatter.compact(todayTokens))"
         guard let todayCost else { return tokens }
-        return "\(tokens) · \(todayCost.text(l))"
+        return "\(tokens) · \(TokenFormatter.cost(todayCost))"
     }
 
     /// Right click, or Control + left click (the standard one-button secondary click).

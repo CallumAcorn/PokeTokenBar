@@ -646,7 +646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover.isShown { popover.performClose(nil) }
         let entries = StatusItemMenu.entries(
             l: companion.l, todayTokens: store.todayTotalTokens,
-            todayCost: store.showsCost ? store.todayUsageCost : nil,
+            todayCost: store.showsCost ? store.todayCostTotal : nil,
             floatingPetEnabled: store.floatingPetEnabled)
         // Attaching the menu only for this click keeps left click on the popover. performClick
         // tracks the menu synchronously, with the button highlighted like any other status menu.
@@ -658,7 +658,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func handleStatusMenu(_ item: NSMenuItem) {
         switch StatusItemMenu.action(of: item) {
         case .refresh: Task { await store.refresh() }
-        case .openDex: showPopover { $0.openRepresentativeDex() }
+        case .openDex: showPopover { $0.tab = .collection }
         case .openSettings: showPopover { $0.showSettings = true }
         case .toggleFloatingPet: store.floatingPetEnabled.toggle()
         case .quit: NSApp.terminate(nil)

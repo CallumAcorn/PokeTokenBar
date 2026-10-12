@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class StatusItemMenuTests: XCTestCase {
-    private let reportedCost = UsageCost(amount: 5.09, coverage: CostCoverage(reported: true))
+    private let reportedCost: Double = 5.09
 
     // MARK: click routing
 
@@ -37,7 +37,7 @@ final class StatusItemMenuTests: XCTestCase {
             .init(title: "Today's tokens 19.4M · $5.09", keyEquivalent: "", action: nil),
             nil,
             .init(title: l.refreshNow, keyEquivalent: "r", action: .refresh),
-            .init(title: l.dexTitle, keyEquivalent: "d", action: .openDex),
+            .init(title: l.collection, keyEquivalent: "d", action: .openDex),
             .init(title: "Settings…", keyEquivalent: ",", action: .openSettings),
             .init(title: l.floatingPetHideLabel, keyEquivalent: "", action: .toggleFloatingPet),
             nil,
