@@ -16,6 +16,100 @@ read_when:
 
 ## 판정·데이터
 
+- **An idle day must not erase historical usage.** The store admitted enrichment-only snapshots
+  only for a positive active block, so providers with no usage today lost their week/month totals
+  and chart. Earlier tests deliberately rejected even positive historical totals to hide unused
+  provider tabs; that conflated "unused today" with "no recorded usage". Keep snapshots when a
+  block, period, or daily series has positive tokens, while excluding non-nil all-zero summaries.
+  `UsageStoreTests` covers each history source independently, nil today/nil block, repeated
+  refresh, enrichment failure, successful empty replacement, and ledger recording. The source
+  sweep found this carrier gate was the shared loss point; today-based burn/limit eligibility
+  remains intentionally scoped to current activity. Preserve carriers during phase 1 to avoid
+  hiding the chart between refresh phases. Removing the history predicates makes the historical
+  carrier regression fail; restoring them passes all three history regression tests.
+
+- **Species ownership is not an individual's appearance.** A species-level shiny flag means
+  at least one shiny was collected; using it for the selected individual's badge mislabeled
+  normal catches, and earlier evolution pages offered no way to choose their normal appearance.
+  Track normal and shiny ownership separately, let detail pages select an owned appearance,
+  and keep the selected profile, sprite, and badge consistent. Catch-log rows must always use
+  their own persisted color. Existing tests checked aggregate ownership and reload predicates,
+  while the catch-log rendering fixture contained only normal individuals; they did not exercise
+  mixed-color records together. Cover both acquisition orders and native rendering with distinct
+  synthetic sprite colors, without modifying user saves or bundling third-party artwork.
+  Native appearance tests must wait for the expected rendered sprite with a bounded deadline,
+  then assert both expected pixels and absence of the previous color. A fixed 100ms sleep passed
+  locally but sampled the previous sprite in macOS 15 CI: the header had updated while the
+  sprite's independent SwiftUI `.task(id:)` had not finished rendering. Keep transition-index
+  diagnostics and prove a permanently stale sprite still fails after the readiness deadline.
+
+- **Bundled CLI discovery must cover the shipped app layout.** ChatGPT moved Codex from
+  `Contents/Resources/codex` into `Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`.
+  After an update removed the cached executable, GUI discovery returned nil and hid the limits.
+  Fake-response tests bypassed the production candidate list. `CodexRateLimitsProviderTests`
+  now checks both bundle layouts in the default candidates and preserves dedicated-install
+  precedence; removing the new candidate must fail the regression. The source sweep found
+  this provider is the only owner of ChatGPT CLI bundle paths.
+
+- **Localized metadata names must not replace persistent API identifiers.** The dex rendered
+  ability, move, and type slugs directly, while existing tests covered species names and profile
+  metadata rather than these visible labels. All five detail-view name sites now use a shared
+  selected-language → English resolver, with a formatted identifier only after a completed response or failed request.
+  Pending metadata must show a neutral placeholder, not an English identifier that flashes before
+  translation. Keep a synchronous presentation snapshot for the first frame on detail reentry;
+  the API client remains responsible for freshness. Test pending, loaded, partial, and failed
+  states separately—the old test incorrectly asserted English during loading.
+  Preserve every API language in the cache, normalize legacy language-code casing, and derive
+  supported API codes from `AppLanguage` so future languages need no second allowlist.
+  Fetch names from mounted detail rows rather than profile preparation. `PokemonNameLocalizationTests`
+  covers locale selection, missing translations, future languages, native text rendering, request
+  reuse, disk restoration, and offline retry without changing profile identifiers.
+  Existing saves need a name-cache version as well: nonempty dictionaries from the old allowlist
+  are not complete multilingual responses. `DexNameMigrationTests` covers legacy JSON, duplicate
+  catches, offline/partial recovery, progress preservation, and an unavailable language that must
+  not trigger repeated fetches. Restoring the old nil-only backfill filter makes the regression fail.
+  Catch-log rows must resolve legacy entries even when old names exist, and prefer persisted
+  multilingual names over previously rendered strings after a language change.
+
+- **Translate at display time, including errors and accessibility labels.** Storing translated
+  error strings left session-key and quota-refresh failures in the previous language. Store the
+  failure and resolve it through the shared language selector. `LocalizationErrorsTests` switches
+  languages while a real store error remains visible and checks diagnostic preservation.
+  English UI literals bypassed the Hangul-only source guard; `LanguageSurfaceRegressionTests`
+  now covers usage labels, hidden control labels, selected-language backup dates, and Gen-V
+  `light-ball-egg`/`form-change` methods alongside native rendering in all supported languages.
+
+- **Balance numbers in copy come from the runtime value, never a literal.** The shiny hatch
+  notification said "(1/64)" in every language after the Shiny Charm made the real odds 1/48, and
+  the first-run egg hint kept "~5M tokens" after the growth slider could move the hatch point
+  (fixed separately).
+  The copy was written before the modifiers existed, and `LocalizationInterpolationTests` only
+  checks that placeholders survive, so a number with no placeholder was never compared with the
+  value the game uses. Pass the value the logic uses (`CompanionStore.shinyDenominator`, the
+  difficulty-scaled threshold) into the string. When a message describes an earlier roll whose
+  inputs are not saved, such as a Ditto reveal after hatch, leave the number out rather than guess.
+  When adding a modifier (charm, difficulty, boost), grep `Localization.swift` for the constants
+  it changes. `ShinyCharmTests` checks the notification odds with and without the charm.
+
+- **Cost availability is not a numeric zero.** Codex providers overwrote priced totals with zero
+  while leaving cost UI enabled; earlier tests asserted that subscription policy instead of
+  comparing the public provider result with priced log entries. Preserve explicit source zero,
+  unknown model/token breakdown, and source/estimate provenance separately through daily, period,
+  block, and merged chart totals. An unknown portion must mark a total partial, never complete.
+  `UsageCostTests` exercises Codex JSONL through cold/warm cache and the provider, source-zero vs
+  missing, mixed totals, menu/chart projections, legacy decoding, and native localized rendering.
+  The Codex regression must fail if its provider again overwrites the returned cost with zero.
+  Session/turn aggregates (Hermes/Aside), Cursor bubbles without cache buckets, and Kiro text
+  estimates cannot be passed to request-size-dependent pricing as if they were single requests.
+  Parser semantic changes require the corresponding disk-cache version bump.
+
+- **프로필 레벨은 난이도와 반복 부화 보정을 반영한 단계 진행에서 계산한다.** #244/#254의 임계값을
+  낮춰도 #264가 원시 토큰을 기본 졸업 비용으로 나누면 졸업한 개체가 레벨 5 또는 52에 남는다.
+  완료 단계의 기본 비용과 현재 단계의 실제 임계 대비 진행률을 합산해 표준 성장량을 영속한다.
+  난이도 증가·가져오기는 이미 얻은 성장량과 레벨을 낮추지 않으며, 졸업 기록을 만들기 전에 100을
+  확정한다. 메타몽 공개는 희귀도 간 성장 단위를 환산하고 개체 정보만 재설정한다.
+  `ProfileGrowthIntegrationTests`는 난이도 양 끝·반복 부화·설정 변경·재시작·가져오기·사탕·오프라인을 검증한다.
+
 - **옵셔널 tautology.** 옵셔널 필드라도 *생산자가 항상 채우면* `x != nil` 은 항상 참이다. "값이 있나"는
   의미값으로 검사한다(예: `totalTokens > 0`, 또는 진짜 nil 가능한 필드 `activeBlock`). — weekTotal 회귀(#56).
 - **사용량 엔트리의 존재는 실제 사용의 증거가 아니다.** Claude 는 로컬 세션 시작 과정에서 토큰 필드가
@@ -60,6 +154,33 @@ read_when:
   클램프 자체는 통과해도 `output + thoughts` 처럼 파싱 직후 더하는 곳에서 다시 트랩난다. 합산 여유가 있는
   상한(`maxParsedTokenValue`)을 쓴다. 회귀 가드는 프로바이더별로 **테스트를 쪼개라** — 트랩은 프로세스를
   끝내므로 한 테스트에 몰면 뒤 케이스가 아예 실행되지 않는다.
+  **추출기가 `LocalUsageReader` 밖에 있으면 같은 함정이 그대로 남는다.** OpenCode·Cursor의
+  `LocalAdditionalUsageProvider.intValue` 와 Hermes의 `columnInt` 는 `Int.max` 로 포화시킨 뒤
+  `input + output` 에서 다시 SIGTRAP 했다(`testCursorHugeTokenCountsDoNotTrapOnTheAdd`·
+  `testHermesHugeSessionTokensDoNotTrapOnTheReasoningAdd`). 대시보드 JSON 을 읽는
+  `CursorUsageAPI.intValue` 도 같은 포화 후 `makeEntry` 합에서 트랩한다
+  (`testParseCursorUsageEventClampsHugeTokenCounts`). Kiro 타임스탬프의 `Int64(Double)` 도
+  `Int64.max` 를 넘는 유한값에서 트랩한다. 상한은 더하는 추출기마다 같이 건다.
+
+- **기간 비교의 "데이터가 있는가"는 그 구간의 *가장 오래된* 날로 판정한다.** 사용량 요약이 지난주
+  대비를 낼지 말지를 지난 구간의 **첫 날(=가장 최근 날)** 로 판정했더니, 원장이 구간 중간부터 시작해도
+  비교가 성립했다 — 빠진 날들은 0 으로 합산돼 실측 delta 가 +200% 로 부풀었다(가드의 목적이던 "신규
+  설치가 없던 주 대비 급등을 주장하는" 바로 그 증상). 누락분을 0 으로 세는 합계 위에 커버리지 게이트를
+  올릴 땐, 게이트 기준점이 **합계의 모든 날을 덮는지** 확인한다(`testAHalfCoveredPreviousPeriodIsNotAComparison`).
+  같은 맥락에서 손편집 가능한 `UserDefaults` 를 원장으로 쓰면 키 검증도 **길이가 아니라 파싱**으로
+  한다 — `"0000-00-00"` 처럼 날짜가 아니면서 모든 실제 날짜보다 작게 정렬되는 키는 커버리지를 위조한다.
+  그리고 "0 인가, 모르는가"는 행의 유무로 추론하지 말고 **커버리지 시작일을 따로 저장**한다
+  (`UsageLedger.coveredSince`) — 행은 사용량이 있는 날에만 생기므로, 첫 행 날짜로 커버리지를 추정하면
+  조용했던 기간과 기록 이전 기간이 구별되지 않는다. 오래된 행을 잘라낼 땐 커버리지도 함께 올린다
+  (`testPruningForgetsTheCoverageItDrops`).
+- **본가 공식의 종 예외 — 껍질몬(#292) HP 는 항상 1.** `PokemonStatCalculator` 는 HP 를 일반 공식
+  `((2·base + iv)·level)/100 + level + 10` 으로만 계산해 껍질몬이 Lv50 에 67 HP 로 표시됐다. 토쿠닌
+  (#290) 분기에서 선택될 수 있고 Gen V 상한 안이라 실제로 부화 경로에 있다.
+  **왜 못 걸렀나:** 스탯 테스트는 일반 종(야돈) 하나로 공식만 확인했다. 공식의 종 예외는 그 종을 넣어야만 보인다.
+  **수정:** 종 id 로 HP 1 고정(`shedinjaSpeciesID`). base HP 1 이라는 이유로 판정하지 않는다 — 공식 데이터에
+  base HP 1 인 종은 껍질몬뿐이지만 규칙은 "종" 에 걸린 것이다.
+  **회귀 가드:** `PokemonProfileLogicTests.testShedinjaAlwaysHasOneHP` — Lv1/50/100 모두 1, 다른 스탯은 일반 공식,
+  base HP 1 인 다른 종은 일반 공식. 수정 전 3건 실패 확인.
 
 ## 외부 로그·사용량 소스
 
@@ -291,6 +412,72 @@ read_when:
   동안은 자동 폴이 그 토큰으로 한도를 계속 갱신하고, 만료되면 stale 표시 후 사용자가 갱신한다. 회귀 가드:
   `testAutoRefreshUsesNoPromptPathManualUsesPromptPath`. (완전 근절은 Developer ID notarization 으로
   '항상 허용' 승인을 안정화하는 것뿐 — 신뢰된 서명 신원이라야 ACL 승인이 지속된다. 미도입.)
+  (설정 갱신·팝오버 `claudeLimitsRefreshRow`, `refreshLimitTokenFromKeychain`)에서만. 파일이 유효
+  토큰을 들고 있으면 매 자동 폴이 그걸 다시 읽고, 파일이 없을 때만 캐시가 버티다가 만료 후 stale.
+  회귀 가드: `testAutoRefreshUsesNoPromptPathManualUsesPromptPath`. (완전 근절은 Developer ID
+  notarization 으로 '항상 허용' 승인을 안정화하는 것뿐 — 신뢰된 서명 신원이라야 ACL 승인이 지속된다.
+  미도입.)
+- **Claude Keychain '항상 허용'은 ACL 리셋으로 유지되지 않는다 — 비간섭 상시 `(?)` 도움말로 세션 키 등록을 유도.**
+  macOS 의 `security add-generic-password -U` 동작상 Claude CLI 가 토큰을 갱신할 때마다 기존 항목의 ACL(항상 허용)이
+  날아간다. 사용자가 시스템 창에서 '항상 허용'을 눌렀음에도 다음 번에 또 암호를 묻는 것은 앱 버그가 아닌 macOS+CLI 한계이므로,
+  시끄러운 팝업 배너 대신 `한도 (공식)` 헤더 옆의 은은한 `(?)` 팝오버 및 설정 세션 키 입력란으로의 원클릭 바운스(#275)를 통해
+  키체인 사용자에게는 0% 노이즈를 유지하면서도 세션 키 우회로를 친절히 안내한다.
+- **Claude 의 `refreshToken` 은 보이지만 우리가 쓰면 안 된다 — 갱신 시 회전되어 Claude Code 를 깨뜨린다.**
+  키체인 항목(`claudeAiOauth`)에는 `accessToken`(수명 ~5h) 옆에 `refreshToken`·`refreshTokenExpiresAt`
+  (~15일)이 함께 들어 있다. "그걸로 갱신하면 키체인 접근이 5시간마다 → 15일마다로 줄겠다"는 발상이
+  자연스럽게 나오는데, **하면 안 된다.** Claude Code 바이너리 확인: 갱신은
+  `POST {baseURL}/v1/oauth/token`(`grant_type=refresh_token`, `client_id`)이고 응답 처리 함수가
+  `ltu(e,t) → { refreshToken: t.refreshToken, … }` 로 **저장된 refreshToken 을 응답의 새 값으로 교체**한다.
+  즉 회전한다. 외부 앱이 대신 갱신하면 Claude Code 의 키체인 사본이 죽은 토큰이 되어 **재로그인**을 요구한다.
+  피하려면 남의 자격증명 저장소에 write 해야 하는데 그건 위 '앱 소유 keychain 항목 금지' 가 막는 영역이다.
+  **Antigravity 와 다른 이유가 여기 있다** — Google 은 회전하지 않아서 `AntigravityTokenCache` 가
+  `refreshToken: refreshToken` 으로 기존 값을 그대로 재사용한다(`refreshGoogleToken`). 두 프로바이더의
+  토큰 규약이 다른 것이지 Claude 쪽 구현 누락이 아니다.
+  반대로 Antigravity 는 이 갱신을 **자동 경로에서도** 써야 한다 — 토큰 파일 없이 수동 갱신으로 키체인에서
+  받은 자격증명은 메모리에 refresh token 을 들고 있는데, 자동 폴이 만료만 보고 `keychainInteractionNotAllowed`
+  를 던져 한도가 ~1시간 뒤부터 수동 클릭 전까지 stale 이었다(#415). 회귀:
+  `testAutoPollRefreshesAnExpiredKeychainCredentialWithoutKeychain`.
+  **확실도:** 회전은 "Claude Code 가 응답의 토큰으로 교체 저장한다"에서 추론한 것이고 실제로 갱신을
+  걸어 확인하지는 않았다 — 틀렸을 때의 대가가 사용자의 주 도구 로그인 파손이라 시험 자체를 하지 않았다.
+  판단 근거는 확률이 아니라 비대칭이다: **잘 돼야 #241 세션 키가 이미 더 완전하게 주는 것(간격 축소 vs
+  프롬프트 제거)의 열화판이고, 잘못되면 Claude Code 가 깨진다.**
+  같은 맥락에서 기각된 것: **사용자 경로에 무프롬프트 선시도를 덧대는 것**(Antigravity 방식). ACL 이
+  승인돼 있으면 프롬프트 쿼리도 조용히 통과하고, 미승인이면 무프롬프트는 실패해 결국 프롬프트를 띄운다 —
+  두 경로의 결과가 같아 얻는 게 없다. 패턴이 다른 프로바이더에 있다는 것만으로 이식하지 마라.
+- **인메모리 토큰 캐시는 만료만 보면 안 된다 — 원본 파일이 다른 유효 토큰으로 바뀌었는지도 본다.**
+  `/login` 으로 계정을 갈아타면 `~/.claude/.credentials.json` 이 새 토큰으로 덮이지만, 캐시가 옛
+  토큰의 `expiresAt` 까지 그걸 무시하면 공식 5h/주 바가 이전 계정에 붙고 컴패니언 EXP 만 로컬
+  jsonl 로 계속 오른다(#227). 자동 폴은 키체인을 안 읽으므로 **파일 peek 를 캐시 히트보다 앞에**
+  둔다. 파일이 없거나 `"claudeAiOauth": null` 이면 캐시를 유지(로그아웃·`CLAUDE_CONFIG_DIR` 잔여
+  파일 — 기존 `credentialsFileIsAccountOAuthMissing` 과 같은 이유). 같은 부류: Antigravity
+  `jetski-standalone-oauth-token` 은 파일 로드 시 `expiresAt=nil` 이라 캐시가 만료로 풀리지 않는다.
+  회귀: `testClaudeAutoPollPicksUpInPlaceAccountSwitch`·`testAntigravityAutoPollPicksUpTokenFileSwitch`.
+  캐시-우선 early return 을 되돌리면 이 두 테스트가 실패해야 한다.
+- **파일이 없는 Keychain-only 설치는 사용자 갱신도 만료만 보면 이전 계정에 붙는다.** #227 은
+  파일이 새 유효 토큰으로 덮이는 경우를 고쳤다. 파일이 없으면 같은 메모리 캐시가 남고, 같은 Team 의
+  다른 메일은 401 을 안 주므로 invalidate 경로에 안 들어간다. Refresh 를 눌러도 Keychain 을 안 읽고
+  로그는 "keychain"이라고 남긴다(#300). 사용자 동작(`allowKeychainPrompt: true`)만
+  `bypassCache: true`. 자동 폴은 그대로 캐시 — 키체인 다이얼로그를 되살리면 #210 이 돌아온다.
+  같은 한 줄: `AntigravityRateLimitsProvider.fetch`. 회귀:
+  `testManualRefreshRereadsKeychainWhenCachedTokenIsStillValid`. `bypassCache` 를 빼면
+  Authorization 이 `token-account-a` 로 남고 Keychain 조회가 0 이다.
+- **`kSecMatchLimitAll` 과 `kSecReturnData` 는 같이 못 쓴다 — macOS 가 errSecParam(-50) 으로 거절한다.**
+  "서비스에 항목이 여럿일 수 있으니 전부 받아서 유효한 걸 고르자"는 발상 자체는 옳지만(#229), 한 번의
+  `SecItemCopyMatching` 으로 *모든 항목의 데이터*를 받는 쿼리는 **파라미터 단계에서** 거절된다. 항목이
+  없어서가 아니라 조합이 무효라서라, ACL 승인·항목 존재·재로그인 어느 것으로도 우회되지 않는다.
+  결과는 조용한 전면 실패였다 — Keychain 에만 자격증명이 있는 사용자(파일 `~/.claude/.credentials.json`
+  없음)는 수동 갱신을 눌러도 `keychainUnavailable(-50)` 만 나고 공식 한도가 **영구히** 안 떴다.
+  → 두 단계로 나눈다: ① `kSecMatchLimitAll` + `kSecReturnAttributes` 로 `acct` 목록만 열거
+  ② 계정마다 `kSecMatchLimitOne` + `kSecReturnData` 로 단건 조회. 계정 속성을 못 얻으면 스코프 없는
+  단건 읽기로 폴백한다(항목이 하나뿐인 흔한 경우).
+  **5-whys(왜 못 걸렀나):** 테스트가 `extractDataItems(from:)` 라는 순수 파서만 합성 배열로 검증했다.
+  결함은 그 함수가 아니라 **그 함수에 값을 넘겨주는 쿼리**에 있었고, `SecItemCopyMatching` 은 테스트
+  경로에 아예 없었다 — 결함 트리거와 다른 경로로 통과하는 전형이다. 딕셔너리 모양만 단정하는 테스트도
+  같은 이유로 부족하다: 어떤 키 조합이 무효인지는 **Security 프레임워크만 안다.**
+  가드: `testKeychainQueriesAreAcceptedBySecurityFramework` — 존재하지 않는 서비스명(매칭 0건이라
+  ACL·프롬프트에 안 닿음)으로 프로덕션 쿼리를 실제 API 에 던져 `errSecParam` 이 아님을 단정한다.
+  기대값이 "성공"이 아니라 **"파라미터가 유효하다"(`errSecItemNotFound`)** 인 게 요점이다.
+  `kSecMatchLimitAll` 을 데이터 쿼리에 되돌리면 이 테스트가 빨개진다(주입 확인 완료).
 - **자격증명 "없음"과 "계정 로그인 없음"은 다른 안내다.** Claude Code 2.1.x 의 `Claude Code-credentials`
   항목이 MCP 서버 OAuth(`mcpOAuth`) 상태만 담고 계정 토큰(`claudeAiOauth`)은 안 담는 경우가 있다. 이때
   파싱 실패를 형식 오류로 뭉뚱그리면 "재로그인하면 된다"를 안내 못 해 한도 섹션이 원인 불명으로 사라진다.
@@ -353,6 +540,46 @@ read_when:
   초록인데 #174 가 다시 산다. (#174)
 
 ## 표시·UI
+
+- **"재인증하라" 플래그는 성공뿐 아니라 "조회할 로그인이 없음"(nil) 에서도 내린다.** Cursor 401 뒤
+  로그아웃·`CURSOR_USAGE_API=0` 이면 `fetch()` 가 던지지 않고 nil 을 주는데, 플래그 해제가
+  `if let status` 안에만 있어 재로그인 안내가 재시작까지 남았다. 회귀:
+  `testCursorAuthExpiredClearsWhenThereIsNoCursorLoginAnymore`. (#411)
+- **겹치는 두 슬라이더는 서로의 순서를 지켜야 한다.** 경고(50…95)·위험(80…100) 임계가 겹쳐 경고 95 /
+  위험 80 이 가능했고, 85% 창이 경고선 아래에서 "위험" 알림을 띄우며 경고 단계는 영영 발화하지 않았다.
+  한쪽을 넘기면 다른 쪽을 한 칸(5) 밀고, 저장값도 로드 시 정렬한다. 회귀:
+  `testWarningStaysBelowCritical`, `testStoredThresholdsLoadInOrder`. (#409)
+- **외부 응답 배열의 원소 하나가 전체 디코드를 죽이지 않게 한다.** Antigravity 쿼터의 `remaining` 은
+  protobuf oneof 라 `remainingFraction` 이 빠진 bucket 이 온다. 필드가 non-optional 이라 한 bucket 때문에
+  응답 전체가 throw → 모든 Antigravity 막대가 직전 값에 얼어붙었다. 빠진 bucket 은 "소진"이 아니라
+  "알 수 없음"이므로 버리고 나머지는 디코드한다. 회귀:
+  `testBucketWithoutRemainingFractionDoesNotDropTheResponse`. (#413)
+- **Antigravity 그룹 표시명은 한 헬퍼로.** API 의 `displayName`("Gemini Models" 등)을 알림·사탕·
+  펫 버블에 그대로 넣으면 앱 언어가 한국어여도 본문에 영어가 섞인다. 팝오버만 `L` 로 바꾸던
+  분기를 `L.antigravityGroupTitle` 로 끌어올려 candy / `buildLimitWindows` / 팝오버가 공유한다.
+  판정 축은 `gemini` · `claude|gpt|3p`(status 의 gemini/thirdParty 헬퍼와 동일). 회귀:
+  `AntigravityGroupLocalizationTests`.
+
+- **계속 쌓이는 로그는 정렬이 아니라 실제 화면 생성 비용을 검증하라.** 포획 로그의
+  `ScrollView` + `VStack` 이 화면 밖까지 모든 행을 만들고, 각 `SpriteView.init` 이 동기
+  `cachedImage` 를 호출했다. 268개 기록(진화 단계 이미지 579개)으로 초기 레이아웃을 재면
+  이미지 조회 1,160회, 783~953ms였다. 디스크 캐시가 있어도 파일 읽기와 `NSImage` 생성은
+  메인 스레드에서 반복됐다. **왜 못 걸렀나:** `testLargeDexSortPerformanceAndCorrectness` 는
+  1,000개 기록의 정렬만 측정했다. 실제 데이터의 정렬·집계는 약 0.18ms라 결함 경로와 달랐다.
+  → 로그만 `LazyVStack` 으로 바꾸고, `SpriteLoader` 의 동기·async 경로가 `NSImage` 객체 캐시를
+  공유한다(`NSCache`, `countLimit = 64`). 키는 파일 경로로 종·일반/이로치·PNG/GIF·디렉터리를
+  구분한다. 이미지 생성 실패는 이 캐시에 넣지 않고, 일반색 폴백은 일반색 키에만 둬 이로치를 가리지 않는다.
+  `countLimit` 은 엄격한 메모리 상한이 아니며, 실제 프로세스 메모리 사용량은 별도로 측정해야 한다.
+  **부류 스윕:** 같은 동기 로딩을 하는 아이템 아이콘에도 공유 캐시를 적용했다. 도감은 24칸 페이지,
+  상점·가방은 고정된 아이템 종류별 행이라 같은 무한 증가 조건이 없고, 알 이미지는 이미 메모이즈한다.
+  **회귀 가드:** `CatchLogRenderingTests` 는 실제 `CollectionView` 를 300개 기록으로 세 번 생성하고
+  스프라이트 레이아웃 작업 수와 고정 높이를 검사한다. `VStack` 재주입 시 매번 1,200회로 실패했다.
+  `SpriteImageCacheTests` 는 임시 파일의 생성 이미지로 객체 재사용·동시 로드·폴백·재시도를 검증하며,
+  동기 캐시 히트를 제거하면 포켓몬과 아이템 테스트가 모두 실패한다. 외부 이미지나 실제 세이브는
+  테스트에 포함하지 않는다. SwiftUI 워밍업 후 같은 268개 데이터/520pt 높이의 release 프로브는 초기 4행,
+  22~25ms, 재진입 디스크 읽기 0회였다(클릭부터 화면 표시까지의 전체 시간과는 별도 측정).
+  끝까지 스크롤 → 희귀도 필터 → 필터 해제 → 도감 전환·로그 재진입도 격리된 앱에서 확인했다.
+  (사용자 리포트: 200개 이상 포획 로그 진입 지연, 2026-09-10.)
 - **앱 언어와 시스템 로케일은 다른 축이다 — SwiftUI 가 스스로 만드는 문장은 로케일을 따른다.**
   `L` 문구는 `AppLanguage` 를 따르는데 `Text(_, style: .relative)` 는 `Locale.current` 를 따라, 한국어
   Mac 에서 앱을 영어로 쓰면 "Catch log" 옆에 "3시간 46분" 이 붙는 한 화면 두 언어가 된다. 팝오버 루트
@@ -457,7 +684,28 @@ read_when:
   "제 소스가 아니면 증거가 아니다"(외부 로그 포맷 규칙, 위 §외부 로그·사용량 소스)와 같은 교훈을
   wire 프로토콜에도 적용한 사례.
 
+- **숫자 표기 구간은 원값이 아니라 반올림된 문자열로 판정한다.**
+  `TokenFormatter.percent` 는 `value == value.rounded()` 로 정수 여부를 보고 아니면 `%.1f` 를 찍었다 —
+  79.96 은 정수가 아니라 `%.1f` 로 가서 "80.0%" 가 됐다(88% 는 "88%" 인데 80% 만 소수점). `costCompact` 도
+  `usd < 100` 을 원값으로 판정해 99.96 → "$100.0", 9 999.6 → "$10000"(K 구간 대신 5자리)이 나왔다.
+  Cursor `usedPercent`·잔여 모드 `100 − x`·리캡 증감 `abs(delta)*100`·토큰 단가 기반 비용은 전부 임의의
+  소수라 메뉴바·팝오버·알림에 실제로 나온다.
+  **왜 못 걸렀나:** `testFormatterEdges` 는 구간 한가운데 값(88, 88.35, 9.54, 311.4)만 넣었다. 반올림이
+  구간 경계를 넘는 값(x.95 이상)이 없으면 "판정 후 반올림" 순서 결함은 보이지 않는다.
+  **수정:** 먼저 그 구간의 정밀도로 포맷하고, 그 문자열(파싱값)로 구간을 고른다.
+  **회귀 가드:** `testFormatterRoundingBoundaries` — 경계 직전·직후 쌍(79.96/79.94, 99.96/99.94,
+  9 999.6/9 999.4). 수정 전 코드로 5건 실패 확인. 스윕: `L.difficultyValue` 도 같은 모양이지만
+  `snapDifficulty` 가 유효숫자 2자리로 스냅해 경계 넘는 입력이 존재하지 않아 손대지 않았다.
+
 ## 에너지 (상시 표시 애니메이션)
+
+- **절전용 정지 상태는 짝 알림 하나에만 복구를 맡기지 마라.** `screensDidSleep` 이 폴링 타이머를 끄고
+  `screensDidWake` 만 되살렸다. wake 알림을 놓치면 폴링이 영영 멈추고, 자정 `NSCalendarDayChanged` 갱신이
+  남긴 빈 스냅샷(menuTitle "0", providers [])이 재시작 전까지 굳었다(#350, `lastError` 도 비어 무증상).
+  **왜 못 걸렀나:** 정지/재개 경로에 테스트가 하나도 없었고, 실기기에서는 알림이 대개 짝지어 와서 재현이
+  안 됐다. → 정지 중엔 5분 점검 타이머가 실제 디스플레이 상태(`CGDisplayIsAsleep`)를 보고 복구하고,
+  `didWake`·모든 `refresh()` 진입도 같은 검사를 한다. 회귀 가드: `UsageStoreTests` 의
+  `testSuspendedPollingProbe*`·`testSystemWakeResumes*`·`testRefreshWhileDisplays*`.
 
 - **메뉴바 상태아이템 = idle CPU 저격수 (두 규칙 필수).** 실측: 라이브 앱 idle ~14% CPU → 수정 후 ~2%.
   ① **`statusItem.button.image` 대입은 반드시 `setDisableActions` 트랜잭션 안에서** (`AppDelegate.setStatusImage`).
@@ -587,6 +835,27 @@ read_when:
   넣어 보고, 로컬 장부만 새 기기 기준으로 다시 잡는다(`SaveTransfer.rebasedForThisDevice`). 회귀 가드:
   `testTransferDayTokensStillCountAfterRebase` — 재정렬 없는 대조군을 같이 돌려 결함 조건이 살아 있는지도
   함께 확인한다(테스트가 트리거 브랜치를 실제로 밟는지 보증).
+- **Read a rotated file into memory before any write that can prune it.** Snapshot restore took
+  the pre-restore safety snapshot first; at exactly `maxSnapshotsToKeep` files that 11th snapshot
+  pruned the oldest one, so restoring the oldest entry read a deleted file. The restore test only
+  used two snapshots, below the retention limit where pruning never runs. Load and validate the
+  selected snapshot first, then write the safety snapshot and apply the in-memory data; an
+  unreadable selection must fail before anything is written or pruned.
+  Guards: `testRestoreOldestSnapshotAtRetentionLimit`,
+  `testRestoreUnreadableSnapshotLeavesStateAndSnapshotsUntouched`.
+- **정규화는 "디코드 가능한데 쓰면 트랩인 값"까지 — 체인 내 중복 종 id.** `DexEntry.chainOrder`·
+  `MonState.pathIDs` 에 같은 종이 두 번 들어간 세이브(손편집·외부 불러오기)는 디코드에 성공하지만,
+  도감 이름 조회(`dexResolveChainNames` 오프라인·온라인 양쪽)·놓아주기·졸업이 그 배열로
+  `Dictionary(uniqueKeysWithValues:)` 를 만들어 `Duplicate values for key` 로 앱이 죽는다. 디코드 성공이라
+  `.corrupt` 복구도 안 걸린다.
+  **왜 못 걸렀나:** `sanitized` 는 수치 트랩(토큰 상한·`totalForms`)만 다뤘고, 컬렉션 불변식(중복 없음)은
+  "정상 플레이로는 안 생긴다"는 이유로 검사 대상이 아니었다 — 그러나 이 함수의 존재 이유가 손편집 입력이다.
+  **수정:** `sanitized` 에서 `chainOrder`·`pathIDs`·`plannedPathIDs` 의 첫 등장만 남기고, `stageIndex` 는
+  dedupe 전의 현재 종 위치로 다시 맞춘다. 디스크 로드·스냅샷 복구·불러오기가 모두 이 함수를 지난다.
+  **회귀 가드:** `SaveTransferTests.testDuplicateSpeciesInSavedChainsAreRemovedOnLoad` — 수정 전엔
+  `Fatal error: Duplicate values for key: '1'` 로 프로세스가 죽는 것을 확인.
+  **스윕:** `CompanionStore` 의 나머지(`claimedTodayTokensByProvider` 키)는 딕셔너리 키라 유일하다. 세이브
+  밖의 사용처(로그 스캔·PokéAPI 스탯)는 이 입력 경로가 아니라 범위 밖.
 
 - **경계 정규화는 "산술에 쓰이는 필드" 전수로 돌려라 — 토큰 필드만 훑으면 반드시 하나 빠진다.**
   `SaveTransfer.sanitized` 는 오버플로 트랩으로 인한 영구 크래시 루프를 막으려고 만들었는데, 정작
@@ -651,6 +920,14 @@ read_when:
   ③ **크기가 0 인 원본**(디코드 실패)은 0 나눗셈이 되므로 정사각 폴백으로 막는다.
   회귀 가드(`SpriteAspectRatioTests`)는 실제 PokeAPI 캔버스 치수를 넣고, **"비정사각이 정사각으로 나오지
   않는다"는 트리거 명제를 따로 둔다** — 이게 없으면 원본이 애초에 정사각인 케이스로도 전부 통과한다.
+- **In a fixed-height slot, fit the height, not a square.** The menu bar still fitted a 20pt
+  square after the fix above, so a wide canvas was sized by its width: Swanna #581 (137×69) came out
+  10pt tall, Tynamo #602 (57×19) under 7pt, and 345 of the 649 species missed the full 20pt height.
+  The tests missed it because their widest fixture was Pikachu (50×46), where width and height
+  barely differ, and the wide case asserted the square rule ("fills the 20pt content box" on the
+  width). `menuBarLayout` now fits 20pt tall up to `menuBarSpriteMaxWidth` (36pt, 645/649 at full
+  height). Measure a new cap against every canvas in the dex, not the cached few; the guard is
+  `testWideSpriteFillsMenuBarHeightUntilTheWidthCap` with the real Swanna and Tynamo canvases.
 
 ## 릴리스 스크립트
 
@@ -682,6 +959,16 @@ read_when:
   불일치면 `git checkout` 으로 되돌리고 즉시 중단한다. (2026-08-25, 2.5.1-hardened.2 릴리스에서 실측.)
 
 ## 프로세스 제어·업데이트
+
+- **쿨다운 스탬프는 *검증까지 통과한* 조회에만 찍는다.** `UpdateChecker.check` 가 GitHub 호출 *전에*
+  `lastChecked` 를 쓰면 네트워크·파싱 실패도 30분 쿨다운을 시작해, 팝오버를 다시 열어도(`minInterval`
+  디바운스) 재시도가 막히고 배너가 조용히 안 뜬다. "응답을 받았다"도 성공이 아니다 — 태그가 `MAJOR.MINOR.PATCH`
+  가 아니면(`v2.6.0-beta.1`·`latest`·`v2.5`) `isNewer` 가 숫자 아닌 부분을 0 으로 읽어 prerelease 가 정식과
+  같게, 쓰레기가 `0.0.0` 으로 비교된다. 실패·불안전 URL·지원하지 않는 태그는 스탬프하지 않고, 정규화
+  (`normalizedReleaseVersion`)까지 통과한 릴리스만 스탬프한다. 조기 스탬프가 없어지면 겹친 `check()` 가
+  동시에 나갈 수 있으므로 in-flight 가드도 둔다. 회귀(세 가드 각각 결함 주입으로 실패 확인):
+  `testFailedCheckDoesNotStartTheCooldown`, `testRejectedReleaseUrlDoesNotStartTheCooldown`,
+  `testMalformedOrPrereleaseTagIsAFailedCheckAndDoesNotBlockTheNextOne`, `testOverlappingChecksShareOneFetch`.
 
 - **`pgrep -x <name>` 은 실행 파일의 정체성 검사이지, 기다리는 특정 프로세스에 대한 검사가 아니다.**
   중복 인스턴스가 떠 있는 동안 실행될 수 있는 모든 wait-for-exit 루프는 PID를 받아야 한다. `UpdateChecker`가

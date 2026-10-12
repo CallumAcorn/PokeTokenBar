@@ -54,6 +54,13 @@ final class StatCalcTests: XCTestCase {
         XCTAssertEqual(boosted.attack, 328, "adamant boosts attack +10%: floor(299*1.1)")
         XCTAssertEqual(boosted.specialAttack, 269, "adamant lowers special attack -10%: floor(299*0.9)")
         XCTAssertEqual(boosted.defense, 299, "unaffected stat stays neutral")
+
+        let shedinja = StatCalc.compute(base: base, ivs: maxSpread, evs: evs, level: 100, nature: .adamant,
+                                        speciesID: StatCalc.shedinjaSpeciesID)
+        XCTAssertEqual(shedinja.hp, 1, "Shedinja's HP is always 1")
+        XCTAssertEqual(shedinja.attack, boosted.attack, "only HP is pinned")
+        XCTAssertEqual(StatCalc.compute(base: base, ivs: maxSpread, evs: evs, level: 100, nature: nil,
+                                        speciesID: 291).hp, 404)
     }
 
     func testNeutralNaturesHaveNoBoostOrLower() {

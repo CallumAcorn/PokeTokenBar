@@ -110,6 +110,32 @@ final class SaveTransferTests: XCTestCase {
         XCTAssertEqual(envelope.state.collectedFinals, original.collectedFinals)
     }
 
+    /// A hand-edited or imported save with a repeated species id in `chainOrder` / `pathIDs` decodes
+    /// fine, but the Pokédex name lookup and release/graduation build
+    /// `Dictionary(uniqueKeysWithValues:)` from those arrays, which traps on the duplicate.
+    func testDuplicateSpeciesInSavedChainsAreRemovedOnLoad() async throws {
+        let url = tempURL("dup-chain")
+        var s = oldMacState(today: "2026-08-03")
+        s.dex = [DexEntry(baseID: 1, finalID: 2, chainOrder: [1, 1, 2], rarity: .common, caughtAt: transferNow)]
+        let mon = MonState(baseID: 4, pathIDs: [4, 4, 5], plannedPathIDs: [4, 4, 5, 5, 6],
+                           stageIndex: 2, usedAtStage: 0, rarity: .common, totalForms: 3)
+        s.party = [mon]
+        s.trainingSlotID = mon.id
+        try JSONEncoder().encode(s).write(to: url)
+
+        let store = store(at: url)
+        let loaded = try XCTUnwrap(store.state.party.first)
+        XCTAssertEqual(store.state.dex.first?.chainOrder, [1, 2])
+        XCTAssertEqual(loaded.pathIDs, [4, 5])
+        XCTAssertEqual(loaded.plannedPathIDs, [4, 5, 6])
+        XCTAssertEqual(loaded.currentID, 5, "the current species survives the dedupe")
+        XCTAssertEqual(loaded.stageIndex, 1)
+
+        let entry = try XCTUnwrap(store.state.dex.first)
+        let names = await store.dexResolveChainNames(entry)
+        XCTAssertEqual(names, [1: "#1", 2: "#2"])
+    }
+
     /// [핵심] 봉투가 없으면 `CompanionState` 의 관대 디코딩이 아무 JSON 이나 빈 상태로 흡수해
     /// "불러오기 성공 → 도감이 사라짐"이 된다. 포맷 id 로 먼저 거른다.
     func testForeignJSONIsRejectedRatherThanImportedAsEmptyState() throws {

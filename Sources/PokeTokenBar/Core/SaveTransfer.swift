@@ -147,12 +147,23 @@ enum SaveTransfer {
     /// (sanitized) and a mon received via trade (CompanionStore.addTradedMon). A trade payload is
     /// just as much an outside-the-app value (the other client, the server) as a save file, so it
     /// needs the same normalization.
+    static func dedupedSpecies(_ ids: [Int]) -> [Int] {
+        var seen = Set<Int>()
+        return ids.filter { seen.insert($0).inserted }
+    }
+
     static func sanitizedMon(_ mon: MonState) -> MonState {
         var m = mon
         m.usedAtStage = clampToken(m.usedAtStage)
         // totalForms feeds `kk * (kk + 1)` (PokemonBalance.phaseThreshold) — a large value is a trap by itself.
         m.totalForms = min(max(1, m.totalForms), 12)
         m.stageIndex = min(max(0, m.stageIndex), max(0, m.pathIDs.count - 1))
+        // A species repeated in a chain (hand edit) traps `Dictionary(uniqueKeysWithValues:)` in dex
+        // name lookup, release and graduation. Keep the first occurrence and re-find the current one.
+        let currentID = m.currentID
+        m.pathIDs = dedupedSpecies(m.pathIDs)
+        m.plannedPathIDs = dedupedSpecies(m.plannedPathIDs)
+        m.stageIndex = min(m.pathIDs.firstIndex(of: currentID) ?? m.stageIndex, max(0, m.pathIDs.count - 1))
         // IV/EV feed StatCalc.compute's `2*base + iv + ev/4` — same overflow-trap shape as usedAtStage,
         // just with real games' own valid ranges as the clamp instead of maxTokenValue.
         // knownMoves 는 산술이 아니라 **게임 규칙** 불변식이다. 쓰기 경로는 전부 maxKnownMoves 가드를
@@ -238,6 +249,9 @@ enum SaveTransfer {
         // backfill 이 존재하는 이유인데, 그 전에 판정하면 실제로 보유한 종을 "미보유"로 읽고 고정을
         // 지운다. 순서를 바꾼 채로도 테스트는 통과하므로(정상 세이브는 backfill 이 할 일이 없다)
         // 이 주석이 그 자리를 지킨다.
+        for index in s.dex.indices {
+            s.dex[index].chainOrder = dedupedSpecies(s.dex[index].chainOrder)
+        }
         s.reconcileRepresentativeSelection()
         return s
     }

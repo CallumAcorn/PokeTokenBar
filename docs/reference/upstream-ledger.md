@@ -167,3 +167,45 @@ declined for the same reason, not re-litigated.
 | `a94b3dae` | — | deferred | Stop unchanged status lines filling the log |
 | `5f6a4f0a` | — | deferred | Log each unpriced model once |
 | `8b2dd955` | — | deferred | Prefer reported Claude cost-state over the price-table estimate |
+| `906bbb97` | #401 | taken | Resume suspended polling when `screensDidWake` is missed. Session-key test stubs (declined `8953ea8f`, claude.ai session key) dropped from the test file |
+| `a8dd8063` | #377 | **ported** | Retain idle-day history. Taken without its monthly-trend series and recap button, which belong to deferred #270/#332; its rendering test dropped for the same reason |
+| `9c9c805d` | #424 | **ported** | Dedupe repeated species in saved chains. Applied in `sanitizedMon` so every PC member is covered, not one `active`; regression test fails with the dedupe removed |
+| `fad8f1af` | #422 | **ported** | Shedinja HP 1. Added to `StatCalc` for the PC detail only; battle HP stays server-derived |
+| `711fca75` | #418 | taken | Formatter precision from the rounded value |
+| `11197c80` | #416 | taken | Antigravity refresh of an expired cached token on the auto poll; in memory only, no Keychain write. Upstream's test needs injection the fork's cache lacks; Keychain-gate tests still cover the auto path |
+| `2745fde2` | #414 | taken | Skip Antigravity buckets without `remainingFraction` |
+| `e2d01aff` | #393 | **ported** | Scroll-wheel paging, applied to the fork's Pokédex grid (git anchored it on the PC grid) |
+| `481ad3a9` | #389 | taken | Fit wide sprites to the menu bar height |
+| `1e5603a9` | #384 | **ported** | Rows for Sonnet 5.5, GPT-6 Sol, GPT-6.1 Sol, GPT-6 Luna. The fork has no long-context pricing to extend |
+| `be9cbc7f` | #373 | **ported** | Right-click menu, all local actions. Adapted: fork cost type, dex item opens Collection, new hide-pet string |
+| `14e9a6c7` | #371 | **ported** | Multi-buy on the fork's `shopPrice`. Quantity capped by balance ÷ price, so `price × count` cannot overflow; test added |
+| `8771013b` | #366 | taken | Shop shortcut from the empty Bag |
+| `4cab9f00` | #365 | taken | Promote compact units at rounding boundaries |
+| `8804232c` | #364 | taken | Provider contribution guides; the link to upstream's issue tracker removed |
+| `231002d2` | #410 | taken | Warning threshold stays below critical. Cursor test from the same file dropped |
+| `abe0b9a0` | #392 | **ported** | Hover for exact growth progress, on the fork's `trainingMon` |
+| `a2ec3649` | #321 | **ported** | Cooldown only after a validated release, plus an in-flight guard. Upstream's tag check rejected `-hardened.N`, which would have silenced every fork update; the fork accepts its own scheme. Upstream also committed a `default.profraw`, removed |
+| `40b506ee` | #403 | deferred | Kimi Code provider. Built on omp/Aside (skipped) and upstream's parser-version cache, 17 conflicts in the cache alone |
+| `26efe4ec` | #394 | deferred | Open a Pokédex entry by clicking a sprite. 14 conflicts across the fork's diverged collection views; needs a visually checked port |
+| `11eebe62` | #402 | deferred | Keep recent providers' tabs across calendar resets. Built on upstream's shared `ProviderEnrichment.local`; the fork still has per-provider copies |
+| `656d603f` | #380 | deferred | Bigger Pokédex pager hit area. The fork's footers differ in size; needs a visual check |
+| `9be4ea95` | #372 | deferred | Russian UI. Every string gains a column and the fork's own strings need translations |
+| `0269dad7` | #395 | **skipped** | Daily trend by calendar month. Depends on deferred #270 |
+| `5afeb2a5` | #368 | **skipped** | Recap chart tooltips. Depends on deferred #332 |
+| `e21fb015` | #367 | **skipped** | Return to the current period from recaps. Depends on deferred #332 |
+| `142fa08d` | #348 | **skipped** | Stack daily trend bars by provider. Depends on deferred #270 |
+| `f2d5c3e9` | #426 | **skipped** | Cursor pagination. Depends on the Cursor dashboard API (pending `4fe965ee`) |
+| `5ee12eee` | #412 | **skipped** | Cursor auth-expired notice. Same dependency |
+| `7a5742f5` | #408 | **skipped** | Cursor limit bars. Same dependency |
+| `e2f8bcca` | #420 | **skipped** | Hide a disguised Ditto's shiny in save snapshots. The fork has no snapshot feature, and its display path already hides it |
+| `1a710185` | #420 | **skipped** | Empty duplicate of `e2f8bcca` |
+| `e772e1f8` | #398 | **skipped** | Difficulty slider labels. The fork has no difficulty settings |
+| `46d5d913` | #391 | **skipped** | Game-coloured type badges. The fork already has them; the rest is a header reshuffle |
+| `fc66c1e1` | #390 | **skipped** | Shiny filter button size. The fork has no shiny filter |
+| `cf91ddcb` | #383 | **skipped** | Kiro tool/thinking estimates. Changes the Kiro JSONL reader the fork skipped (`ff54b44e`) |
+| `eb6ea0cc` | #378 | **skipped** | Ditto repeat boost. The fork has no repeat growth boost |
+| `c328d5ce` | #429 | **skipped** | Hide redundant individual selector. The fork has no such picker |
+| `b886b7a3` | #406 | **skipped** | Portuguese "evolução". Already correct in the fork |
+| `5214b04f` | #374 | **declined** | Always show shiny sprites in the Pokédex grid. Changes the fork's tap-to-reveal behaviour, which the README documents |
+| `3b2e4c09` | #427 | **declined** | Upstream's PR workflow: agent skill folders, `AGENTS.md` edits, PR-format checker. Their contribution process, not this fork's |
+| `498bdbc6` | #400 | **declined** | Universal binary. The fork ships no binaries; everyone builds natively from source |

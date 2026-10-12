@@ -495,7 +495,69 @@ struct EvoLineView: View {
 }
 
 /// 팝오버 상단 — 현재 포켓몬 + 진화 진행 + 부화/진화 연출.
+/// Growth bar. Hovering 300 ms grows it with a small spring "plop" and reveals the exact numbers
+/// ("X / Y · Z%") inside; leaving shrinks it back. The expanded height is always reserved, so the
+/// hover never moves the layout or resizes the popover.
+@MainActor
+struct LabeledProgressBar: View {
+    let value: Double
+    let label: String
+    @State private var expanded = false
+    @State private var hoverTask: Task<Void, Never>?
+
+    private static let collapsedHeight: CGFloat = 6
+    private static let expandedHeight: CGFloat = 12
+
+    var body: some View {
+        Capsule().fill(Color.secondary.opacity(0.2))
+            .overlay(alignment: .leading) {
+                GeometryReader { geo in
+                    Capsule().fill(Color.orange).frame(width: geo.size.width * min(1, max(0, value)))
+                }
+            }
+            .overlay {
+                Text(label)
+                    .font(.system(size: 9, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(.primary)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .padding(.horizontal, 6)
+                    .opacity(expanded ? 1 : 0)
+                    // In after the bar has grown; out at once so it never squeezes into the thin bar.
+                    .animation(expanded ? .easeIn(duration: 0.12).delay(0.12) : .easeOut(duration: 0.06),
+                               value: expanded)
+            }
+            .clipShape(Capsule())
+            .frame(height: expanded ? Self.expandedHeight : Self.collapsedHeight)
+            .frame(height: Self.expandedHeight)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                hoverTask?.cancel()
+                if hovering {
+                    hoverTask = Task {
+                        try? await Task.sleep(for: .milliseconds(300))
+                        guard !Task.isCancelled else { return }
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.55)) { expanded = true }
+                    }
+                } else {
+                    withAnimation(.easeOut(duration: 0.18)) { expanded = false }
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityValue(label)
+    }
+}
+
+
 struct CompanionHeader: View {
+    /// Hover tooltip for the growth bars: "X / Y · Z%". Used is clamped to total (egg usage can
+    /// overshoot while a hatch retry is pending) and the percent floors, so 100% means done.
+    nonisolated static func progressDetail(used: Int, total: Int) -> String {
+        let used = min(used, total)
+        let percent = total > 0 ? used * 100 / total : 0
+        return "\(TokenFormatter.compact(used)) / \(TokenFormatter.compact(total)) · \(percent)%"
+    }
+
+
     let store: CompanionStore
     // 연출 상태 — 부화/진화 순간 흰 플래시 + 스프링 스케일(본가 진화 신 오마주)
     @State private var flashOpacity: Double = 0
@@ -608,7 +670,9 @@ struct CompanionHeader: View {
                                 .help(mon.evolutionLocked ? store.l.evolutionLockedHelp : store.l.evolutionUnlockedHelp)
                             }
                         }
-                        ProgressView(value: store.progress).controlSize(.small).tint(.orange)
+                        LabeledProgressBar(value: store.progress,
+                                           label: Self.progressDetail(used: store.trainingMon?.usedAtStage ?? 0,
+                                                                      total: store.threshold))
                         if store.tokensToNext > 0 {
                             let amount = TokenFormatter.compact(store.tokensToNext)
                             Text(store.isFinalStage ? store.l.toGraduation(amount) : store.l.toNextEvolution(amount))
@@ -629,7 +693,9 @@ struct CompanionHeader: View {
                                     .clipShape(Capsule())
                             }
                         }
-                        ProgressView(value: store.eggProgress).controlSize(.small).tint(.orange)
+                        LabeledProgressBar(value: store.eggProgress,
+                                           label: Self.progressDetail(used: store.state.eggUsage,
+                                                                      total: PokemonBalance.eggHatchThreshold))
                         Text(store.l.eggToHatch(TokenFormatter.compact(store.eggTokensToHatch)))
                             .font(.caption2).foregroundStyle(.tertiary)
                         // 첫 실행(적립 0) — 정적 알 앞에서 "고장났나" 오해 방지용 한 줄 안내
@@ -1379,7 +1445,7 @@ private struct MonDetailView: View {
     private var statsSection: some View {
         if let baseStats {
             let computed = StatCalc.compute(base: baseStats, ivs: mon.effectiveIVs, evs: mon.evs,
-                                            level: mon.level, nature: mon.nature)
+                                            level: mon.level, nature: mon.nature, speciesID: mon.currentID)
             VStack(alignment: .leading, spacing: 3) {
                 Text(store.l.pcStatsTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 statRow(store.l.statHP, computed.hp, hyperTrained: mon.hyperTrainedStats.contains(.hp))
@@ -1942,6 +2008,83 @@ private struct KnownMoveCell: View {
 /// 우회(고정 높이 + maxHeight)가 아니라 회피로 피한다. 페이지 크기가 고정이라 모든 칸이 항상
 /// 렌더되므로 지연 격자(LazyVGrid)도 필요 없다 — 평범한 VStack/HStack 으로 동기 렌더한다.
 /// 미보유 종은 아예 그리지 않는다(물음표·실루엣 칸 없음).
+/// Turns scroll-wheel / trackpad events into single page steps for the Dex grid.
+/// `scrollingDeltaY` already reflects the natural-scrolling setting, so a negative delta always
+/// means "move the content up" (reveal what comes next), exactly like a list would.
+struct DexScrollPager {
+    /// Accumulated trackpad distance (pt) before a gesture flips the page.
+    static let preciseThreshold: CGFloat = 24
+
+    private var accumulated: CGFloat = 0
+    private var firedThisGesture = false
+
+    /// +1 = next page, -1 = previous page, 0 = no change.
+    mutating func step(deltaY: CGFloat, precise: Bool,
+                       phase: NSEvent.Phase, momentumPhase: NSEvent.Phase) -> Int {
+        // Wheel notch: one event per notch, one page per notch.
+        guard precise else { return Self.direction(deltaY) }
+        // The momentum tail belongs to a gesture that has already paged.
+        guard momentumPhase.isEmpty else { return 0 }
+        if phase.contains(.began) || phase.contains(.mayBegin) {
+            accumulated = 0
+            firedThisGesture = false
+        }
+        if phase.contains(.ended) || phase.contains(.cancelled) {
+            accumulated = 0
+            firedThisGesture = false
+            return 0
+        }
+        guard !firedThisGesture else { return 0 }
+        accumulated += deltaY
+        guard abs(accumulated) >= Self.preciseThreshold else { return 0 }
+        let result = Self.direction(accumulated)
+        accumulated = 0
+        // Phase-less precise devices have no gesture boundary, so only latch real gestures.
+        firedThisGesture = !phase.isEmpty
+        return result
+    }
+
+    static func pageAfterScroll(current: Int, pageCount: Int, step: Int) -> Int {
+        min(max(0, current + step), max(0, pageCount - 1))
+    }
+
+    private static func direction(_ deltaY: CGFloat) -> Int {
+        deltaY < 0 ? 1 : (deltaY > 0 ? -1 : 0)
+    }
+}
+
+/// Background view that feeds scroll events over its bounds to `onStep`. A local monitor (not a
+/// `scrollWheel(with:)` override) keeps clicks and hover on the cells above it untouched.
+private struct ScrollWheelPager: NSViewRepresentable {
+    let onStep: (Int) -> Void
+
+    func makeNSView(context: Context) -> PagerView { PagerView() }
+    func updateNSView(_ view: PagerView, context: Context) { view.onStep = onStep }
+
+    final class PagerView: NSView {
+        var onStep: ((Int) -> Void)?
+        private var pager = DexScrollPager()
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, let window = self.window, event.window === window,
+                      self.bounds.contains(self.convert(event.locationInWindow, from: nil))
+                else { return event }
+                let step = self.pager.step(deltaY: event.scrollingDeltaY,
+                                           precise: event.hasPreciseScrollingDeltas,
+                                           phase: event.phase, momentumPhase: event.momentumPhase)
+                if step != 0 { self.onStep?(step) }
+                return nil
+            }
+        }
+    }
+}
+
+
 private struct DexGridView: View {
     let store: CompanionStore
     @State private var selectedRarity: Rarity?
@@ -1968,6 +2111,10 @@ private struct DexGridView: View {
             VStack(alignment: .leading, spacing: 8) {
                 header(all)
                 grid(slice)
+                    .background(ScrollWheelPager { step in
+                        let next = DexScrollPager.pageAfterScroll(current: current, pageCount: pageCount, step: step)
+                        if next != current { page = next }
+                    })
                 footer(current: current, pageCount: pageCount)
             }
             // 이름이 저장돼 있지 않은 구버전 졸업분을 채운다 — 격자는 저장분만 읽으므로 이게 없으면
