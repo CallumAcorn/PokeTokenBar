@@ -693,8 +693,12 @@ final class CompanionStore {
     /// tokens-per-percent to convert with — pass a self-calibrated one
     /// (`CalibrationLog.selfCalibratedTokensPerPercent`) when enough history exists, else the
     /// hardcoded `ExternalUsageCredit.tokensPerPercent`.
+    ///
+    /// `chatMeasured` is true while Claude desktop's own chat counter is readable. Those chat turns are
+    /// then credited exactly by `creditDesktopChat`, so the estimate still tallies points for display
+    /// but credits no growth, or the same turns would count twice.
     func creditExternalUsage(percent: Double?, localTokenTotal: Int, limitsReady: Bool, rate: Double,
-                             windowResetsAt: Date? = nil) {
+                             windowResetsAt: Date? = nil, chatMeasured: Bool = false) {
         guard limitsReady, let percent else { return }
 
         // Classify this poll before judging the tick — a tick is only meaningful against the
@@ -730,7 +734,7 @@ final class CompanionStore {
             externalUsagePointsSinceLaunch += points
         }
 
-        guard ExternalUsageCredit.isEnabled,
+        guard ExternalUsageCredit.isEnabled, !chatMeasured,
               let xp = ExternalUsageCredit.credit(previousPercent: previousPercent, currentPercent: percent,
                                                    quietPolls: quiet, activePolls: active, rate: rate,
                                                    window: window),
@@ -738,6 +742,22 @@ final class CompanionStore {
         externalUsageXPSinceLaunch += xp
         AppLog.write("external usage credit: +\(xp) xp from five-hour limit movement")
         applyUsage(xp)
+    }
+
+    /// Credit chat tokens measured by Claude desktop's own counter (`DesktopChatLedger`). Measured, not
+    /// estimated, so they count like Claude Code tokens: lifetime total, egg or training growth, and
+    /// hyper training. Behind the same opt-in as the estimate, since both credit non-CLI Claude use.
+    func creditDesktopChat(gained: Int) {
+        guard ExternalUsageCredit.isEnabled, gained > 0 else { return }
+        state.usedSinceInstall += gained
+        if state.trainingSlotID == nil {
+            state.eggUsage += gained
+        } else {
+            applyUsage(gained)
+        }
+        applyHyperTrainProgress(gained)
+        AppLog.write("desktop chat credit: +\(gained) tokens measured by Claude desktop")
+        save()
     }
 
     /// 사탕 사용 결과 — UI 피드백 분기용.

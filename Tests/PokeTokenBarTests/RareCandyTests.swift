@@ -142,7 +142,53 @@ final class ExternalUsageCreditStoreTests: XCTestCase {
 
     override func tearDown() {
         UserDefaults.standard.removeObject(forKey: ExternalUsageCredit.defaultsKey)
+        UserDefaults.standard.removeObject(forKey: "desktopChatLedger")
         super.tearDown()
+    }
+
+    // MARK: Claude desktop's measured chat counter
+
+    /// A gain handed over by the ledger is credited in full, like Claude Code tokens: growth and the
+    /// lifetime total the wallet is built from.
+    func testChatGainGrowsTheCompanionAndTheWallet() async {
+        setToggle(true)
+        let s = store()
+        await s.hatch(baseID: 1)
+        let before = s.availableTokens
+        s.creditDesktopChat(gained: 38_198)
+        XCTAssertEqual(s.availableTokens - before, 38_198)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 38_198)
+    }
+
+    /// Same opt-in as the estimate: with the toggle off, nothing is read into the game.
+    func testChatIsIgnoredWhileTheToggleIsOff() async {
+        setToggle(false)
+        let s = store()
+        await s.hatch(baseID: 1)
+        s.creditDesktopChat(gained: 90_000)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 0)
+    }
+
+    func testAZeroGainChangesNothing() async {
+        setToggle(true)
+        let s = store()
+        await s.hatch(baseID: 1)
+        let before = s.availableTokens
+        s.creditDesktopChat(gained: 0)
+        XCTAssertEqual(s.availableTokens, before)
+    }
+
+    /// When the chat counter is measuring, the window-percent estimate must not credit the same turns
+    /// again. The points tally still accrues, so the display keeps acknowledging the usage.
+    func testEstimateDoesNotDoubleCountWhileChatIsMeasured() async {
+        setToggle(true)
+        let s = store()
+        await s.hatch(baseID: 1)
+        s.creditExternalUsage(percent: 10, localTokenTotal: 0, limitsReady: true, rate: 500_000, windowResetsAt: rcNow, chatMeasured: true)
+        s.creditExternalUsage(percent: 14, localTokenTotal: 0, limitsReady: true, rate: 500_000, windowResetsAt: rcNow, chatMeasured: true)
+        XCTAssertEqual(s.externalUsagePointsSinceLaunch, 4.0, accuracy: 0.0001)
+        XCTAssertEqual(s.externalUsageXPSinceLaunch, 0)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 0)
     }
 
     /// Percentage points must accrue for display even with the opt-in toggle off — this is what

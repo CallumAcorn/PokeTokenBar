@@ -268,11 +268,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func onStoreRefreshed() {
         updateCompanion()
         companion.grantCandies(from: store.candyEligibleWindows, limitsReady: store.limitsReady)
+        companion.creditDesktopChat(gained: DesktopChatLedger.shared.takeUncredited())
         companion.creditExternalUsage(percent: store.externalCreditPercent,
                                       localTokenTotal: store.todayTotalTokens,
                                       limitsReady: store.limitsReady,
                                       rate: externalUsageRate,
-                                      windowResetsAt: store.limits?.fiveHour?.resetDate)
+                                      windowResetsAt: store.limits?.fiveHour?.resetDate,
+                                      chatMeasured: DesktopChatTokens.read() != nil)
     }
 
     // MARK: 메뉴바 애니메이션

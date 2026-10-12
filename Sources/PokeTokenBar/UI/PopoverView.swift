@@ -249,11 +249,15 @@ struct PopoverView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            HStack(spacing: 10) {
-                tokenTypeLabel("in", today.inputTokens)
-                tokenTypeLabel("out", today.outputTokens)
-                tokenTypeLabel("cache w", today.cacheCreationTokens)
-                tokenTypeLabel("cache r", today.cacheReadTokens)
+            // A provider that only reports a total (Claude Chat) has no split to show; four zero labels
+            // would read as "no tokens" under a non-zero headline.
+            if today.inputTokens + today.outputTokens + today.cacheCreationTokens + today.cacheReadTokens > 0 {
+                HStack(spacing: 10) {
+                    tokenTypeLabel("in", today.inputTokens)
+                    tokenTypeLabel("out", today.outputTokens)
+                    tokenTypeLabel("cache w", today.cacheCreationTokens)
+                    tokenTypeLabel("cache r", today.cacheReadTokens)
+                }
             }
         }
         .padding(.top, 2)
