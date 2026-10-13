@@ -580,8 +580,8 @@ struct CompanionHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 12) {
-                SpriteView(speciesID: store.currentSpeciesID, size: 76, bob: true, animated: true,
-                           shiny: store.currentIsShiny)
+                SpriteView(speciesID: store.trainingSpeciesID, size: 76, bob: true, animated: true,
+                           shiny: store.trainingIsShiny)
                     .frame(width: 76, height: 76)
                     .background(Color.secondary.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -628,7 +628,7 @@ struct CompanionHeader: View {
                         if let level = store.currentLevel {
                             Text(store.l.pcLevel(level)).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                         }
-                        if store.currentIsShiny { Text("✨").font(.system(size: 11)) }
+                        if store.trainingIsShiny { Text("✨").font(.system(size: 11)) }
                         if let r = store.rarity {
                             Text(store.l.rarityLabel(r).uppercased()).font(.system(size: 8, weight: .bold))
                                 .padding(.horizontal, 5).padding(.vertical, 1)
@@ -711,7 +711,7 @@ struct CompanionHeader: View {
             }
             if store.hasActive, !store.lineNodes.isEmpty {
                 // 폭을 안 주면 분기 라인(이브이)이 넘쳐 팝오버 콘텐츠 전체가 좌우로 잘린다.
-                EvoLineView(nodes: store.lineNodes, mysteryLabel: store.l.unknownNextEvolution, shiny: store.currentIsShiny,
+                EvoLineView(nodes: store.lineNodes, mysteryLabel: store.l.unknownNextEvolution, shiny: store.trainingIsShiny,
                             maxWidth: PopoverMetrics.contentWidth)
             }
             if let g = store.justGraduated {

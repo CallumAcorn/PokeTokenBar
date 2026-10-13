@@ -844,3 +844,25 @@ final class CandyNotificationCopyTests: XCTestCase {
         }
     }
 }
+
+/// The Home card describes the Pokémon being trained, so its sprite must not follow the menu-bar pin.
+/// Before the split, pinning one species drew that species above another Pokémon's name and level.
+@MainActor
+final class TrainingSpriteIgnoresPinTests: XCTestCase {
+    private func use(_ s: CompanionStore, _ today: Int) {
+        s.update(todayTokensByProvider: ["test": today], todayDate: "d", monthTotal: 0, burnTier: .idle,
+                 limitWarning: false, hasUsageData: true)
+    }
+
+    func testPinningAnotherSpeciesLeavesTheTrainedSpriteAlone() async {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("pin-\(UUID().uuidString).json")
+        let s = CompanionStore(provider: StubProvider(value: rcLinear3), clock: { rcNow }, fileURL: url, rng: SeededRNG(seed: 7))
+        await s.hatch(baseID: 1)
+        use(s, 0)
+        use(s, 130_000_000)   // past the first evolution: species 1 → 2
+        XCTAssertEqual(s.trainingSpeciesID, 2)
+        XCTAssertTrue(s.setRepresentative(1))
+        XCTAssertEqual(s.currentSpeciesID, 1, "menu bar follows the pin")
+        XCTAssertEqual(s.trainingSpeciesID, 2, "Home card keeps the trained Pokémon")
+    }
+}
