@@ -16,8 +16,12 @@ struct PokeTokenBarApp: App {
         // 접근은 시도했다가 되돌렸다: 그 타이밍(비동기, 지연 실행)이 팝오버 자체의 표시 경로와
         // 경합해 메뉴바 클릭이 먹통이 되는 회귀를 냈다 — 이 창 자신이 스스로 닫는 편이 다른 어떤
         // 창과도 절대 경합하지 않는, 더 안전한 고정이다.
+        //
+        // `EmptyView` never renders, so its `onAppear` never fired and the blank window stayed open —
+        // most visibly on ⌘, (the app menu's Settings…). A real view closes its own window as soon as
+        // it has one, then hands ⌘, to the in-popover Settings the user was actually asking for.
         Settings {
-            EmptyView().onAppear { NSApp.keyWindow?.close() }
+            SettingsSceneRedirect { [appDelegate] in appDelegate.openSettingsFromScene() }
         }
     }
 }
@@ -69,6 +73,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var placeholderSize: NSSize?
     /// 버튼 폭(=텍스트 길이)이나 스프라이트 크기가 변하면 레이어를 이미지 자리에 다시 맞춰야 한다.
     private var needsSpriteLayout = true
+
+    /// When the dummy Settings scene opened by itself at launch, only close it; afterwards it means ⌘,.
+    private let launchedAt = Date()
+
+    /// Called by the dummy Settings scene after it has closed its own window.
+    func openSettingsFromScene() {
+        guard Date().timeIntervalSince(launchedAt) > 3 else { return }
+        if popover.isShown {
+            navigation.showSettings = true
+        } else {
+            showPopover { $0.showSettings = true }
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 로그인 에이전트 등록(plist 의 RunAtLoad)이 이미 떠 있는 앱을 한 번 더 실행한다 — 나중에 뜬
@@ -749,6 +766,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } else {
             menuTimer?.invalidate()
             menuTimer = nil
+        }
+    }
+}
+
+/// Content for the placeholder Settings scene: closes the window it lands in, then runs `onOpen`.
+/// Works from `viewDidMoveToWindow`, so it closes exactly its own window and never races the popover.
+private struct SettingsSceneRedirect: NSViewRepresentable {
+    let onOpen: @MainActor () -> Void
+
+    func makeNSView(context: Context) -> NSView { RedirectView(onOpen: onOpen) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class RedirectView: NSView {
+        let onOpen: @MainActor () -> Void
+
+        init(onOpen: @escaping @MainActor () -> Void) {
+            self.onOpen = onOpen
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            let onOpen = onOpen
+            DispatchQueue.main.async {
+                window.close()
+                onOpen()
+            }
         }
     }
 }
