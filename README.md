@@ -127,6 +127,20 @@ Beat an opponent whose team matches a real gym leader, Elite Four member or Cham
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-badges.png" width="300" alt="Badges: gym leaders, Elite Four and Champion by region"></td>
 </tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-dex-show-all.png" width="300" alt="Pokédex with Show all on: every species, unmet ones greyed out"></td>
+<td width="55%" valign="middle">
+<h3>📖 The whole Pokédex, with battle info</h3>
+Switch on <b>Show all</b> to see all 649 species, the ones you haven't met greyed out. Every species page has a battle section: an S–F tier, its role, a suggested build of moves it can actually learn here, and better options that share a type. Tap any move for its power, accuracy, PP and in-game description.
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>⚔️ Suggested builds and move details</h3>
+Builds come from Smogon's Black/White sets, adjusted to what this app can teach: egg, tutor and older-game moves are all learnable, and TMs still come from the shop.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-battle-info.png" width="300" alt="Battle info: tier, role, suggested build and better options"><br><br><img src="assets/screenshot-move-detail.png" width="300" alt="Move detail: power, accuracy, PP and description"></td>
+</tr>
 </table>
 
 ## Also in the box

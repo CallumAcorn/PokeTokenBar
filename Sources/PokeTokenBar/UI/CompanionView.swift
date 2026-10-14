@@ -2223,6 +2223,9 @@ private struct DexGridView: View {
                             DexSpeciesCell(store: store, species: sp) {
                                 selectedSpeciesID = sp.id
                             }
+                            // The grid is laid out by position; without this a cell keeps the name it
+                            // fetched for whichever species sat in that slot before a page or filter change.
+                            .id(sp.id)
                             .frame(maxWidth: .infinity)
                         } else {
                             Color.clear.frame(maxWidth: .infinity)
@@ -2792,7 +2795,7 @@ private struct DexSpeciesCell: View {
     /// Name for a species never met: the bundle carries none, so it is fetched (cached per species).
     @State private var fetchedName: String?
 
-    private var name: String { fetchedName ?? species.name }
+    private var name: String { species.isSeen ? species.name : (fetchedName ?? species.name) }
 
     /// 로그(56)보다 작다 — 24칸 격자에 이름까지 담아야 한다. 원본 96×96 픽셀아트를
     /// interpolation(.none) 으로 축소하므로 이 크기에서도 식별에 문제없다.
@@ -2815,6 +2818,7 @@ private struct DexSpeciesCell: View {
             // 가운데 정렬된 44 기준이라 좌우 15 씩 안으로 밀려 번호가 칸 중앙 쪽에 떠 보인다.
             // 칸 기준으로 두면 양 끝으로 붙고, 픽셀아트 몸통과 겹치는 폭도 줄어든다.
             .task(id: "\(species.id)-\(store.language.rawValue)") {
+                fetchedName = nil
                 guard !species.isSeen else { return }
                 fetchedName = await store.catalogSpeciesName(species.id)
             }

@@ -127,6 +127,20 @@ Antigravity 2.0 と IDE が推定値ではなく実際のクォータを返し�
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-badges.png" width="300" alt="バッジ: 地方ごとのジムリーダー、四天王、チャンピオン"></td>
 </tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-dex-show-all.png" width="300" alt="すべて表示をオンにした図鑑：全種、未遭遇はグレー"></td>
+<td width="55%" valign="middle">
+<h3>📖 図鑑のすべてとバトル情報</h3>
+<b>すべて表示</b>をオンにすると 649 種すべてが並び、まだ出会っていない種はグレーで表示されます。どの種のページにもバトル情報があります：S–F ティア、役割、このアプリで実際に覚えられるわざで組んだおすすめ構成、同じタイプのより良い選択肢。わざをタップすると威力・命中・PP・ゲーム内の説明を表示します。
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>⚔️ おすすめ構成とわざの詳細</h3>
+構成は Smogon のブラック・ホワイトのセットを、このアプリのルールに合わせたものです：タマゴわざ・教えわざ・過去作のわざはすべて覚えられ、わざマシンは引き続きショップで買います。
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-battle-info.png" width="300" alt="バトル情報：ティア、役割、おすすめ構成、より良い選択肢"><br><br><img src="assets/screenshot-move-detail.png" width="300" alt="わざの詳細：威力、命中、PP、説明"></td>
+</tr>
 </table>
 
 ## そのほかにも
