@@ -79,9 +79,26 @@ enum DesktopChatTokens {
 
     /// Whether chat is being measured right now. Checks the opt-in first, so another app's file is
     /// never read for a user who has not asked for non-CLI Claude use to count.
+    ///
+    /// Readable is not enough: some desktop versions stopped writing the counter, leaving a file
+    /// dated months back. Treating that as measuring switched the five-hour estimate off while
+    /// nothing else counted chat, so only a counter dated around today counts.
     static func isMeasuring(enabled: Bool = ExternalUsageCredit.isEnabled,
-                            read: () -> Reading? = { DesktopChatTokens.read() }) -> Bool {
-        enabled && read() != nil
+                            read: () -> Reading? = { DesktopChatTokens.read() },
+                            now: Date = Date()) -> Bool {
+        guard enabled, let reading = read() else { return false }
+        return isCurrent(reading, now: now)
+    }
+
+    /// The counter's day rollover (local or UTC midnight) is undocumented, so "current" accepts the
+    /// local day, the local day before, and the UTC day.
+    static func isCurrent(_ reading: Reading, now: Date) -> Bool {
+        let local = LocalUsageReader.localDayFormatter()
+        let utc = LocalUsageReader.localDayFormatter()
+        utc.timeZone = TimeZone(identifier: "UTC")
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now) ?? now
+        return [local.string(from: now), local.string(from: yesterday), utc.string(from: now)]
+            .contains(reading.date)
     }
 
     private static func isDayKey(_ text: String) -> Bool {

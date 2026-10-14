@@ -206,7 +206,30 @@ final class DesktopChatTokensTests: XCTestCase {
         let reading = DesktopChatTokens.Reading(date: "2026-10-14", tokens: 5)
         XCTAssertFalse(DesktopChatTokens.isMeasuring(enabled: false, read: { reads += 1; return reading }))
         XCTAssertEqual(reads, 0)
-        XCTAssertTrue(DesktopChatTokens.isMeasuring(enabled: true, read: { reads += 1; return reading }))
+        XCTAssertTrue(DesktopChatTokens.isMeasuring(enabled: true, read: { reads += 1; return reading },
+                                                    now: Self.noonOn("2026-10-14")))
         XCTAssertEqual(reads, 1)
+    }
+
+    /// Observed on a real machine: desktop 2.37337 stopped writing the counter, leaving it dated
+    /// 2026-07-31. Treating that as measuring switched the five-hour estimate off with nothing
+    /// counting chat in its place.
+    func testAStaleCounterIsNotMeasuring() {
+        let stale = DesktopChatTokens.Reading(date: "2026-07-31", tokens: 9_561)
+        XCTAssertFalse(DesktopChatTokens.isMeasuring(enabled: true, read: { stale }, now: Self.noonOn("2026-10-14")))
+    }
+
+    /// Today and yesterday both count, since the counter may roll over at UTC rather than local midnight.
+    func testTodayAndYesterdayAreCurrent() {
+        let now = Self.noonOn("2026-10-14")
+        for day in ["2026-10-14", "2026-10-13"] {
+            XCTAssertTrue(DesktopChatTokens.isCurrent(.init(date: day, tokens: 1), now: now), day)
+        }
+        XCTAssertFalse(DesktopChatTokens.isCurrent(.init(date: "2026-10-12", tokens: 1), now: now))
+    }
+
+    private static func noonOn(_ day: String) -> Date {
+        let f = LocalUsageReader.localDayFormatter()
+        return f.date(from: day)!.addingTimeInterval(12 * 3600)
     }
 }
