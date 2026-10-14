@@ -169,6 +169,16 @@ final class ExternalUsageCreditStoreTests: XCTestCase {
         XCTAssertEqual(s.trainingMon?.usedAtStage, 0)
     }
 
+    /// An implausible gain is capped at one counter reading's maximum instead of being added whole.
+    func testAnImplausibleGainIsCapped() async {
+        setToggle(true)
+        let s = store()
+        await s.hatch(baseID: 1)
+        let before = s.availableTokens
+        s.creditDesktopChat(gained: Int.max)
+        XCTAssertEqual(s.availableTokens - before, DesktopChatTokens.maxPlausibleTokens)
+    }
+
     func testAZeroGainChangesNothing() async {
         setToggle(true)
         let s = store()

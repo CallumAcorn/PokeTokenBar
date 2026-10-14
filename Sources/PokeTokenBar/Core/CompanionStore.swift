@@ -749,6 +749,8 @@ final class CompanionStore {
     /// hyper training. Behind the same opt-in as the estimate, since both credit non-CLI Claude use.
     func creditDesktopChat(gained: Int) {
         guard ExternalUsageCredit.isEnabled, gained > 0 else { return }
+        // Same bound the reader applies, so the unchecked `+=` below stays far inside Int range.
+        let gained = min(gained, DesktopChatTokens.maxPlausibleTokens)
         state.usedSinceInstall += gained
         if state.trainingSlotID == nil {
             state.eggUsage += gained

@@ -77,6 +77,13 @@ enum DesktopChatTokens {
         return gained > 0 ? gained : nil
     }
 
+    /// Whether chat is being measured right now. Checks the opt-in first, so another app's file is
+    /// never read for a user who has not asked for non-CLI Claude use to count.
+    static func isMeasuring(enabled: Bool = ExternalUsageCredit.isEnabled,
+                            read: () -> Reading? = { DesktopChatTokens.read() }) -> Bool {
+        enabled && read() != nil
+    }
+
     private static func isDayKey(_ text: String) -> Bool {
         let parts = text.split(separator: "-", omittingEmptySubsequences: false)
         return parts.count == 3 && parts[0].count == 4 && parts[1].count == 2 && parts[2].count == 2
@@ -123,6 +130,19 @@ struct DesktopChatLedgerState: Codable, Equatable, Sendable {
         }
     }
 
+    /// The ledger is read back from UserDefaults, which is outside the app's control, and its values
+    /// feed unchecked `+=` in the game. Clamp them to what one counter reading can be, or a corrupt
+    /// value would trap on overflow and, being saved, on every launch after.
+    func sanitized() -> DesktopChatLedgerState {
+        let cap = DesktopChatTokens.maxPlausibleTokens
+        func clamp(_ v: Int) -> Int { min(max(0, v), cap) }
+        var s = self
+        s.cursorTokens = cursorTokens.map(clamp)
+        s.days = days.mapValues(clamp)
+        s.uncredited = clamp(uncredited)
+        return s
+    }
+
     mutating func take() -> Int {
         defer { uncredited = 0 }
         return uncredited
@@ -149,7 +169,7 @@ final class DesktopChatLedger: @unchecked Sendable {
         self.defaults = defaults
         if let data = defaults.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode(DesktopChatLedgerState.self, from: data) {
-            state = saved
+            state = saved.sanitized()
         } else {
             state = DesktopChatLedgerState()
         }

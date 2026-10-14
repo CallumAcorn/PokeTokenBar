@@ -274,7 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                       limitsReady: store.limitsReady,
                                       rate: externalUsageRate,
                                       windowResetsAt: store.limits?.fiveHour?.resetDate,
-                                      chatMeasured: DesktopChatTokens.read() != nil)
+                                      chatMeasured: DesktopChatTokens.isMeasuring())
     }
 
     // MARK: 메뉴바 애니메이션

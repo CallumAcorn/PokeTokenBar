@@ -180,4 +180,33 @@ final class DesktopChatTokensTests: XCTestCase {
         let daily = try await provider.fetchDaily()
         XCTAssertNil(daily)
     }
+
+    /// The ledger comes back from UserDefaults, outside the app's control. Values near Int.max would
+    /// trap the next `+=`, and being saved would trap again on every launch.
+    func testATamperedLedgerLoadsClamped() throws {
+        let suite = UserDefaults(suiteName: "chat-ledger-\(UUID().uuidString)")!
+        var evil = DesktopChatLedgerState()
+        evil.cursorDate = "2026-10-14"
+        evil.cursorTokens = Int.max
+        evil.days = ["2026-10-14": Int.max, "2026-10-13": -5]
+        evil.uncredited = Int.max
+        suite.set(try JSONEncoder().encode(evil), forKey: "desktopChatLedger")
+
+        let ledger = DesktopChatLedger(defaults: suite)
+        let cap = DesktopChatTokens.maxPlausibleTokens
+        XCTAssertEqual(ledger.takeUncredited(), cap)
+        XCTAssertEqual(ledger.total(from: "2026-10-13", through: "2026-10-13"), 0, "negative clamps to zero")
+        ledger.observe(.init(date: "2026-10-14", tokens: cap), localDay: "2026-10-14")   // no trap
+        XCTAssertEqual(ledger.total(from: "2026-10-14", through: "2026-10-14"), cap)
+    }
+
+    /// Opted out means the desktop app's file is not read at all, not read and ignored.
+    func testMeasuringNeverReadsTheFileWhenOptedOut() {
+        var reads = 0
+        let reading = DesktopChatTokens.Reading(date: "2026-10-14", tokens: 5)
+        XCTAssertFalse(DesktopChatTokens.isMeasuring(enabled: false, read: { reads += 1; return reading }))
+        XCTAssertEqual(reads, 0)
+        XCTAssertTrue(DesktopChatTokens.isMeasuring(enabled: true, read: { reads += 1; return reading }))
+        XCTAssertEqual(reads, 1)
+    }
 }
