@@ -54,16 +54,25 @@ final class CompetitiveDexTests: XCTestCase {
         XCTAssertNil(dex.linePeak(of: 9999))
     }
 
-    /// Blissey is OU on Smogon, but its rated sets need Seismic Toss — a Gen 3 tutor move it can
-    /// only have by transfer, never in Gen 5. That one lost move lowers it one tier, and the move is
-    /// recorded so the dex can name it.
+    /// Linoone's rated set needs Extreme Speed, which it only ever had from an event — no game
+    /// teaches it. That one lost move lowers it one tier, and the move is recorded so the dex can
+    /// name it.
     func testAdjustmentRecordsTheMovesTheAppCannotTeach() throws {
-        let blissey = try XCTUnwrap(dex.entries[242])
-        let adjusted = try XCTUnwrap(blissey.adjusted)
-        XCTAssertEqual(adjusted.from, .a)
-        XCTAssertEqual(blissey.tier, .b)
+        let linoone = try XCTUnwrap(dex.entries[264])
+        let adjusted = try XCTUnwrap(linoone.adjusted)
+        XCTAssertEqual(adjusted.from, .d)
+        XCTAssertEqual(linoone.tier, .e)
         XCTAssertEqual(adjusted.reasons, [.moves])
-        XCTAssertEqual(adjusted.lostMoves, [69], "Seismic Toss")   // PokéAPI move id
+        XCTAssertEqual(adjusted.lostMoves, [245], "Extreme Speed")   // PokéAPI move id
+    }
+
+    /// Older-game moves count: Blissey's OU sets need Seismic Toss, a Gen 3 tutor move (Chansey's)
+    /// that reaches Gen 5 only by transfer. It keeps its A.
+    func testGen3And4MovesCountAsLearnable() throws {
+        let blissey = try XCTUnwrap(dex.entries[242])
+        XCTAssertEqual(blissey.tier, .a)
+        XCTAssertNil(blissey.adjusted)
+        XCTAssertTrue(blissey.build.moves.contains(69), "Seismic Toss")
     }
 
     /// Earlier-stage level-up, egg and tutor moves all count: Cloyster's Uber set runs on Shell Smash

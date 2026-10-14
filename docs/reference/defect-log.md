@@ -188,8 +188,14 @@ read_when:
   기술 목록과 추천이 어긋난 채로 "모든 기술은 이 앱에서 배울 수 있어요"라고 말하고 있었다. 테스트는
   "기술이 1~4개, 중복 없음"만 봐서 못 잡았다 — 출처가 맞는지가 아니라 모양만 확인했다.
   규칙: 생성기의 `learnable()` 은 앱의 `CompanionStore.learnableMoves(speciesID:pathIDs:)` 와 **같은 정의**를
-  따른다(현재: 자기 TM + 진화 경로 전 단계의 레벨업·알·가르침 기술). 앱 쪽 학습 규칙을 바꾸면 생성기도 같이
+  따른다(현재: 자기 TM + 진화 경로 전 단계의 레벨업·알·가르침 기술 + 3·4세대 기술(`LearnMethod.legacy`)). 앱 쪽 학습 규칙을 바꾸면 생성기도 같이
   바꾸고 데이터를 다시 만든다. `CompetitiveDexTests`(파르셀·마기라스·해피너스)가 양쪽이 맞는지 고정한다.
+- **`case A, B where 조건` 의 `where` 는 마지막 패턴에만 걸린다.** 3·4세대 기술을 `.legacy` 로 읽으려고
+  `case ("level-up", let vg), ("machine", let vg), ("tutor", let vg), ("egg", let vg) where legacy.contains(vg)`
+  로 썼더니 앞의 세 패턴은 조건 없이 매치돼 소드·실드·금은 등 **모든 게임**의 레벨업·TM·가르침 기술이 무료
+  기술로 새어 들어갔다. 새 테스트(2세대 TM 은 제외돼야 함)와 기존 "다른 버전 그룹은 무시" 테스트가 잡았다.
+  규칙: 여러 패턴에 같은 조건을 걸려면 바인딩을 하나로 합쳐 `case (let m, let vg) where 집합.contains(m) &&
+  조건` 처럼 단일 패턴으로 쓴다. 스윕: `grep -rnE "^\s*case .*,.*where " Sources` (2026-10-14 기준 해당 없음).
 - **완성도가 다른 값을 한 캐시에 섞지 않는다.** TM 카탈로그(GraphQL 요약, 설명 없음)가 `moveCache` 를
   미리 채우므로, 그대로 두면 `moveDetail(id:)` 가 설명 없는 요약을 영구히 돌려준다. `Move.descriptions` 는
   `nil` = 요약만 로드, `[:]` = 전체를 받았지만 설명 없음으로 구분하고, 캐시는 `nil` 일 때만 다시 받는다

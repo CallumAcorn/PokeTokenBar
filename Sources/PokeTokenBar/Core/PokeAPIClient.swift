@@ -149,7 +149,8 @@ actor PokeAPIClient: PokeProviding {
 
     /// This species' learnset — filters `/pokemon/{id}`'s moves (per version group) down to
     /// `MoveDataVersion.versionGroup` alone, keeping level-up, TM and egg moves — plus tutor moves from
-    /// `MoveDataVersion.tutorVersionGroups`, since Gen 5's tutors are in Black 2/White 2.
+    /// `MoveDataVersion.tutorVersionGroups`, since Gen 5's tutors are in Black 2/White 2, and any
+    /// Gen 3–4 move (`.legacy`) the species can't learn in Gen 5 at all.
     /// Keyed by "moveID-method" — PokéAPI genuinely lists some moves twice within the same version
     /// group for evolved species (e.g. Charizard's Ember shows up at both level 1 and level 7 in
     /// black-white). The level-1 entry is an evolution-inheritance artifact — it shows up in every
@@ -172,6 +173,10 @@ actor PokeAPIClient: PokeProviding {
                 case ("machine", MoveDataVersion.versionGroup):  method = .machine
                 case ("egg", MoveDataVersion.versionGroup):      method = .egg
                 case ("tutor", let vg) where MoveDataVersion.tutorVersionGroups.contains(vg): method = .tutor
+                // One pattern, not `("level-up", let vg), ("machine", let vg), …` — a `where` binds
+                // to the last pattern only, so the others would match every game.
+                case (let m, let vg) where ["level-up", "machine", "tutor", "egg"].contains(m)
+                    && MoveDataVersion.legacyVersionGroups.contains(vg): method = .legacy
                 default: continue
                 }
                 let level = method == .levelUp ? vgd.level_learned_at : 0
@@ -183,7 +188,8 @@ actor PokeAPIClient: PokeProviding {
                 }
             }
         }
-        return Array(byKey.values)
+        let gen5 = Set(byKey.values.filter { $0.method != .legacy }.map(\.moveID))
+        return byKey.values.filter { $0.method != .legacy || !gen5.contains($0.moveID) }
     }
 
     func learnableMoves(speciesID id: Int) async throws -> [LearnableMove] {

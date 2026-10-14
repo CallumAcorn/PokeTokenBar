@@ -1676,6 +1676,7 @@ private struct MonDetailView: View {
             learnableSection
             freeMovesSection(.egg, title: store.l.dexMovesEggTitle, subtitle: store.l.moveEggSubtitle)
             freeMovesSection(.tutor, title: store.l.dexMovesTutorTitle, subtitle: store.l.moveTutorSubtitle)
+            freeMovesSection(.legacy, title: store.l.dexMovesLegacyTitle, subtitle: store.l.moveLegacySubtitle)
             teachTMSection
         }
     }
@@ -1715,7 +1716,7 @@ private struct MonDetailView: View {
         }
     }
 
-    /// Egg or tutor moves not known yet — free at any level (`LearnMethod.isFree`). Hidden when there are none.
+    /// Egg, tutor or older-game moves not known yet — free at any level (`LearnMethod.isFree`). Hidden when there are none.
     @ViewBuilder
     private func freeMovesSection(_ method: LearnMethod, title: String, subtitle: String) -> some View {
         let moves = learnset.filter { $0.method == method && !mon.knownMoves.contains($0.moveID) }
@@ -2330,6 +2331,7 @@ private struct DexSpeciesDetailView: View {
                 levelUpMovesSection
                 methodMovesSection(.egg, title: store.l.dexMovesEggTitle)
                 methodMovesSection(.tutor, title: store.l.dexMovesTutorTitle)
+                methodMovesSection(.legacy, title: store.l.dexMovesLegacyTitle)
                 tmMovesSection
             }
         }

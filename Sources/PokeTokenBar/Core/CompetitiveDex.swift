@@ -56,7 +56,7 @@ struct CompetitiveEntry: Decodable, Sendable, Identifiable {
         let lostMoves: [Int]?
     }
 
-    /// Suggested set — every move is learnable in-app (BW level-up or TM).
+    /// Suggested set — every move is learnable in-app (Gen 5 level-up, TM, egg or tutor, or a Gen 3–4 move).
     struct Build: Decodable, Sendable {
         /// PokéAPI ability slug, resolved to a display name via `CompanionStore.abilityName`.
         let ability: String

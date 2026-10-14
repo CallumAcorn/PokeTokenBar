@@ -601,6 +601,12 @@ enum MoveDataVersion {
     /// Where tutor moves are read from. Black/White itself has almost none — Gen 5's tutors (Stealth
     /// Rock, Superpower, Seismic Toss, …) arrived in Black 2/White 2, same generation and same sim.
     static let tutorVersionGroups: Set<String> = ["black-white", "black-2-white-2"]
+    /// Gen 3–4 games, whose moves reach Gen 5 by transfer (Pal Park / Poké Transfer) — e.g. Blissey's
+    /// Seismic Toss, a Gen 3 tutor move. Gen 1–2 are left out: nothing transfers from them to Gen 5.
+    static let legacyVersionGroups: Set<String> = [
+        "ruby-sapphire", "emerald", "firered-leafgreen", "colosseum", "xd",
+        "diamond-pearl", "platinum", "heartgold-soulsilver",
+    ]
 }
 
 /// Move damage class (physical/special/status) — matches PokéAPI's `move-damage-class.name` as-is.
@@ -653,9 +659,11 @@ enum LearnMethod: String, Sendable, Equatable {
     case machine
     case egg
     case tutor
+    /// Learnable in a Gen 3–4 game by any method, and not in Gen 5 (`MoveDataVersion.legacyVersionGroups`).
+    case legacy
 
     /// Learnable without a level requirement or a TM.
-    var isFree: Bool { self == .egg || self == .tutor }
+    var isFree: Bool { self == .egg || self == .tutor || self == .legacy }
 }
 
 /// One line of a species' learnset — `PokeAPIClient.learnableMoves(speciesID:)` filters down to

@@ -1080,7 +1080,7 @@ final class CompanionStore {
     }
 
     /// What a mon of `speciesID` that evolved along `pathIDs` (first stage first) can learn: its own
-    /// TMs, plus the level-up, egg and tutor moves of every species on that path (see `LearnMethod`).
+    /// TMs, plus the level-up, egg, tutor and older-game moves of every species on that path (see `LearnMethod`).
     /// PokéAPI lists egg moves only on a line's first stage (Shellder, never Cloyster), and a level-up
     /// move learned before evolving would have been kept, so earlier stages count too. A move listed
     /// more than once for the same method keeps its lowest level.
@@ -1100,7 +1100,9 @@ final class CompanionStore {
         for id in pathIDs where id != speciesID {
             for lm in await learnableMoves(speciesID: id) where lm.method != .machine { add(lm) }
         }
-        return order.compactMap { byKey[$0] }
+        // An older-game move an earlier stage learns in Gen 5 is listed under that Gen 5 method only.
+        let gen5 = Set(byKey.values.filter { $0.method != .legacy }.map(\.moveID))
+        return order.compactMap { byKey[$0] }.filter { $0.method != .legacy || !gen5.contains($0.moveID) }
     }
     /// Detail for a single move (type/power/PP etc.) — for displaying known-move and learnset rows.
     func moveDetail(id: Int) async -> Move? {
