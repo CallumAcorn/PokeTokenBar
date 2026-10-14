@@ -598,6 +598,15 @@ struct EvoLine: Sendable {
 /// animated-sprite ceiling of #649).
 enum MoveDataVersion {
     static let versionGroup = "black-white"
+    /// Where tutor moves are read from. Black/White itself has almost none — Gen 5's tutors (Stealth
+    /// Rock, Superpower, Seismic Toss, …) arrived in Black 2/White 2, same generation and same sim.
+    static let tutorVersionGroups: Set<String> = ["black-white", "black-2-white-2"]
+    /// Gen 3–4 games, whose moves reach Gen 5 by transfer (Pal Park / Poké Transfer) — e.g. Blissey's
+    /// Seismic Toss, a Gen 3 tutor move. Gen 1–2 are left out: nothing transfers from them to Gen 5.
+    static let legacyVersionGroups: Set<String> = [
+        "ruby-sapphire", "emerald", "firered-leafgreen", "colosseum", "xd",
+        "diamond-pearl", "platinum", "heartgold-soulsilver",
+    ]
 }
 
 /// Move damage class (physical/special/status) — matches PokéAPI's `move-damage-class.name` as-is.
@@ -621,16 +630,40 @@ struct Move: Sendable, Codable, Equatable {
     let damageClass: MoveDamageClass
     /// langCode → name
     let names: [String: String]
+    /// langCode → in-game description. Black/White's own text where PokéAPI has it in that language,
+    /// otherwise the newest game's — BW text only exists in English and French.
+    /// `nil` = only a summary was loaded (the TM catalog, an older on-disk cache); `[:]` = the full
+    /// detail was fetched and has no text. `PokeAPIClient.moveDetail` refetches only on `nil`.
+    var descriptions: [String: String]? = nil
+    /// Turn-order bracket: +1 goes before normal moves (Quick Attack), negative goes after.
+    var priority: Int? = nil
 
     func localizedName(_ lang: AppLanguage) -> String {
         lang.resolveName(names) ?? "#\(id)"
     }
+
+    func localizedDescription(_ lang: AppLanguage) -> String? {
+        descriptions.flatMap { lang.resolveName($0) }
+    }
 }
 
-/// How a species learns a given move — only level-up/TM are modeled (egg/tutor are out of scope, YAGNI).
+/// How a species learns a given move.
+///
+/// `egg` and `tutor` are free to learn at any level, like a level-up move already reached. Every
+/// Pokémon in this app hatches from an egg, so its egg moves are a given, and there's no tutor to
+/// visit, so tutor moves are simply on offer. PokéAPI lists egg moves only on a line's first stage,
+/// so a mon's egg, tutor and level-up moves also come from the earlier stages it evolved through
+/// (`CompanionStore.learnableMoves(speciesID:pathIDs:)`); TMs stay per species.
 enum LearnMethod: String, Sendable, Equatable {
     case levelUp = "level-up"
     case machine
+    case egg
+    case tutor
+    /// Learnable in a Gen 3–4 game by any method, and not in Gen 5 (`MoveDataVersion.legacyVersionGroups`).
+    case legacy
+
+    /// Learnable without a level requirement or a TM.
+    var isFree: Bool { self == .egg || self == .tutor || self == .legacy }
 }
 
 /// One line of a species' learnset — `PokeAPIClient.learnableMoves(speciesID:)` filters down to
@@ -887,6 +920,9 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     var knownMoves: [Int] = []
     // pathIDs 가 비면(손상된 상태 파일) baseID 로 폴백 — 렌더마다 읽히므로 out-of-bounds 크래시 방지.
     var currentID: Int { pathIDs.isEmpty ? baseID : pathIDs[min(stageIndex, pathIDs.count - 1)] }
+    /// The stages this mon has actually been, first stage first, ending at `currentID` — not the
+    /// planned future ones. Where its egg moves come from (`CompanionStore.learnableMoves(speciesID:pathIDs:)`).
+    var reachedPathIDs: [Int] { pathIDs.isEmpty ? [baseID] : Array(pathIDs.prefix(min(stageIndex, pathIDs.count - 1) + 1)) }
     /// 표시 전용 레벨(Lv.1~100) — PokemonBalance.level 참고.
     var level: Int { PokemonBalance.level(rarity: rarity, totalForms: totalForms, stageIndex: stageIndex, usedAtStage: usedAtStage) }
     /// 화면/계산에 실제로 쓸 IV — 진짜 부화 롤(ivs)이 있으면 그것, 없으면(구버전 개체) id 로 결정적

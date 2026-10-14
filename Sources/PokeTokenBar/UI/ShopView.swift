@@ -528,7 +528,8 @@ private struct TMCell: View {
     }
 }
 
-/// TM detail — type/power/accuracy/PP/damage class + owned count + inline-confirm buy (same pattern as ShopItemCard).
+/// TM detail — type, what the move does (MoveFactsView: power/accuracy/PP/priority/class + description),
+/// owned count + inline-confirm buy (same pattern as ShopItemCard).
 private struct TMDetailView: View {
     let store: CompanionStore
     let move: Move
@@ -568,7 +569,7 @@ private struct TMDetailView: View {
                 }
                 Spacer()
             }
-            statsRow(l)
+            MoveFactsView(store: store, move: move)
             compatibleSection(l)
             walletHeader(l)
             buyControls(l)
@@ -611,23 +612,6 @@ private struct TMDetailView: View {
                     }
                 }
             }
-        }
-    }
-
-    private func statsRow(_ l: L) -> some View {
-        HStack(spacing: 16) {
-            statCell(l.movePowerLabel, move.power.map(String.init) ?? l.moveNoPower)
-            statCell(l.moveAccuracyLabel, move.accuracy.map { "\($0)%" } ?? l.moveNoPower)
-            statCell(l.movePPLabel, "\(move.pp)")
-            statCell("", l.moveDamageClassName(move.damageClass))
-            Spacer()
-        }
-    }
-
-    private func statCell(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            if !label.isEmpty { Text(label).font(.caption2).foregroundStyle(.secondary) }
-            Text(value).font(.caption.weight(.semibold)).monospacedDigit()
         }
     }
 

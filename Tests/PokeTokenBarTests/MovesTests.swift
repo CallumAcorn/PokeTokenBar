@@ -97,10 +97,74 @@ final class MovesTests: XCTestCase {
             version_group_details: [
                 VersionGroupDetailDTO(level_learned_at: 5, move_learn_method: NamedRef(name: "level-up", url: nil),
                                       version_group: NamedRef(name: "sword-shield", url: nil)),
+                VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "tutor", url: nil),
+                                      version_group: NamedRef(name: "sword-shield", url: nil)),
+                VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "egg", url: nil),
+                                      version_group: NamedRef(name: "black-2-white-2", url: nil)),
+            ])
+        XCTAssertEqual(PokeAPIClient.parseLearnableMoves(from: [entry]), [])
+    }
+
+    /// Gen 5's tutors live in Black 2/White 2 — a tutor entry there counts, once, even if Black/White
+    /// lists it too.
+    func testParseLearnableMovesKeepsGen5TutorMoves() {
+        let entry = MoveEntryDTO(
+            move: NamedRef(name: "superpower", url: "https://pokeapi.co/api/v2/move/276/"),
+            version_group_details: [
+                VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "tutor", url: nil),
+                                      version_group: NamedRef(name: "black-2-white-2", url: nil)),
+                VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "tutor", url: nil),
+                                      version_group: NamedRef(name: "black-white", url: nil)),
+            ])
+        XCTAssertEqual(PokeAPIClient.parseLearnableMoves(from: [entry]),
+                       [LearnableMove(moveID: 276, method: .tutor, level: 0)])
+    }
+
+    /// Every mon hatches from an egg, so BW egg moves are kept (`LearnMethod.egg`).
+    func testParseLearnableMovesKeepsEggMoves() {
+        let entry = MoveEntryDTO(
+            move: NamedRef(name: "rock-blast", url: "https://pokeapi.co/api/v2/move/350/"),
+            version_group_details: [
                 VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "egg", url: nil),
                                       version_group: NamedRef(name: MoveDataVersion.versionGroup, url: nil)),
             ])
-        XCTAssertEqual(PokeAPIClient.parseLearnableMoves(from: [entry]), [])
+        XCTAssertEqual(PokeAPIClient.parseLearnableMoves(from: [entry]),
+                       [LearnableMove(moveID: 350, method: .egg, level: 0)])
+    }
+
+    /// A move from a Gen 3–4 game the species can't learn in Gen 5 is kept as `.legacy` (Blissey's
+    /// Seismic Toss, an Emerald/FireRed tutor move). Gen 1–2 never count — nothing transfers from them.
+    func testParseLearnableMovesKeepsGen3And4Moves() {
+        let entry = MoveEntryDTO(
+            move: NamedRef(name: "seismic-toss", url: "https://pokeapi.co/api/v2/move/69/"),
+            version_group_details: [
+                VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "tutor", url: nil),
+                                      version_group: NamedRef(name: "emerald", url: nil)),
+                VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "machine", url: nil),
+                                      version_group: NamedRef(name: "heartgold-soulsilver", url: nil)),
+            ])
+        let gen2 = MoveEntryDTO(
+            move: NamedRef(name: "mimic", url: "https://pokeapi.co/api/v2/move/102/"),
+            version_group_details: [
+                VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "machine", url: nil),
+                                      version_group: NamedRef(name: "gold-silver", url: nil)),
+            ])
+        XCTAssertEqual(PokeAPIClient.parseLearnableMoves(from: [entry, gen2]),
+                       [LearnableMove(moveID: 69, method: .legacy, level: 0)])
+    }
+
+    /// A move the species also learns in Gen 5 is listed under the Gen 5 method only.
+    func testParseLearnableMovesDropsLegacyWhenGen5HasIt() {
+        let entry = MoveEntryDTO(
+            move: NamedRef(name: "thunderbolt", url: "https://pokeapi.co/api/v2/move/85/"),
+            version_group_details: [
+                VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "machine", url: nil),
+                                      version_group: NamedRef(name: "platinum", url: nil)),
+                VersionGroupDetailDTO(level_learned_at: 0, move_learn_method: NamedRef(name: "machine", url: nil),
+                                      version_group: NamedRef(name: MoveDataVersion.versionGroup, url: nil)),
+            ])
+        XCTAssertEqual(PokeAPIClient.parseLearnableMoves(from: [entry]),
+                       [LearnableMove(moveID: 85, method: .machine, level: 0)])
     }
 
     // MARK: Learning via level-up
@@ -179,6 +243,32 @@ final class MovesTests: XCTestCase {
         let s = store(used: TM.price - 1)
         XCTAssertFalse(s.canBuyTM(101))
         XCTAssertFalse(s.buyTM(101))
+    }
+
+    // MARK: Egg moves — every mon hatched from an egg, so they're free at any level
+
+    func testEggMoveLearnableAtAnyLevel() {
+        let s = store()
+        let learnset = [LearnableMove(moveID: 300, method: .egg, level: 0)]
+        XCTAssertTrue(s.canLearnLevelUpMove(300, for: monID, learnset: learnset))
+        XCTAssertTrue(s.learnLevelUpMove(300, for: monID, learnset: learnset))
+        XCTAssertEqual(s.trainingMon?.knownMoves, [300])
+        XCTAssertFalse(s.canLearnLevelUpMove(300, for: monID, learnset: learnset), "already known")
+    }
+
+    func testTutorMoveLearnableAtAnyLevel() {
+        let s = store()
+        let learnset = [LearnableMove(moveID: 276, method: .tutor, level: 0)]
+        XCTAssertTrue(s.learnLevelUpMove(276, for: monID, learnset: learnset))
+        XCTAssertEqual(s.trainingMon?.knownMoves, [276])
+    }
+
+    func testUseMoveRerollIncludesEggMoves() async {
+        let learnset = [LearnableMove(moveID: 20, method: .egg, level: 0)]
+        let s = store(knownMoves: [999], moveRerollCount: 1, learnset: learnset)
+        let ok = await s.useMoveReroll()
+        XCTAssertTrue(ok)
+        XCTAssertEqual(s.trainingMon?.knownMoves, [20])
     }
 
     // MARK: Move reroll
@@ -264,5 +354,80 @@ final class MovesTests: XCTestCase {
                 limitWarning: false, hasUsageData: false)
         try? await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(s.trainingMon?.knownMoves, [], "an already-seeded save doesn't get refilled")
+    }
+}
+
+/// Per-species learnsets, for the path-aware learnset (egg moves live on a line's first stage).
+private struct PathLearnsetProvider: PokeProviding {
+    let bySpecies: [Int: [LearnableMove]]
+    func line(baseSpeciesID: Int) async throws -> EvoLine { throw URLError(.notConnectedToInternet) }
+    func baseSpeciesIndex() async throws -> [BaseSpecies] { [] }
+    func baseSpecies(id: Int) async throws -> BaseSpecies? { nil }
+    func learnableMoves(speciesID: Int) async throws -> [LearnableMove] { bySpecies[speciesID] ?? [] }
+}
+
+@MainActor
+final class EggMoveLearnsetTests: XCTestCase {
+    private func store(_ bySpecies: [Int: [LearnableMove]]) -> CompanionStore {
+        CompanionStore(provider: PathLearnsetProvider(bySpecies: bySpecies),
+                       fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("egg-\(UUID()).json"))
+    }
+
+    /// Shellder (90) → Cloyster (91): PokéAPI lists Rock Blast (egg) and Shell Smash (level-up) on
+    /// Shellder only. A Cloyster gets both, at Shellder's level requirement; Shellder's TMs don't come
+    /// along (TMs stay per species).
+    func testEarlierStageMovesComeAlongButNotTheirTMs() async {
+        let s = store([
+            90: [LearnableMove(moveID: 350, method: .egg, level: 0),
+                 LearnableMove(moveID: 504, method: .levelUp, level: 56),
+                 LearnableMove(moveID: 276, method: .tutor, level: 0),
+                 LearnableMove(moveID: 999, method: .machine, level: 0)],
+            91: [LearnableMove(moveID: 556, method: .levelUp, level: 52), LearnableMove(moveID: 58, method: .machine, level: 0)],
+        ])
+        let learnset = await s.learnableMoves(speciesID: 91, pathIDs: [90, 91])
+        XCTAssertEqual(Set(learnset.map(\.moveID)), [556, 58, 350, 504, 276])
+        XCTAssertEqual(learnset.first { $0.moveID == 504 }, LearnableMove(moveID: 504, method: .levelUp, level: 56))
+    }
+
+    /// A level-up move both stages list keeps the lower level — it was reachable before evolving.
+    func testSameLevelUpMoveKeepsTheLowestLevel() async {
+        let s = store([
+            90: [LearnableMove(moveID: 62, method: .levelUp, level: 20)],
+            91: [LearnableMove(moveID: 62, method: .levelUp, level: 1)],
+            92: [LearnableMove(moveID: 62, method: .levelUp, level: 40)],
+        ])
+        let fromLater = await s.learnableMoves(speciesID: 91, pathIDs: [90, 91])
+        XCTAssertEqual(fromLater, [LearnableMove(moveID: 62, method: .levelUp, level: 1)])
+        let fromEarlier = await s.learnableMoves(speciesID: 92, pathIDs: [90, 92])
+        XCTAssertEqual(fromEarlier, [LearnableMove(moveID: 62, method: .levelUp, level: 20)])
+    }
+
+    /// The same egg move listed on two stages appears once.
+    func testEggMovesAreNotDuplicated() async {
+        let egg = LearnableMove(moveID: 350, method: .egg, level: 0)
+        let s = store([90: [egg], 91: [egg]])
+        let learnset = await s.learnableMoves(speciesID: 91, pathIDs: [90, 91])
+        XCTAssertEqual(learnset, [egg])
+    }
+
+    /// An earlier stage's older-game move is free on the evolved mon, unless the evolved mon learns it
+    /// in Gen 5 — then only the Gen 5 entry shows.
+    func testLegacyMovesFollowThePathAndYieldToGen5() async {
+        let s = store([
+            113: [LearnableMove(moveID: 69, method: .legacy, level: 0), LearnableMove(moveID: 85, method: .legacy, level: 0)],
+            242: [LearnableMove(moveID: 85, method: .machine, level: 0)],
+        ])
+        let learnset = await s.learnableMoves(speciesID: 242, pathIDs: [113, 242])
+        XCTAssertEqual(Set(learnset.map { "\($0.moveID)-\($0.method.rawValue)" }), ["69-legacy", "85-machine"])
+    }
+
+    /// Only stages actually reached count — a planned future evolution's egg moves don't.
+    func testReachedPathStopsAtTheCurrentStage() {
+        let mon = MonState(baseID: 90, pathIDs: [90, 91], plannedPathIDs: [90, 91], stageIndex: 0,
+                           usedAtStage: 0, rarity: .common, totalForms: 2)
+        XCTAssertEqual(mon.reachedPathIDs, [90])
+        var evolved = mon
+        evolved.stageIndex = 1
+        XCTAssertEqual(evolved.reachedPathIDs, [90, 91])
     }
 }
