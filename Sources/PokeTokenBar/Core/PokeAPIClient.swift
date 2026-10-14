@@ -50,6 +50,9 @@ protocol PokeProviding: Sendable {
     func flavorText(speciesID: Int) async throws -> [String: String]
     /// 분류(langCode → text, 예: "Mouse Pokémon") — `pokemon-species` 의 genera. 도감 종 개요 화면 전용.
     func genus(speciesID: Int) async throws -> [String: String]
+    /// Localized names (langCode → name) from `pokemon-species`. For species the player has never
+    /// met, so Pokémon names are fetched at runtime rather than bundled.
+    func speciesNames(speciesID: Int) async throws -> [String: String]
     /// This species' learnset (level-up/TM, per `MoveDataVersion.versionGroup`) — for the PC detail
     /// screen's learn-a-move flow only.
     func learnableMoves(speciesID: Int) async throws -> [LearnableMove]
@@ -75,6 +78,7 @@ extension PokeProviding {
     func abilityNames(slug: String) async throws -> [String: String] { throw URLError(.unsupportedURL) }
     func flavorText(speciesID: Int) async throws -> [String: String] { throw URLError(.unsupportedURL) }
     func genus(speciesID: Int) async throws -> [String: String] { throw URLError(.unsupportedURL) }
+    func speciesNames(speciesID: Int) async throws -> [String: String] { throw URLError(.unsupportedURL) }
     func learnableMoves(speciesID: Int) async throws -> [LearnableMove] { throw URLError(.unsupportedURL) }
     func moveDetail(id: Int) async throws -> Move { throw URLError(.unsupportedURL) }
     func moveDetail(name: String) async throws -> Move { throw URLError(.unsupportedURL) }
@@ -137,6 +141,14 @@ actor PokeAPIClient: PokeProviding {
         return byLang
     }
 
+    /// Same `pokemon-species` response as genus/flavorText, so a cache hit costs no network.
+    func speciesNames(speciesID id: Int) async throws -> [String: String] {
+        let sp = try await species(id)
+        var byLang: [String: String] = [:]
+        for n in sp.names where langCodes.contains(n.language.name) { byLang[n.language.name] = n.name }
+        return byLang
+    }
+
     /// 특성 슬러그의 다국어 표시명(`/ability/{slug}`) — species 이름과 같은 패턴(런타임 조회 + 캐시).
     func abilityNames(slug: String) async throws -> [String: String] {
         if let cached = abilityNamesCache[slug] { return cached }
@@ -148,7 +160,9 @@ actor PokeAPIClient: PokeProviding {
     }
 
     /// This species' learnset — filters `/pokemon/{id}`'s moves (per version group) down to
-    /// `MoveDataVersion.versionGroup` alone, keeping only level-up/TM (egg/tutor are out of scope).
+    /// `MoveDataVersion.versionGroup` alone, keeping level-up, TM and egg moves — plus tutor moves from
+    /// `MoveDataVersion.tutorVersionGroups`, since Gen 5's tutors are in Black 2/White 2, and any
+    /// Gen 3–4 move (`.legacy`) the species can't learn in Gen 5 at all.
     /// Keyed by "moveID-method" — PokéAPI genuinely lists some moves twice within the same version
     /// group for evolved species (e.g. Charizard's Ember shows up at both level 1 and level 7 in
     /// black-white). The level-1 entry is an evolution-inheritance artifact — it shows up in every
@@ -164,11 +178,17 @@ actor PokeAPIClient: PokeProviding {
         for entry in moves {
             let moveID = Self.id(from: entry.move.url ?? "")
             guard moveID > 0 else { continue }
-            for vgd in entry.version_group_details where vgd.version_group.name == MoveDataVersion.versionGroup {
+            for vgd in entry.version_group_details {
                 let method: LearnMethod
-                switch vgd.move_learn_method.name {
-                case "level-up": method = .levelUp
-                case "machine":  method = .machine
+                switch (vgd.move_learn_method.name, vgd.version_group.name) {
+                case ("level-up", MoveDataVersion.versionGroup): method = .levelUp
+                case ("machine", MoveDataVersion.versionGroup):  method = .machine
+                case ("egg", MoveDataVersion.versionGroup):      method = .egg
+                case ("tutor", let vg) where MoveDataVersion.tutorVersionGroups.contains(vg): method = .tutor
+                // One pattern, not `("level-up", let vg), ("machine", let vg), …` — a `where` binds
+                // to the last pattern only, so the others would match every game.
+                case (let m, let vg) where ["level-up", "machine", "tutor", "egg"].contains(m)
+                    && MoveDataVersion.legacyVersionGroups.contains(vg): method = .legacy
                 default: continue
                 }
                 let level = method == .levelUp ? vgd.level_learned_at : 0
@@ -180,7 +200,8 @@ actor PokeAPIClient: PokeProviding {
                 }
             }
         }
-        return Array(byKey.values)
+        let gen5 = Set(byKey.values.filter { $0.method != .legacy }.map(\.moveID))
+        return byKey.values.filter { $0.method != .legacy || !gen5.contains($0.moveID) }
     }
 
     func learnableMoves(speciesID id: Int) async throws -> [LearnableMove] {
@@ -193,7 +214,9 @@ actor PokeAPIClient: PokeProviding {
 
     /// Detail for a single move (`/move/{id}`) — same pattern as species/ability names (runtime lookup + cache).
     func moveDetail(id: Int) async throws -> Move {
-        if let cached = moveCache[id] { return cached }
+        // A TM-catalog entry is cached without descriptions (`nil`) — that's a summary, not the
+        // full detail, so it falls through to the real fetch. `[:]` means fetched-but-no-text.
+        if let cached = moveCache[id], cached.descriptions != nil { return cached }
         let dto: MoveDTO = try await get(base.appendingPathComponent("move/\(id)"))
         let move = Self.move(from: dto, id: id, langCodes: langCodes)
         moveCache[id] = move
@@ -207,7 +230,7 @@ actor PokeAPIClient: PokeProviding {
     /// hitting the network.
     func moveDetail(name: String) async throws -> Move {
         let slug = Self.slug(fromDisplayName: name)
-        if let cached = moveCache.values.first(where: { $0.name == slug }) { return cached }
+        if let cached = moveCache.values.first(where: { $0.name == slug && $0.descriptions != nil }) { return cached }
         let dto: MoveDTO = try await get(base.appendingPathComponent("move/\(slug)"))
         let move = Self.move(from: dto, id: dto.id, langCodes: langCodes)
         moveCache[dto.id] = move
@@ -256,7 +279,27 @@ actor PokeAPIClient: PokeProviding {
                    power: override?.power ?? dto.power, accuracy: override?.accuracy ?? dto.accuracy,
                    pp: override?.pp ?? dto.pp,
                    damageClass: MoveDamageClass(rawValue: dto.damage_class.name) ?? .status,
-                   names: byLang)
+                   names: byLang,
+                   descriptions: moveDescriptions(dto.flavor_text_entries ?? [], langCodes: langCodes),
+                   priority: dto.priority)
+    }
+
+    /// One description per language: Black/White's text if PokéAPI has it in that language, then
+    /// Black 2/White 2's, then the newest game's (entries are listed oldest first). In-game text is
+    /// hard-wrapped with newlines and soft hyphens, so those are flattened to plain spaces.
+    /// Never nil: an empty map still marks the move as fully fetched (see `moveDetail(id:)`).
+    static func moveDescriptions(_ entries: [FlavorTextDTO], langCodes: [String]) -> [String: String] {
+        let preferred = ["black-white", "black-2-white-2"]
+        var byLang: [String: String] = [:]
+        for code in langCodes {
+            let mine = entries.filter { $0.language.name == code }
+            guard let pick = preferred.lazy.compactMap({ vg in mine.first { $0.version_group.name == vg } }).first
+                    ?? mine.last else { continue }
+            byLang[code] = pick.flavor_text
+                .replacingOccurrences(of: "\u{AD}\n", with: "")
+                .components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        return byLang
     }
 
     /// PokéAPI's `power`/`accuracy`/`pp` reflect the CURRENT games, not Black/White's numbers — this
@@ -658,7 +701,11 @@ struct MoveDTO: Decodable, Sendable {
     let type: NamedRef
     let damage_class: NamedRef
     let names: [NameDTO]
+    /// Optional so a trimmed response (tests, older fixtures) still decodes.
+    let priority: Int?
+    let flavor_text_entries: [FlavorTextDTO]?
 }
+struct FlavorTextDTO: Decodable, Sendable { let flavor_text: String; let language: NamedRef; let version_group: NamedRef }
 struct NameDTO: Decodable, Sendable { let name: String; let language: NamedRef }
 struct NamedRef: Decodable, Sendable { let name: String; let url: String? }
 struct URLRef: Decodable, Sendable { let url: String }

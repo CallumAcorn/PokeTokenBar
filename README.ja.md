@@ -217,6 +217,7 @@ swift test                   # ユニットテスト
 | `codex app-server` | Codex 公式 5h/週間 % | ローカル子プロセス；アカウント snapshot のみ、モデル turn なし |
 | [PokéAPI](https://pokeapi.co/): `pokeapi.co`, `graphql.pokeapi.co` | ポケモンの種・進化・技 | ランタイム取得；ローカルキャッシュ、バンドルしない |
 | `raw.githubusercontent.com/PokeAPI/sprites` | ポケモン・アイテムのスプライト | ランタイム取得；Application Support にキャッシュ、バンドルしない |
+| 同梱 `competitive-gen5.json` | バトルのティア・役割・おすすめ構成（図鑑番号のみで参照） | Smogon 第5世代セット（[data.pkmn.cc](https://data.pkmn.cc)）と [`@pkmn/dex`](https://github.com/pkmn/ps) から生成；ポケモンの名前・画像は含まず、ランタイム取得のまま |
 | `status.claude.com`, `status.openai.com` | プロバイダ障害バナー | statuspage の要約；表示専用 — 設定でオフにできます |
 | `api.github.com` | アップデート確認 | 最新リリースのタグ；起動時とポップオーバーを開いた時 |
 

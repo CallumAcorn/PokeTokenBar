@@ -216,6 +216,7 @@ swift test                   # 단위 테스트
 | `codex app-server` | Codex 공식 5h/주간 % | 로컬 자식 프로세스; 계정 snapshot만, 모델 turn 없음 |
 | [PokéAPI](https://pokeapi.co/): `pokeapi.co`, `graphql.pokeapi.co` | 포켓몬 종·진화·기술 | 런타임 fetch; 로컬 캐시, 번들 안 함 |
 | `raw.githubusercontent.com/PokeAPI/sprites` | 포켓몬·아이템 스프라이트 | 런타임 fetch; Application Support 에 캐시, 번들 안 함 |
+| 번들 `competitive-gen5.json` | 배틀 티어·역할·추천 빌드, 도감 번호로만 참조 | Smogon 5세대 세트([data.pkmn.cc](https://data.pkmn.cc))와 [`@pkmn/dex`](https://github.com/pkmn/ps)로 생성; 포켓몬 이름·이미지는 없음(런타임 fetch 유지) |
 | `status.claude.com`, `status.openai.com` | 프로바이더 장애 배너 | statuspage 요약; 표시 전용 — 설정에서 끌 수 있음 |
 | `api.github.com` | 업데이트 확인 | 최신 릴리스 태그; 기동 시와 팝오버를 열 때 |
 

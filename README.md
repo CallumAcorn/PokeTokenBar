@@ -218,6 +218,7 @@ swift test                   # unit tests
 | `codex app-server` | Codex official 5h/weekly % | local child process; account snapshot only, no model turn |
 | [PokéAPI](https://pokeapi.co/): `pokeapi.co`, `graphql.pokeapi.co` | Pokémon species, evolution &amp; moves | runtime fetch; cached locally, never bundled |
 | `raw.githubusercontent.com/PokeAPI/sprites` | Pokémon &amp; item sprites | runtime fetch; cached under Application Support, never bundled |
+| Bundled `competitive-gen5.json` | Battle tiers, roles and suggested builds, keyed by Dex number only | generated from Smogon's Gen 5 sets ([data.pkmn.cc](https://data.pkmn.cc)) and [`@pkmn/dex`](https://github.com/pkmn/ps); no Pokémon names or art, those stay runtime fetches |
 | `status.claude.com`, `status.openai.com` | provider incident banner | statuspage summary; display only — turn it off in Settings |
 | `api.github.com` | update check | latest release tag; on launch and when the popover opens |
 

@@ -1,0 +1,10 @@
+{
+  "name": "competitive-data",
+  "private": true,
+  "type": "module",
+  "description": "Generates Sources/PokeTokenBar/Resources/competitive-gen5.json. Run: npm ci && node generate.mjs",
+  "dependencies": {
+    "@pkmn/data": "0.9.38",
+    "@pkmn/dex": "0.9.38"
+  }
+}

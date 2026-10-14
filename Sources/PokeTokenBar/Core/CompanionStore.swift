@@ -236,6 +236,23 @@ final class CompanionStore {
         let rarity: Rarity
         let isShiny: Bool               // 이 종을 이로치로 보유한 적이 있는가
         let baseID: Int                 // 이 종이 속한 진화라인의 시작점 — 도감 개요의 진화 라인 조회용
+        /// False only for a "Show all" placeholder — a species the player has never met.
+        var isSeen = true
+    }
+
+    /// The dex list, optionally padded out to every species in the bundled catalog ("Show all").
+    /// Met species keep their own entry (stored name, shiny flag); the rest become greyed
+    /// placeholders rated from the catalog, named "#id" until `catalogSpeciesName` resolves them.
+    /// An empty catalog (resource failed to load) falls back to the met species alone.
+    nonisolated static func dexList(seen: [DexSpecies], includingUnseen: Bool,
+                                    catalog: CompetitiveDex) -> [DexSpecies] {
+        guard includingUnseen, !catalog.entries.isEmpty else { return seen }
+        let byID = Dictionary(seen.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return catalog.all.map { entry in
+            byID[entry.id] ?? DexSpecies(id: entry.id, name: "#\(entry.id)",
+                                         rarity: catalog.rarity(of: entry.id) ?? .common,
+                                         isShiny: false, baseID: entry.baseID, isSeen: false)
+        }
     }
 
     /// 도감 목록 — 영구 언락된 종만, 도감 번호 오름차순. `state.dexUnlocked` 는 개체가 그 종에 도달한
@@ -252,6 +269,15 @@ final class CompanionStore {
     /// back to "#id" only for the placeholder case (shouldn't happen for anything actually owned).
     func speciesName(_ speciesID: Int) -> String {
         state.dexUnlocked[speciesID]?.names.flatMap { state.language.resolveName($0) } ?? "#\(speciesID)"
+    }
+
+    /// Name for any species, met or not. Owned species read the saved name (no network); the rest
+    /// come from PokéAPI, so the app bundles no Pokémon names. Offline falls back to "#id".
+    func catalogSpeciesName(_ speciesID: Int) async -> String {
+        let known = speciesName(speciesID)
+        guard known.hasPrefix("#"), let names = try? await provider.speciesNames(speciesID: speciesID),
+              let name = state.language.resolveName(names) else { return known }
+        return name
     }
 
     /// Same value as `speciesName` when the species is already known (free, no network); otherwise
@@ -1061,6 +1087,32 @@ final class CompanionStore {
     func learnableMoves(speciesID: Int) async -> [LearnableMove] {
         (try? await provider.learnableMoves(speciesID: speciesID)) ?? []
     }
+
+    /// What a mon of `speciesID` that evolved along `pathIDs` (first stage first) can learn: its own
+    /// TMs, plus the level-up, egg, tutor and older-game moves of every species on that path (see `LearnMethod`).
+    /// PokéAPI lists egg moves only on a line's first stage (Shellder, never Cloyster), and a level-up
+    /// move learned before evolving would have been kept, so earlier stages count too. A move listed
+    /// more than once for the same method keeps its lowest level.
+    func learnableMoves(speciesID: Int, pathIDs: [Int]) async -> [LearnableMove] {
+        var byKey: [String: LearnableMove] = [:]
+        var order: [String] = []
+        func add(_ lm: LearnableMove) {
+            let key = "\(lm.moveID)-\(lm.method.rawValue)"
+            if let existing = byKey[key] {
+                if lm.level < existing.level { byKey[key] = lm }
+            } else {
+                byKey[key] = lm
+                order.append(key)
+            }
+        }
+        for lm in await learnableMoves(speciesID: speciesID) { add(lm) }
+        for id in pathIDs where id != speciesID {
+            for lm in await learnableMoves(speciesID: id) where lm.method != .machine { add(lm) }
+        }
+        // An older-game move an earlier stage learns in Gen 5 is listed under that Gen 5 method only.
+        let gen5 = Set(byKey.values.filter { $0.method != .legacy }.map(\.moveID))
+        return order.compactMap { byKey[$0] }.filter { $0.method != .legacy || !gen5.contains($0.moveID) }
+    }
     /// Detail for a single move (type/power/PP etc.) — for displaying known-move and learnset rows.
     func moveDetail(id: Int) async -> Move? {
         try? await provider.moveDetail(id: id)
@@ -1121,7 +1173,8 @@ final class CompanionStore {
 
     func canLearnLevelUpMove(_ moveID: Int, for monID: MonState.ID, learnset: [LearnableMove]) -> Bool {
         guard let mon = state.party.first(where: { $0.id == monID }), !mon.knownMoves.contains(moveID) else { return false }
-        return learnset.contains { $0.moveID == moveID && $0.method == .levelUp && $0.level <= mon.level }
+        // Egg and tutor moves are free at any level — see `LearnMethod`.
+        return learnset.contains { $0.moveID == moveID && ($0.method.isFree || ($0.method == .levelUp && $0.level <= mon.level)) }
     }
 
     func canTeachTM(_ moveID: Int, to monID: MonState.ID, learnset: [LearnableMove]) -> Bool {
@@ -1246,14 +1299,14 @@ final class CompanionStore {
     var canUseMoveReroll: Bool { hasActive && itemCount(.moveReroll) > 0 }
 
     /// Redraws the current mon's 4 moves at random from its learnset at that moment (level-up moves
-    /// learned up to its current level + everything machine-teachable). Fewer than 4 candidates?
+    /// learned up to its current level + everything machine-teachable + its egg and tutor moves). Fewer than 4 candidates?
     /// It just uses however many there are — no forcing it up to 4.
     @discardableResult
     func useMoveReroll() async -> Bool {
         guard canUseMoveReroll, let mon = trainingMon else { return false }
-        let learnset = await learnableMoves(speciesID: mon.currentID)
+        let learnset = await learnableMoves(speciesID: mon.currentID, pathIDs: mon.reachedPathIDs)
         let pool = Set(learnset
-            .filter { $0.method == .machine || ($0.method == .levelUp && $0.level <= mon.level) }
+            .filter { $0.method != .levelUp || $0.level <= mon.level }
             .map(\.moveID))
         guard !pool.isEmpty, trainingMon?.id == mon.id else { return false }   // still the same mon after the await?
         let picked = Array(Array(pool).shuffled(using: &rng).prefix(MonState.maxKnownMoves))
