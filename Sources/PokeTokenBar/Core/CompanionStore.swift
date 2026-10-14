@@ -106,6 +106,11 @@ final class CompanionStore {
         // 대표 종이 고정돼 있으면 그 종의 이로치 보유 여부를 따른다 — 개체가 아니라 종 단위 선택이라
         // 훈련 중인 개체의 이로치와는 무관하다.
         if let rep = state.representativeSpeciesID { return state.ownsShinySpecies(rep) }
+        return trainingIsShiny
+    }
+    /// Shiny state of the Pokémon actually being trained, ignoring the menu-bar pin. The Home card and
+    /// dex unlocks describe *this* Pokémon, so they must not pick up the pinned species' shininess.
+    var trainingIsShiny: Bool {
         guard let a = trainingMon else { return false }
         if a.dittoDisguise != nil && !a.dittoRevealed { return false }   // 위장 중엔 이로치 숨김(리빌 때 공개)
         return a.isShiny
@@ -126,6 +131,10 @@ final class CompanionStore {
     /// 메뉴바가 그릴 종. 대표 종이 고정돼 있으면 그것, 아니면 훈련 중인 개체(없으면 알 → nil).
     /// 메뉴바 스프라이트와 애니메이션이 전부 이 한 지점을 지나므로 고정도 여기 한 곳에서 끝난다.
     var currentSpeciesID: Int? { state.representativeSpeciesID ?? trainingMon?.currentID }
+
+    /// The species being trained, ignoring the menu-bar pin — what the Home card shows next to the
+    /// trained Pokémon's name, level and progress.
+    var trainingSpeciesID: Int? { trainingMon?.currentID }
 
     /// 고정된 대표 종(없으면 nil) — UI 가 "고정 중" 상태를 표시·해제할 때 읽는다.
     var representativeSpeciesID: Int? { state.representativeSpeciesID }
@@ -528,7 +537,7 @@ final class CompanionStore {
                 // 졸업(최종 형태 도달) — 예전처럼 개체를 폐기하지 않는다. PC 에 그대로 남고, 훈련
                 // 슬롯만 풀려 새 알이 자동으로 인큐베이션을 시작한다(결정 5).
                 state.collectedFinals.insert("\(a.baseID):\(a.currentID)")
-                unlockSpecies(a.currentID, baseID: a.baseID, rarity: a.rarity, isShiny: currentIsShiny, line: line)
+                unlockSpecies(a.currentID, baseID: a.baseID, rarity: a.rarity, isShiny: trainingIsShiny, line: line)
                 syncTrainingDexEntry(monID: a.id, line: line)
                 let name = line.localizedName(a.currentID, state.language)
                 justGraduated = name
@@ -554,7 +563,7 @@ final class CompanionStore {
                 state.party[idx].pathIDs = Array(a.pathIDs.prefix(a.stageIndex + 1)) + [next.speciesID]
                 state.party[idx].stageIndex += 1
                 state.party[idx].usedAtStage = a.usedAtStage - thr   // 초과분 이월
-                unlockSpecies(next.speciesID, baseID: a.baseID, rarity: a.rarity, isShiny: currentIsShiny, line: line)
+                unlockSpecies(next.speciesID, baseID: a.baseID, rarity: a.rarity, isShiny: trainingIsShiny, line: line)
                 syncTrainingDexEntry(monID: a.id, line: line)
                 let newName = line.localizedName(next.speciesID, state.language)
                 justEvolvedTo = newName
@@ -589,7 +598,7 @@ final class CompanionStore {
         state.dex[idx].finalID = mon.currentID
         state.dex[idx].names = Dictionary(uniqueKeysWithValues:
             mon.pathIDs.compactMap { id in line.names[id].map { (id, $0) } })
-        if currentIsShiny { state.dex[idx].isShiny = true }
+        if trainingIsShiny { state.dex[idx].isShiny = true }
         save()
     }
 
