@@ -28,6 +28,7 @@ All of this is read locally. None of it is uploaded anywhere.
 | `~/Library/Application Support/Cursor/**/state.vscdb` | usage rows from `cursorDiskKV` |
 | `~/Library/Application Support/kiro-cli/data.sqlite3` | conversation byte estimates |
 | `~/.local/share/opencode`, `~/.hermes` | message rows |
+| `~/Library/Application Support/Claude/buddy-tokens.json` (Claude desktop) | today's chat token count and its date, **only when crediting non-CLI Claude use is on**; file capped at 4 KB, value bounded |
 | Keychain `Claude Code-credentials` or `~/.claude/.credentials.json` | OAuth access token, **only when enabled** |
 
 **Prompt and response content is never read into memory.** The Claude parser filters to lines

@@ -174,6 +174,11 @@ final class UsageStore {
     var localizationLanguage: AppLanguage = .systemDefault   // companion.language 로 재시드 전까지의 기본(실행순서 무관 안전)
 
     private let providers: [any UsageProvider]
+    /// Providers that feed the displayed totals but are not file-scanning sources, so they stay out of
+    /// the registry that the Settings scan-folder UI, the tab layout guards and the registry tests all
+    /// treat as "things with transcripts on disk". Claude Chat reads a counter, not logs.
+    private let supplementalProviders: [any UsageProvider]
+    private var refreshProviders: [any UsageProvider] { providers + supplementalProviders }
 
     /// Registered usage sources — Settings lists these so extra scan folders
     /// stay provider-tagged (#177). Do not grow one text field per provider.
@@ -245,6 +250,9 @@ final class UsageStore {
         let todayKey = LocalUsageReader.todayKey()
         return snapshots.reduce(into: [:]) { result, snapshot in
             guard let today = snapshot.today, today.date == todayKey else { return }
+            // Chat is credited to the game from its own ledger (`DesktopChatLedger.takeUncredited`),
+            // so listing it here would credit every chat token twice. It is displayed, not re-ledgered.
+            guard snapshot.providerID != DesktopChatTokens.providerID else { return }
             result[snapshot.providerID] = today.totalTokens
         }
     }
@@ -526,6 +534,7 @@ final class UsageStore {
         LocalCursorProvider(), LocalGrokProvider(), LocalCopilotProvider(), LocalKiroProvider(),
         LocalPiProvider(),
     ],
+         supplementalProviders: [any UsageProvider] = [LocalDesktopChatProvider()],
          claudeLimitsProvider: any ClaudeLimitsProviding = OAuthLimitsProvider(),
          codexLimitsProvider: any CodexLimitsProviding = CodexRateLimitsProvider(),
          antigravityLimitsProvider: any AntigravityLimitsProviding = AntigravityRateLimitsProvider(),
@@ -534,6 +543,7 @@ final class UsageStore {
          defaults: UserDefaults = .standard,
          displaysAsleep: @escaping @MainActor () -> Bool = { CGDisplayIsAsleep(CGMainDisplayID()) != 0 }) {
         self.providers = providers
+        self.supplementalProviders = supplementalProviders
         self.displaysAsleep = displaysAsleep
         self.limitsProvider = claudeLimitsProvider
         self.codexLimitsProvider = codexLimitsProvider
@@ -718,7 +728,7 @@ final class UsageStore {
             let errorDescription: String?
         }
         await withTaskGroup(of: DailyOutcome.self) { group in
-            for provider in providers {
+            for provider in refreshProviders {
                 group.addTask {
                     do {
                         let today = try await provider.fetchDaily()
@@ -739,7 +749,7 @@ final class UsageStore {
         }
 
         var newSnapshots: [ProviderSnapshot] = []
-        for provider in providers {
+        for provider in refreshProviders {
             // 날짜 가드: 이전 스냅샷의 어제 데이터는 유지하지 않는다 (자정 동결 방지)
             var prevToday: DailyUsage?
             var prevBlock: BlockUsage?
@@ -793,14 +803,14 @@ final class UsageStore {
 
         // ── Phase 2: 블록/주월 누적 상세 (best effort) — 실패 시 이전 값 유지
         await withTaskGroup(of: (String, ProviderEnrichment).self) { group in
-            for provider in providers {
+            for provider in refreshProviders {
                 group.addTask { (provider.id, await provider.fetchEnrichment()) }
             }
             for await (id, enrichment) in group {
                 guard let index = snapshots.firstIndex(where: { $0.providerID == id }) else {
                     // An idle day still has useful history. Require positive usage, not merely
                     // non-nil periods: local providers also return all-zero period summaries.
-                    if let provider = providers.first(where: { $0.id == id }) {
+                    if let provider = refreshProviders.first(where: { $0.id == id }) {
                         let snapshot = ProviderSnapshot(
                             providerID: id, displayName: provider.displayName, today: nil,
                             activeBlock: enrichment.blocksOK ? enrichment.activeBlock : nil,
@@ -871,7 +881,10 @@ final class UsageStore {
         CalibrationLog.record(CalibrationLog.makeSample(
             now: Date(),
             limits: limits,
-            snapshots: snapshots.map { (id: $0.providerID, today: $0.today) }))
+            // Chat tokens are not in the units the tokens-per-percent rate is fitted in, and the rate
+            // pairs *local* token growth with window growth. Keep the fit on measured Claude Code etc.
+            snapshots: snapshots.filter { $0.providerID != DesktopChatTokens.providerID }
+                .map { (id: $0.providerID, today: $0.today) }))
     }
 
     private func handleEmptyUsageRetry(schedule: Bool, hasErrors: Bool) {
