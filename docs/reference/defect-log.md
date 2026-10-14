@@ -183,12 +183,13 @@ read_when:
   base HP 1 인 다른 종은 일반 공식. 수정 전 3건 실패 확인.
 
 - **생성 데이터는 앱이 실제로 쓰는 경로와 같은 의미로 만든다.** 번들 경쟁 데이터(`competitive-gen5.json`)의
-  추천 기술을 `@pkmn` 의 `learnsets.all()`(진화 전 단계 학습분 포함)로 걸렀더니, 파르셀에 셸브레이커처럼
-  **셸더만 배우는 기술**이 들어갔다. 앱의 배우기 흐름은 `PokeAPIClient.learnableMoves(speciesID:)` — 종
-  단위라 이 기술을 절대 못 준다. 같은 화면의 기술 목록과 추천이 어긋난 채로 "모든 기술은 이 앱에서 배울 수
-  있어요"라고 말하고 있었다. 테스트는 "기술이 1~4개, 중복 없음"만 봐서 못 잡았다 — 출처가 맞는지가 아니라
-  모양만 확인했다. 생성기는 종 자신의 학습표(`learnsets.get`)만 쓰고,
-  `CompetitiveDexTests.testBuildsOnlyUseTheSpeciesOwnMoves` 가 파르셀로 고정한다.
+  추천 기술을 `@pkmn` 의 `learnsets.all()`(진화 전 단계 학습분 포함)로 걸렀더니, 당시 앱의 배우기 흐름
+  (종 단위 `learnableMoves(speciesID:)`)이 줄 수 없는 셸더 전용 기술이 파르셀 추천에 들어갔다. 같은 화면의
+  기술 목록과 추천이 어긋난 채로 "모든 기술은 이 앱에서 배울 수 있어요"라고 말하고 있었다. 테스트는
+  "기술이 1~4개, 중복 없음"만 봐서 못 잡았다 — 출처가 맞는지가 아니라 모양만 확인했다.
+  규칙: 생성기의 `learnable()` 은 앱의 `CompanionStore.learnableMoves(speciesID:pathIDs:)` 와 **같은 정의**를
+  따른다(현재: 자기 TM + 진화 경로 전 단계의 레벨업·알·가르침 기술). 앱 쪽 학습 규칙을 바꾸면 생성기도 같이
+  바꾸고 데이터를 다시 만든다. `CompetitiveDexTests`(파르셀·마기라스·해피너스)가 양쪽이 맞는지 고정한다.
 - **완성도가 다른 값을 한 캐시에 섞지 않는다.** TM 카탈로그(GraphQL 요약, 설명 없음)가 `moveCache` 를
   미리 채우므로, 그대로 두면 `moveDetail(id:)` 가 설명 없는 요약을 영구히 돌려준다. `Move.descriptions` 는
   `nil` = 요약만 로드, `[:]` = 전체를 받았지만 설명 없음으로 구분하고, 캐시는 `nil` 일 때만 다시 받는다

@@ -1021,7 +1021,7 @@ struct L {
     var battleAbility: String { t("특성", "Ability", "とくせい", "Habilidad") }
     var battleNature: String { t("성격", "Nature", "せいかく", "Naturaleza") }
     var battleEVs: String { t("노력치 (영양제)", "EVs (vitamins)", "努力値（ドーピング）", "EVs (vitaminas)") }
-    var battleMovesNote: String { t("모든 기술은 이 앱에서 배울 수 있어요(레벨업·TM·알 기술). 탭하면 설명을 볼 수 있어요.", "Every move can be learned in this app (level-up, TM or egg move). Tap one to see what it does.", "どの技もこのアプリで覚えられます（レベルアップ・わざマシン・タマゴわざ）。タップで説明を表示。", "Todos los movimientos se aprenden en esta app (por nivel, MT o huevo). Toca uno para ver qué hace.") }
+    var battleMovesNote: String { t("모든 기술은 이 앱에서 배울 수 있어요(레벨업·TM·알 기술·기술 가르침). 탭하면 설명을 볼 수 있어요.", "Every move can be learned in this app (level-up, TM, egg or tutor move). Tap one to see what it does.", "どの技もこのアプリで覚えられます（レベルアップ・わざマシン・タマゴわざ・教え技）。タップで説明を表示。", "Todos los movimientos se aprenden en esta app (por nivel, MT, huevo o tutor). Toca uno para ver qué hace.") }
     func battleSourceSmogon(_ format: String, _ set: String) -> String {
         t("Smogon 블랙/화이트 \(format) 분석: \(set)", "From Smogon's Black/White \(format) analysis: \(set)", "Smogonのブラック・ホワイト\(format)解析より：\(set)", "Del análisis de Smogon de Negro/Blanco \(format): \(set)")
     }
@@ -1038,6 +1038,8 @@ struct L {
     var dexMovesTMTitle: String { t("TM 기술", "TM moves", "わざマシンのわざ", "Movimientos por MT") }
     var dexMovesEggTitle: String { t("알 기술 (언제든 무료로 배울 수 있어요)", "Egg moves (free to learn any time)", "タマゴわざ（いつでも無料で覚えられます）", "Movimientos huevo (gratis, en cualquier momento)") }
     var moveEggSubtitle: String { t("알 기술", "Egg move", "タマゴわざ", "Mov. huevo") }
+    var dexMovesTutorTitle: String { t("기술 가르침 (언제든 무료로 배울 수 있어요)", "Tutor moves (free to learn any time)", "教え技（いつでも無料で覚えられます）", "Movimientos de tutor (gratis, en cualquier momento)") }
+    var moveTutorSubtitle: String { t("기술 가르침", "Tutor move", "教え技", "Mov. tutor") }
     func rarityLabel(_ r: Rarity) -> String {
         switch r {
         case .common:    return rarityCommon

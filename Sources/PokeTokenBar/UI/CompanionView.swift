@@ -1674,7 +1674,8 @@ private struct MonDetailView: View {
             Text(store.l.pcMovesTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             knownMovesTable
             learnableSection
-            eggMovesSection
+            freeMovesSection(.egg, title: store.l.dexMovesEggTitle, subtitle: store.l.moveEggSubtitle)
+            freeMovesSection(.tutor, title: store.l.dexMovesTutorTitle, subtitle: store.l.moveTutorSubtitle)
             teachTMSection
         }
     }
@@ -1714,15 +1715,15 @@ private struct MonDetailView: View {
         }
     }
 
-    /// Egg moves not known yet — free at any level (`LearnMethod.egg`). Hidden when there are none.
+    /// Egg or tutor moves not known yet — free at any level (`LearnMethod.isFree`). Hidden when there are none.
     @ViewBuilder
-    private var eggMovesSection: some View {
-        let eggMoves = learnset.filter { $0.method == .egg && !mon.knownMoves.contains($0.moveID) }
-        if !eggMoves.isEmpty {
+    private func freeMovesSection(_ method: LearnMethod, title: String, subtitle: String) -> some View {
+        let moves = learnset.filter { $0.method == method && !mon.knownMoves.contains($0.moveID) }
+        if !moves.isEmpty {
             VStack(alignment: .leading, spacing: 3) {
-                Text(store.l.dexMovesEggTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                ForEach(eggMoves, id: \.moveID) { lm in
-                    learnRow(moveID: lm.moveID, isTM: false, subtitle: store.l.moveEggSubtitle)
+                Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(moves, id: \.moveID) { lm in
+                    learnRow(moveID: lm.moveID, isTM: false, subtitle: subtitle)
                 }
             }
         }
@@ -2327,7 +2328,8 @@ private struct DexSpeciesDetailView: View {
                 abilitiesSection
                 statsRangeSection
                 levelUpMovesSection
-                eggMovesSection
+                methodMovesSection(.egg, title: store.l.dexMovesEggTitle)
+                methodMovesSection(.tutor, title: store.l.dexMovesTutorTitle)
                 tmMovesSection
             }
         }
@@ -2357,16 +2359,13 @@ private struct DexSpeciesDetailView: View {
     private var machineMoves: [LearnableMove] {
         learnset.filter { $0.method == .machine }
     }
-    private var eggMoves: [LearnableMove] {
-        learnset.filter { $0.method == .egg }
-    }
-
     @ViewBuilder
-    private var eggMovesSection: some View {
-        if !eggMoves.isEmpty {
+    private func methodMovesSection(_ method: LearnMethod, title: String) -> some View {
+        let moves = learnset.filter { $0.method == method }
+        if !moves.isEmpty {
             VStack(alignment: .leading, spacing: 3) {
-                Text(store.l.dexMovesEggTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                ForEach(eggMoves, id: \.moveID) { lm in
+                Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(moves, id: \.moveID) { lm in
                     moveButton(lm.moveID) {
                         HStack { MoveRow(store: store, moveID: lm.moveID); Spacer(minLength: 4) }
                     }

@@ -148,7 +148,8 @@ actor PokeAPIClient: PokeProviding {
     }
 
     /// This species' learnset — filters `/pokemon/{id}`'s moves (per version group) down to
-    /// `MoveDataVersion.versionGroup` alone, keeping level-up, TM and egg moves (tutor moves aren't modeled).
+    /// `MoveDataVersion.versionGroup` alone, keeping level-up, TM and egg moves — plus tutor moves from
+    /// `MoveDataVersion.tutorVersionGroups`, since Gen 5's tutors are in Black 2/White 2.
     /// Keyed by "moveID-method" — PokéAPI genuinely lists some moves twice within the same version
     /// group for evolved species (e.g. Charizard's Ember shows up at both level 1 and level 7 in
     /// black-white). The level-1 entry is an evolution-inheritance artifact — it shows up in every
@@ -164,12 +165,13 @@ actor PokeAPIClient: PokeProviding {
         for entry in moves {
             let moveID = Self.id(from: entry.move.url ?? "")
             guard moveID > 0 else { continue }
-            for vgd in entry.version_group_details where vgd.version_group.name == MoveDataVersion.versionGroup {
+            for vgd in entry.version_group_details {
                 let method: LearnMethod
-                switch vgd.move_learn_method.name {
-                case "level-up": method = .levelUp
-                case "machine":  method = .machine
-                case "egg":      method = .egg
+                switch (vgd.move_learn_method.name, vgd.version_group.name) {
+                case ("level-up", MoveDataVersion.versionGroup): method = .levelUp
+                case ("machine", MoveDataVersion.versionGroup):  method = .machine
+                case ("egg", MoveDataVersion.versionGroup):      method = .egg
+                case ("tutor", let vg) where MoveDataVersion.tutorVersionGroups.contains(vg): method = .tutor
                 default: continue
                 }
                 let level = method == .levelUp ? vgd.level_learned_at : 0

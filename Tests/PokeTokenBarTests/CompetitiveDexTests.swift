@@ -54,32 +54,34 @@ final class CompetitiveDexTests: XCTestCase {
         XCTAssertNil(dex.linePeak(of: 9999))
     }
 
-    /// Cloyster is Uber on Smogon, but its rated sets are built on Shell Smash, which only Shellder
-    /// learns (by level-up) in BW — an in-app Cloyster can't run it. Its egg moves (Icicle Spear,
-    /// Rock Blast, Rapid Spin) *are* available, so only the one move is lost: one tier down.
+    /// Blissey is OU on Smogon, but its rated sets need Seismic Toss — a Gen 3 tutor move it can
+    /// only have by transfer, never in Gen 5. That one lost move lowers it one tier, and the move is
+    /// recorded so the dex can name it.
     func testAdjustmentRecordsTheMovesTheAppCannotTeach() throws {
-        let cloyster = try XCTUnwrap(dex.entries[91])
-        let adjusted = try XCTUnwrap(cloyster.adjusted)
-        XCTAssertEqual(adjusted.from, .s)
-        XCTAssertEqual(cloyster.tier, .a)
+        let blissey = try XCTUnwrap(dex.entries[242])
+        let adjusted = try XCTUnwrap(blissey.adjusted)
+        XCTAssertEqual(adjusted.from, .a)
+        XCTAssertEqual(blissey.tier, .b)
         XCTAssertEqual(adjusted.reasons, [.moves])
-        XCTAssertEqual(adjusted.lostMoves, [504], "only Shell Smash")   // PokéAPI move id
+        XCTAssertEqual(adjusted.lostMoves, [69], "Seismic Toss")   // PokéAPI move id
     }
 
-    /// Egg moves count as learnable: Tyranitar's Pursuit is a Larvitar egg move, so its OU rating
-    /// stands unadjusted and the build may use it.
-    func testEggMovesFromTheLineCountAsLearnable() throws {
+    /// Earlier-stage level-up, egg and tutor moves all count: Cloyster's Uber set runs on Shell Smash
+    /// (Shellder level-up) and Icicle Spear/Rock Blast (Shellder egg moves), so it keeps its S.
+    func testMovesFromEarlierStagesCountAsLearnable() throws {
+        let cloyster = try XCTUnwrap(dex.entries[91])
+        XCTAssertEqual(cloyster.tier, .s)
+        XCTAssertNil(cloyster.adjusted)
+        XCTAssertTrue(cloyster.build.moves.contains(504), "Shell Smash")
+        XCTAssertTrue(cloyster.build.moves.contains(350), "Rock Blast")
+    }
+
+    /// Tutor moves count: Tyranitar's build may use Superpower (a Black 2/White 2 tutor).
+    func testTutorMovesCountAsLearnable() throws {
         let tyranitar = try XCTUnwrap(dex.entries[248])
         XCTAssertEqual(tyranitar.tier, .a)
         XCTAssertNil(tyranitar.adjusted)
-        XCTAssertTrue(tyranitar.build.moves.contains(228), "Pursuit")
-    }
-
-    /// Every suggested move must be one this species can be taught — the move lists on the same dex
-    /// screen. Spot-checked against PokéAPI's BW learnset: Cloyster's own list has no Shell Smash.
-    func testBuildsOnlyUseTheSpeciesOwnMoves() throws {
-        let cloyster = try XCTUnwrap(dex.entries[91])
-        XCTAssertFalse(cloyster.build.moves.contains(504), "Shell Smash is Shellder-only in BW")
+        XCTAssertTrue(tyranitar.build.moves.contains(276), "Superpower")
     }
 
     // MARK: - Alternatives

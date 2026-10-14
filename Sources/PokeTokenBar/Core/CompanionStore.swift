@@ -1080,17 +1080,27 @@ final class CompanionStore {
     }
 
     /// What a mon of `speciesID` that evolved along `pathIDs` (first stage first) can learn: its own
-    /// level-up/TM list plus the egg moves of every species on that path. PokéAPI lists egg moves only
-    /// on a line's first stage (Shellder, never Cloyster), and every mon here hatched from an egg.
+    /// TMs, plus the level-up, egg and tutor moves of every species on that path (see `LearnMethod`).
+    /// PokéAPI lists egg moves only on a line's first stage (Shellder, never Cloyster), and a level-up
+    /// move learned before evolving would have been kept, so earlier stages count too. A move listed
+    /// more than once for the same method keeps its lowest level.
     func learnableMoves(speciesID: Int, pathIDs: [Int]) async -> [LearnableMove] {
-        var out = await learnableMoves(speciesID: speciesID).filter { $0.method != .egg }
-        var eggIDs = Set<Int>()
-        for id in pathIDs + [speciesID] {
-            for lm in await learnableMoves(speciesID: id) where lm.method == .egg && eggIDs.insert(lm.moveID).inserted {
-                out.append(lm)
+        var byKey: [String: LearnableMove] = [:]
+        var order: [String] = []
+        func add(_ lm: LearnableMove) {
+            let key = "\(lm.moveID)-\(lm.method.rawValue)"
+            if let existing = byKey[key] {
+                if lm.level < existing.level { byKey[key] = lm }
+            } else {
+                byKey[key] = lm
+                order.append(key)
             }
         }
-        return out
+        for lm in await learnableMoves(speciesID: speciesID) { add(lm) }
+        for id in pathIDs where id != speciesID {
+            for lm in await learnableMoves(speciesID: id) where lm.method != .machine { add(lm) }
+        }
+        return order.compactMap { byKey[$0] }
     }
     /// Detail for a single move (type/power/PP etc.) — for displaying known-move and learnset rows.
     func moveDetail(id: Int) async -> Move? {
@@ -1152,8 +1162,8 @@ final class CompanionStore {
 
     func canLearnLevelUpMove(_ moveID: Int, for monID: MonState.ID, learnset: [LearnableMove]) -> Bool {
         guard let mon = state.party.first(where: { $0.id == monID }), !mon.knownMoves.contains(moveID) else { return false }
-        // Egg moves are free at any level — see `LearnMethod.egg`.
-        return learnset.contains { $0.moveID == moveID && ($0.method == .egg || ($0.method == .levelUp && $0.level <= mon.level)) }
+        // Egg and tutor moves are free at any level — see `LearnMethod`.
+        return learnset.contains { $0.moveID == moveID && ($0.method.isFree || ($0.method == .levelUp && $0.level <= mon.level)) }
     }
 
     func canTeachTM(_ moveID: Int, to monID: MonState.ID, learnset: [LearnableMove]) -> Bool {
@@ -1278,7 +1288,7 @@ final class CompanionStore {
     var canUseMoveReroll: Bool { hasActive && itemCount(.moveReroll) > 0 }
 
     /// Redraws the current mon's 4 moves at random from its learnset at that moment (level-up moves
-    /// learned up to its current level + everything machine-teachable + its egg moves). Fewer than 4 candidates?
+    /// learned up to its current level + everything machine-teachable + its egg and tutor moves). Fewer than 4 candidates?
     /// It just uses however many there are — no forcing it up to 4.
     @discardableResult
     func useMoveReroll() async -> Bool {

@@ -598,6 +598,9 @@ struct EvoLine: Sendable {
 /// animated-sprite ceiling of #649).
 enum MoveDataVersion {
     static let versionGroup = "black-white"
+    /// Where tutor moves are read from. Black/White itself has almost none — Gen 5's tutors (Stealth
+    /// Rock, Superpower, Seismic Toss, …) arrived in Black 2/White 2, same generation and same sim.
+    static let tutorVersionGroups: Set<String> = ["black-white", "black-2-white-2"]
 }
 
 /// Move damage class (physical/special/status) — matches PokéAPI's `move-damage-class.name` as-is.
@@ -638,16 +641,21 @@ struct Move: Sendable, Codable, Equatable {
     }
 }
 
-/// How a species learns a given move. Tutor moves aren't modeled.
+/// How a species learns a given move.
 ///
-/// `egg`: every Pokémon in this app hatches from an egg, so egg moves are treated as always known
-/// to be available — learnable for free at any level, like a level-up move already reached. PokéAPI
-/// lists them only on a line's first stage, so a mon's egg moves come from every species on its
-/// evolution path (`CompanionStore.learnableMoves(speciesID:pathIDs:)`).
+/// `egg` and `tutor` are free to learn at any level, like a level-up move already reached. Every
+/// Pokémon in this app hatches from an egg, so its egg moves are a given, and there's no tutor to
+/// visit, so tutor moves are simply on offer. PokéAPI lists egg moves only on a line's first stage,
+/// so a mon's egg, tutor and level-up moves also come from the earlier stages it evolved through
+/// (`CompanionStore.learnableMoves(speciesID:pathIDs:)`); TMs stay per species.
 enum LearnMethod: String, Sendable, Equatable {
     case levelUp = "level-up"
     case machine
     case egg
+    case tutor
+
+    /// Learnable without a level requirement or a TM.
+    var isFree: Bool { self == .egg || self == .tutor }
 }
 
 /// One line of a species' learnset — `PokeAPIClient.learnableMoves(speciesID:)` filters down to
