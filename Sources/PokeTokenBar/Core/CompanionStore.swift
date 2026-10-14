@@ -236,6 +236,23 @@ final class CompanionStore {
         let rarity: Rarity
         let isShiny: Bool               // 이 종을 이로치로 보유한 적이 있는가
         let baseID: Int                 // 이 종이 속한 진화라인의 시작점 — 도감 개요의 진화 라인 조회용
+        /// False only for a "Show all" placeholder — a species the player has never met.
+        var isSeen = true
+    }
+
+    /// The dex list, optionally padded out to every species in the bundled catalog ("Show all").
+    /// Met species keep their own entry (stored name, shiny flag); the rest become greyed
+    /// placeholders named and rated from the catalog. An empty catalog (resource failed to load)
+    /// falls back to the met species alone rather than an empty dex.
+    nonisolated static func dexList(seen: [DexSpecies], includingUnseen: Bool, catalog: CompetitiveDex,
+                        language: AppLanguage) -> [DexSpecies] {
+        guard includingUnseen, !catalog.entries.isEmpty else { return seen }
+        let byID = Dictionary(seen.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return catalog.all.map { entry in
+            byID[entry.id] ?? DexSpecies(id: entry.id, name: entry.name(language),
+                                         rarity: catalog.rarity(of: entry.id) ?? .common,
+                                         isShiny: false, baseID: entry.baseID, isSeen: false)
+        }
     }
 
     /// 도감 목록 — 영구 언락된 종만, 도감 번호 오름차순. `state.dexUnlocked` 는 개체가 그 종에 도달한

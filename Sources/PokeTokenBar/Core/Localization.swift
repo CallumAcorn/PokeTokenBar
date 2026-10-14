@@ -971,6 +971,66 @@ struct L {
     var dexNormalLabel: String { t("일반", "Normal", "通常色", "Normal") }
     var dexShinyLocked: String { t("이 종의 이로치를 아직 못 잡았어요", "Haven't caught this species' shiny yet", "この種の色違いはまだ捕まえていません", "Aún no has capturado la variante variocolor de esta especie") }
     var dexStatRangeTitle: String { t("능력치 범위 (Lv.100 기준)", "Stat range (at Lv.100)", "ステータス範囲（Lv.100基準）", "Rango de estadísticas (a Nv.100)") }
+
+    // MARK: Dex — show all + battle info
+    var dexShowAll: String { t("전체 보기", "Show all", "すべて表示", "Ver todos") }
+    var dexShowAllHint: String { t("아직 못 만난 포켓몬도 흐리게 보여줘요", "Also show Pokémon you haven't met yet, greyed out", "まだ出会っていないポケモンも薄く表示します", "Muestra también los Pokémon que aún no has visto, en gris") }
+    var dexNotSeen: String { t("아직 못 만남", "Not seen yet", "まだ見ていない", "Aún no visto") }
+    var battleInfoTitle: String { t("배틀 정보", "Battle info", "バトル情報", "Info de combate") }
+    func battleTierHelp(_ smogonTier: String) -> String {
+        t("Smogon 5세대 싱글 티어: \(smogonTier)", "Smogon Gen 5 singles tier: \(smogonTier)", "Smogon第5世代シングルのティア：\(smogonTier)", "Tier de individuales de Smogon Gen 5: \(smogonTier)")
+    }
+    func battleTierBlurb(_ tier: CompetitiveTier) -> String {
+        switch tier {
+        case .s: return t("규격 외 — 거의 모든 배틀을 지배해요.", "Uber-level: dominates almost any fight.", "規格外 — ほぼどのバトルも支配します。", "Nivel Uber: domina casi cualquier combate.")
+        case .a: return t("최상위 — 키워서 팀의 중심으로 쓸 만해요.", "Top pick: worth raising and building a team around.", "最上位 — 育ててチームの軸にする価値があります。", "Elección top: vale la pena criarlo y armar un equipo a su alrededor.")
+        case .b: return t("강하고 믿음직해요. 최상위보다 한 단계 아래.", "Strong and reliable, a step below the very best.", "強くて頼れる。最上位の一歩手前です。", "Fuerte y fiable, un paso por debajo de los mejores.")
+        case .c: return t("팀 구성이나 상성이 맞으면 좋아요.", "Good with the right team or matchup.", "チーム構成や相性が合えば活躍します。", "Bueno con el equipo o el emparejamiento adecuado.")
+        case .d: return t("쓸 수는 있지만 대부분의 팀엔 더 나은 선택지가 있어요.", "Usable, but most teams have better options.", "使えますが、多くのチームにはより良い選択肢があります。", "Usable, pero la mayoría de equipos tienen mejores opciones.")
+        case .e: return t("최종 진화지만 배틀에선 약해요.", "Fully evolved but weak in battle.", "最終進化ですがバトルでは弱めです。", "Evolución final, pero débil en combate.")
+        case .f: return t("아직 진화 전 — 가치는 진화 후 모습에 달려 있어요.", "Not fully evolved: its value is what it becomes.", "進化前 — 価値は進化後の姿で決まります。", "Sin evolucionar del todo: su valor está en lo que llegará a ser.")
+        }
+    }
+    func battleLinePeak(_ tier: String, _ name: String) -> String {
+        t("이 진화 라인의 최고 등급은 \(name)의 \(tier)예요.", "Its line peaks at \(tier) with \(name).", "この進化ラインの最高ランクは\(name)の\(tier)です。", "Su línea alcanza \(tier) con \(name).")
+    }
+    func battleAdjustedMoves(_ from: String, _ moves: String) -> String {
+        t("\(from)에서 하향: 표준 세트에 이 앱에서 배울 수 없는 기술이 필요해요(\(moves)).", "Lowered from \(from): its standard set needs moves this app can't teach (\(moves)).", "\(from)から下方修正：標準セットにこのアプリでは覚えられない技が必要です（\(moves)）。", "Bajado desde \(from): su set estándar necesita movimientos que esta app no enseña (\(moves)).")
+    }
+    func battleAdjustedItem(_ from: String) -> String {
+        t("\(from)에서 하향: 표준 세트가 지닌 도구에 의존하는데, 이 앱엔 도구가 없어요.", "Lowered from \(from): its standard set relies on a held item, and this app has none.", "\(from)から下方修正：標準セットは持ち物頼みですが、このアプリには持ち物がありません。", "Bajado desde \(from): su set estándar depende de un objeto equipado, y esta app no tiene.")
+    }
+    func battleRoleName(_ role: BattleRole) -> String {
+        switch role {
+        case .attacker: return t("공격형", "Attacker", "アタッカー", "Atacante")
+        case .setup: return t("랭크업 스위퍼", "Setup sweeper", "積みアタッカー", "Barredor con mejoras")
+        case .support: return t("서포트 / 방어", "Support / wall", "サポート / 受け", "Apoyo / muro")
+        }
+    }
+    func battleCategoryName(_ category: BattleCategory) -> String {
+        switch category {
+        case .physical: return moveDamageClassName(.physical)
+        case .special: return moveDamageClassName(.special)
+        case .status: return moveDamageClassName(.status)
+        case .mixed: return t("혼합", "Mixed", "両刀", "Mixto")
+        }
+    }
+    var battleBuildTitle: String { t("추천 육성", "Suggested build", "おすすめ育成", "Build recomendado") }
+    var battleAbility: String { t("특성", "Ability", "とくせい", "Habilidad") }
+    var battleNature: String { t("성격", "Nature", "せいかく", "Naturaleza") }
+    var battleEVs: String { t("노력치 (영양제)", "EVs (vitamins)", "努力値（ドーピング）", "EVs (vitaminas)") }
+    var battleMovesNote: String { t("모든 기술은 이 앱에서 배울 수 있어요(레벨업·TM). 탭하면 설명을 볼 수 있어요.", "Every move can be learned in this app (level-up or TM). Tap one to see what it does.", "どの技もこのアプリで覚えられます（レベルアップ・わざマシン）。タップで説明を表示。", "Todos los movimientos se aprenden en esta app (por nivel o MT). Toca uno para ver qué hace.") }
+    func battleSourceSmogon(_ format: String, _ set: String) -> String {
+        t("Smogon 블랙/화이트 \(format) 분석: \(set)", "From Smogon's Black/White \(format) analysis: \(set)", "Smogonのブラック・ホワイト\(format)解析より：\(set)", "Del análisis de Smogon de Negro/Blanco \(format): \(set)")
+    }
+    var battleSourceAuto: String { t("Smogon 분석이 없어서 자속·견제 기술을 자동으로 골랐어요.", "No Smogon analysis, so same-type and coverage moves were picked automatically.", "Smogonの解析がないため、タイプ一致と補完技を自動で選びました。", "Sin análisis de Smogon: se eligieron automáticamente movimientos del mismo tipo y de cobertura.") }
+    var battleBetterTitle: String { t("더 나은 선택지", "Better options", "より良い選択肢", "Mejores opciones") }
+    var battleBetterHint: String { t("타입이 겹치고 더 높은 등급인 포켓몬 — 비슷한 역할부터", "Higher-rated Pokémon that share a type, closest match first", "タイプが共通で評価が上のポケモン — 役割が近い順", "Pokémon mejor valorados que comparten tipo, el más parecido primero") }
+
+    // MARK: Move detail
+    var movePriorityLabel: String { t("우선도", "Priority", "優先度", "Prioridad") }
+    var moveNoDescription: String { t("설명이 없어요.", "No description available.", "説明はありません。", "No hay descripción.") }
+    var moveDetailHint: String { t("탭하면 기술 설명을 볼 수 있어요", "Tap to see what this move does", "タップで技の説明を表示", "Toca para ver qué hace este movimiento") }
     var dexAbilitiesTitle: String { t("가능한 특성", "Possible abilities", "とくせいの可能性", "Habilidades posibles") }
     var dexMovesLevelUpTitle: String { t("레벨업 기술", "Level-up moves", "レベルアップわざ", "Movimientos por nivel") }
     var dexMovesTMTitle: String { t("TM 기술", "TM moves", "わざマシンのわざ", "Movimientos por MT") }

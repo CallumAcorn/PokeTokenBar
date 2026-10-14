@@ -621,9 +621,20 @@ struct Move: Sendable, Codable, Equatable {
     let damageClass: MoveDamageClass
     /// langCode → name
     let names: [String: String]
+    /// langCode → in-game description. Black/White's own text where PokéAPI has it in that language,
+    /// otherwise the newest game's — BW text only exists in English and French.
+    /// `nil` = only a summary was loaded (the TM catalog, an older on-disk cache); `[:]` = the full
+    /// detail was fetched and has no text. `PokeAPIClient.moveDetail` refetches only on `nil`.
+    var descriptions: [String: String]? = nil
+    /// Turn-order bracket: +1 goes before normal moves (Quick Attack), negative goes after.
+    var priority: Int? = nil
 
     func localizedName(_ lang: AppLanguage) -> String {
         lang.resolveName(names) ?? "#\(id)"
+    }
+
+    func localizedDescription(_ lang: AppLanguage) -> String? {
+        descriptions.flatMap { lang.resolveName($0) }
     }
 }
 

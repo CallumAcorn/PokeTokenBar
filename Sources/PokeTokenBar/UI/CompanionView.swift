@@ -2092,6 +2092,9 @@ private struct DexGridView: View {
 
     /// 탭한 칸 — 그리드 대신 그 종의 개요 화면(DexSpeciesDetailView)을 연다(PartyGridView 와 같은 push 패턴).
     @State private var selectedSpeciesID: Int?
+    /// "Show all": pad the grid out to every species, greying the ones not met yet. Remembered
+    /// across popover opens — it's a viewing preference, not navigation.
+    @AppStorage("dexShowAll") private var showAll = false
 
     private static let columns = 4
     private static let rows = 6
@@ -2099,17 +2102,24 @@ private struct DexGridView: View {
     private static let spacing: CGFloat = 4
 
     var body: some View {
-        if let id = selectedSpeciesID, let species = store.dexSpecies.first(where: { $0.id == id }) {
-            DexSpeciesDetailView(store: store, species: species) { selectedSpeciesID = nil }
+        // The detail can open any species (a "better option" may be one not met yet), so it looks
+        // the species up in the full list whether or not the grid is showing all.
+        let seen = store.dexSpecies
+        let everyone = CompanionStore.dexList(seen: seen, includingUnseen: true, catalog: .shared,
+                                              language: store.language)
+        if let id = selectedSpeciesID, let species = everyone.first(where: { $0.id == id }) {
+            DexSpeciesDetailView(store: store, species: species,
+                                 onOpenSpecies: { selectedSpeciesID = $0 }) { selectedSpeciesID = nil }
+                .id(species.id)   // a fresh view per species — opening another resets scroll and move detail
         } else {
             // 종별 집계는 한 번만 훑고 하위로 넘긴다 — 칸마다 재집계하면 도감이 O(칸×도감) 이 된다.
-            let all = store.dexSpecies
+            let all = showAll ? everyone : seen
             let visible = selectedRarity.map { r in all.filter { $0.rarity == r } } ?? all
             let pageCount = max(1, (visible.count + Self.pageSize - 1) / Self.pageSize)
             let current = min(page, pageCount - 1)   // 보유 종이 줄어든 경우(필터 등) 범위 방어
             let slice = Array(visible.dropFirst(current * Self.pageSize).prefix(Self.pageSize))
             VStack(alignment: .leading, spacing: 8) {
-                header(all)
+                header(all, seenCount: seen.count)
                 grid(slice)
                     .background(ScrollWheelPager { step in
                         let next = DexScrollPager.pageAfterScroll(current: current, pageCount: pageCount, step: step)
@@ -2126,14 +2136,21 @@ private struct DexGridView: View {
     /// 희귀도 필터 — 로그와 같은 RarityTally 를 쓰되 개수는 **종 단위**다.
     /// (DexSummaryHeader 는 개체 수 dexCount 를 내부에서 직접 부르므로 재사용하려면 시그니처를 바꿔
     ///  로그 경로까지 건드려야 한다. 캡슐 4개짜리 헤더라 여기서는 인라인으로 둔다.)
-    private func header(_ all: [CompanionStore.DexSpecies]) -> some View {
+    private func header(_ all: [CompanionStore.DexSpecies], seenCount: Int) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 Text(store.l.dexTitle).font(.callout.weight(.semibold))
                 // 총계는 필터와 무관한 전체 종 수 — 로그 헤더(dexTotal)와 같은 규칙.
                 // 필터 중인 희귀도의 개수는 아래 캡슐이 이미 보여준다.
-                Text(store.l.dexSpeciesTotal(all.count, PokemonAssets.animatedSpeciesIDs.count))
+                // Always the met count — "Show all" changes what's listed, not what's been caught.
+                Text(store.l.dexSpeciesTotal(seenCount, PokemonAssets.animatedSpeciesIDs.count))
                     .font(.caption2).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Toggle(store.l.dexShowAll, isOn: $showAll)
+                    .toggleStyle(.switch).controlSize(.mini)
+                    .font(.caption2)
+                    .help(store.l.dexShowAllHint)
+                    .onChange(of: showAll) { page = 0 }   // the page range changes with the list
             }
             HStack(spacing: 4) {
                 ForEach(rarityDisplayOrder, id: \.self) { r in
@@ -2213,7 +2230,12 @@ private struct DexGridView: View {
 private struct DexSpeciesDetailView: View {
     let store: CompanionStore
     let species: CompanionStore.DexSpecies
+    /// Opens another species' detail in place — a "better option" row.
+    var onOpenSpecies: (Int) -> Void = { _ in }
     var onClose: () -> Void
+
+    /// A tapped move (suggested build or a learnset row) — shows MoveDetailView in this screen's place.
+    @State private var selectedMoveID: Int?
 
     @State private var baseStats: BaseStats?
     /// 특성 슬러그 → 표시명. baseStats.abilities 를 다 채운 뒤 한 번에 조회한다(종당 1~3개뿐이라
@@ -2237,18 +2259,35 @@ private struct DexSpeciesDetailView: View {
     }
 
     var body: some View {
+        if let selectedMoveID {
+            MoveDetailView(store: store, moveID: selectedMoveID) { self.selectedMoveID = nil }
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
         // 진화 라인·도감 설명까지 붙으니 길이가 종/언어마다 들쭉날쭉하다(설명 길이 편차가 특히 크다) —
         // MonDetailView 와 같은 이유로 고정 높이 예산 대신 이 화면만 스크롤하게 한다.
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 header
                 hero
+                if !species.isSeen {
+                    Label(store.l.dexNotSeen, systemImage: "eye.slash")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 flavorTextView
                 if !lineNodes.isEmpty {
                     EvoLineView(nodes: lineNodes, mysteryLabel: store.l.unknownNextEvolution,
                                 shiny: species.isShiny, maxWidth: PopoverMetrics.contentWidth)
                 }
-                representativeRow
+                // Pinning needs the species owned (`setRepresentative` refuses otherwise).
+                if species.isSeen { representativeRow }
+                if let entry = CompetitiveDex.shared.entries[species.id] {
+                    BattleInfoSection(store: store, entry: entry,
+                                      onOpenSpecies: onOpenSpecies, onOpenMove: { selectedMoveID = $0 })
+                }
                 abilitiesSection
                 statsRangeSection
                 levelUpMovesSection
@@ -2284,10 +2323,12 @@ private struct DexSpeciesDetailView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(store.l.dexMovesLevelUpTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 ForEach(levelUpMoves, id: \.moveID) { lm in
-                    HStack(spacing: 6) {
-                        MoveRow(store: store, moveID: lm.moveID)
-                        Spacer(minLength: 4)
-                        Text(store.l.moveLearnAtLevel(lm.level)).font(.caption2).foregroundStyle(.tertiary)
+                    moveButton(lm.moveID) {
+                        HStack(spacing: 6) {
+                            MoveRow(store: store, moveID: lm.moveID)
+                            Spacer(minLength: 4)
+                            Text(store.l.moveLearnAtLevel(lm.level)).font(.caption2).foregroundStyle(.tertiary)
+                        }
                     }
                 }
             }
@@ -2300,10 +2341,25 @@ private struct DexSpeciesDetailView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(store.l.dexMovesTMTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 ForEach(machineMoves, id: \.moveID) { lm in
-                    MoveRow(store: store, moveID: lm.moveID)
+                    moveButton(lm.moveID) {
+                        HStack { MoveRow(store: store, moveID: lm.moveID); Spacer(minLength: 4) }
+                    }
                 }
             }
         }
+    }
+
+    /// A learnset row that opens the move's detail — the whole row is the hit target.
+    private func moveButton(_ moveID: Int, @ViewBuilder _ label: () -> some View) -> some View {
+        Button { selectedMoveID = moveID } label: {
+            HStack(spacing: 4) {
+                label()
+                Image(systemName: "info.circle").font(.caption2).foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(store.l.moveDetailHint)
     }
 
     /// 메뉴바 고정 토글. 종 단위 선택이라 개체 화면(MonDetailView)이 아니라 도감 상세에 둔다 —
@@ -2439,6 +2495,198 @@ private struct DexSpeciesDetailView: View {
     }
 }
 
+/// The dex's "is it worth it?" block for one species: tier and what it means, why the tier was
+/// lowered (if it was), role, a suggested build whose moves open their own detail, and up to ten
+/// higher-rated Pokémon that could do the same job. All from the bundled `CompetitiveDex`.
+private struct BattleInfoSection: View {
+    let store: CompanionStore
+    let entry: CompetitiveEntry
+    var onOpenSpecies: (Int) -> Void
+    var onOpenMove: (Int) -> Void
+
+    @State private var abilityName: String?
+    @State private var lostMoveNames: [String] = []
+
+    private var dex: CompetitiveDex { .shared }
+
+    var body: some View {
+        let l = store.l
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(l.battleInfoTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Spacer()
+                TierBadge(tier: entry.tier, size: 13)
+                Text(entry.smogonTier).font(.caption2).foregroundStyle(.secondary)
+            }
+            .help(l.battleTierHelp(entry.smogonTier))
+            Text(l.battleTierBlurb(entry.tier)).font(.caption).fixedSize(horizontal: false, vertical: true)
+            if let peak = dex.linePeak(of: entry.id), peak.id != entry.id, peak.tier < entry.tier {
+                Text(l.battleLinePeak(peak.tier.rawValue, peak.name(store.language)))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            adjustmentNotes(l)
+            HStack(spacing: 4) {
+                pill(l.battleRoleName(entry.role))
+                pill(l.battleCategoryName(entry.category))
+            }
+            build(l)
+            alternatives(l)
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
+        .task(id: "\(entry.id)-\(store.language.rawValue)") {
+            abilityName = await store.abilityName(entry.build.ability)
+            var names: [String] = []
+            for id in entry.adjusted?.lostMoves ?? [] {
+                if let move = await store.moveDetail(id: id) { names.append(move.localizedName(store.language)) }
+            }
+            lostMoveNames = names
+        }
+    }
+
+    @ViewBuilder
+    private func adjustmentNotes(_ l: L) -> some View {
+        if let adjusted = entry.adjusted {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(adjusted.reasons, id: \.self) { reason in
+                    let text = switch reason {
+                    case .moves: l.battleAdjustedMoves(adjusted.from.rawValue, lostMoveNames.joined(separator: ", "))
+                    case .item: l.battleAdjustedItem(adjusted.from.rawValue)
+                    }
+                    Label(text, systemImage: "arrow.down.circle")
+                        .font(.caption2).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func pill(_ text: String) -> some View {
+        Text(text.uppercased()).font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.3), lineWidth: 1))
+    }
+
+    private func build(_ l: L) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(l.battleBuildTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 6) {
+                fact(l.battleAbility, Text(abilityName ?? entry.build.ability))
+                fact(l.battleNature, natureText(l))
+                fact(l.battleEVs, Text(evText(l)))
+            }
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
+                ForEach(entry.build.moves, id: \.self) { id in
+                    Button { onOpenMove(id) } label: { KnownMoveCell(store: store, moveID: id) }
+                        .buttonStyle(.plain)
+                        .help(l.moveDetailHint)
+                }
+            }
+            Text(l.battleMovesNote).font(.caption2).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(sourceText(l)).font(.caption2).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func fact(_ label: String, _ value: Text) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label).font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+            value.font(.caption2.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(6)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    /// "Jolly +Spe −SpA" — the stat arrows are what the nature actually does.
+    private func natureText(_ l: L) -> Text {
+        let nature = entry.build.nature
+        var text = Text(nature.name(store.language))
+        if let up = nature.boostedStat, let down = nature.loweredStat {
+            text = text + Text(" +\(statLabel(up, l))").foregroundColor(.green)
+                + Text(" −\(statLabel(down, l))").foregroundColor(.red)
+        }
+        return text
+    }
+
+    private func statLabel(_ stat: Stat, _ l: L) -> String {
+        switch stat {
+        case .attack: return l.statAttack
+        case .defense: return l.statDefense
+        case .specialAttack: return l.statSpecialAttack
+        case .specialDefense: return l.statSpecialDefense
+        case .speed: return l.statSpeed
+        }
+    }
+
+    private func evText(_ l: L) -> String {
+        let ev = entry.build.evs
+        return [(ev.hp, l.statHP), (ev.attack, l.statAttack), (ev.defense, l.statDefense),
+                (ev.specialAttack, l.statSpecialAttack), (ev.specialDefense, l.statSpecialDefense),
+                (ev.speed, l.statSpeed)]
+            .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }.joined(separator: " / ")
+    }
+
+    private func sourceText(_ l: L) -> String {
+        guard entry.source.kind == .smogon, let format = entry.source.format, let set = entry.source.set else {
+            return l.battleSourceAuto
+        }
+        return l.battleSourceSmogon(format.uppercased(), set)
+    }
+
+    @ViewBuilder
+    private func alternatives(_ l: L) -> some View {
+        let alts = dex.alternatives(to: entry.id)
+        if !alts.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(l.battleBetterTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                Text(l.battleBetterHint).font(.caption2).foregroundStyle(.tertiary)
+                ForEach(alts) { alt in
+                    Button { onOpenSpecies(alt.id) } label: { alternativeRow(alt, l) }
+                        .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func alternativeRow(_ alt: CompetitiveEntry, _ l: L) -> some View {
+        let seen = store.state.ownsSpecies(alt.id)
+        let rarity = dex.rarity(of: alt.id)
+        return HStack(spacing: 6) {
+            SpriteView(speciesID: alt.id, size: 28)
+                .frame(width: 28, height: 28)
+                .grayscale(seen ? 0 : 1).opacity(seen ? 1 : 0.5)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(alt.name(store.language)).font(.caption.weight(.semibold)).lineLimit(1)
+                HStack(spacing: 3) {
+                    ForEach(alt.types, id: \.self) { t in
+                        Text(l.typeName(t).uppercased()).font(.system(size: 7, weight: .bold))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(typeColor(t)).foregroundStyle(.white).clipShape(Capsule())
+                    }
+                    Text(l.battleRoleName(alt.role)).font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 4)
+            if let rarity {
+                Text(l.rarityLabel(rarity).uppercased()).font(.system(size: 7, weight: .bold))
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(rarityColor(rarity)).foregroundStyle(.white).clipShape(Capsule())
+            }
+            TierBadge(tier: alt.tier)
+            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+        }
+        .padding(4)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+        .accessibilityLabel([alt.name(store.language), alt.tier.rawValue, rarity.map(l.rarityLabel) ?? "",
+                             seen ? "" : l.dexNotSeen].filter { !$0.isEmpty }.joined(separator: " · "))
+    }
+}
+
 /// 값 하나가 아니라 [lo, hi] 구간을 0...scaleMax 축 위 막대로 그린다 — 종 스탯 범위(개요) 전용.
 private struct RangeBarView: View {
     let lo: Int
@@ -2477,8 +2725,11 @@ private struct DexSpeciesCell: View {
             VStack(spacing: 1) {
                 SpriteView(speciesID: species.id, size: Self.thumb)
                     .frame(width: Self.thumb, height: Self.thumb)
+                    .grayscale(species.isSeen ? 0 : 1)
+                    .opacity(species.isSeen ? 1 : 0.35)
                 Text(species.name)
                     .font(.system(size: 9))
+                    .foregroundStyle(species.isSeen ? .primary : .secondary)
                     .lineLimit(1).minimumScaleFactor(0.8)
             }
             .frame(maxWidth: .infinity)
@@ -2520,6 +2771,7 @@ private struct DexSpeciesCell: View {
     private var tooltip: String {
         var parts = ["#\(species.id) \(species.name)", store.l.rarityLabel(species.rarity)]
         if species.isShiny { parts.append(store.l.dexShinyLabel) }
+        if !species.isSeen { parts.append(store.l.dexNotSeen) }
         return parts.joined(separator: " · ")
     }
 }

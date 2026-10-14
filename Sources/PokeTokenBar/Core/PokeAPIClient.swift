@@ -193,7 +193,9 @@ actor PokeAPIClient: PokeProviding {
 
     /// Detail for a single move (`/move/{id}`) — same pattern as species/ability names (runtime lookup + cache).
     func moveDetail(id: Int) async throws -> Move {
-        if let cached = moveCache[id] { return cached }
+        // A TM-catalog entry is cached without descriptions (`nil`) — that's a summary, not the
+        // full detail, so it falls through to the real fetch. `[:]` means fetched-but-no-text.
+        if let cached = moveCache[id], cached.descriptions != nil { return cached }
         let dto: MoveDTO = try await get(base.appendingPathComponent("move/\(id)"))
         let move = Self.move(from: dto, id: id, langCodes: langCodes)
         moveCache[id] = move
@@ -207,7 +209,7 @@ actor PokeAPIClient: PokeProviding {
     /// hitting the network.
     func moveDetail(name: String) async throws -> Move {
         let slug = Self.slug(fromDisplayName: name)
-        if let cached = moveCache.values.first(where: { $0.name == slug }) { return cached }
+        if let cached = moveCache.values.first(where: { $0.name == slug && $0.descriptions != nil }) { return cached }
         let dto: MoveDTO = try await get(base.appendingPathComponent("move/\(slug)"))
         let move = Self.move(from: dto, id: dto.id, langCodes: langCodes)
         moveCache[dto.id] = move
@@ -256,7 +258,27 @@ actor PokeAPIClient: PokeProviding {
                    power: override?.power ?? dto.power, accuracy: override?.accuracy ?? dto.accuracy,
                    pp: override?.pp ?? dto.pp,
                    damageClass: MoveDamageClass(rawValue: dto.damage_class.name) ?? .status,
-                   names: byLang)
+                   names: byLang,
+                   descriptions: moveDescriptions(dto.flavor_text_entries ?? [], langCodes: langCodes),
+                   priority: dto.priority)
+    }
+
+    /// One description per language: Black/White's text if PokéAPI has it in that language, then
+    /// Black 2/White 2's, then the newest game's (entries are listed oldest first). In-game text is
+    /// hard-wrapped with newlines and soft hyphens, so those are flattened to plain spaces.
+    /// Never nil: an empty map still marks the move as fully fetched (see `moveDetail(id:)`).
+    static func moveDescriptions(_ entries: [FlavorTextDTO], langCodes: [String]) -> [String: String] {
+        let preferred = ["black-white", "black-2-white-2"]
+        var byLang: [String: String] = [:]
+        for code in langCodes {
+            let mine = entries.filter { $0.language.name == code }
+            guard let pick = preferred.lazy.compactMap({ vg in mine.first { $0.version_group.name == vg } }).first
+                    ?? mine.last else { continue }
+            byLang[code] = pick.flavor_text
+                .replacingOccurrences(of: "\u{AD}\n", with: "")
+                .components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        return byLang
     }
 
     /// PokéAPI's `power`/`accuracy`/`pp` reflect the CURRENT games, not Black/White's numbers — this
@@ -658,7 +680,11 @@ struct MoveDTO: Decodable, Sendable {
     let type: NamedRef
     let damage_class: NamedRef
     let names: [NameDTO]
+    /// Optional so a trimmed response (tests, older fixtures) still decodes.
+    let priority: Int?
+    let flavor_text_entries: [FlavorTextDTO]?
 }
+struct FlavorTextDTO: Decodable, Sendable { let flavor_text: String; let language: NamedRef; let version_group: NamedRef }
 struct NameDTO: Decodable, Sendable { let name: String; let language: NamedRef }
 struct NamedRef: Decodable, Sendable { let name: String; let url: String? }
 struct URLRef: Decodable, Sendable { let url: String }
