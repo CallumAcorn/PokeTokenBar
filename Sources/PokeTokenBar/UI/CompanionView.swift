@@ -1363,6 +1363,9 @@ private struct MonDetailView: View {
     /// Set while picking a slot to replace, after tapping learn/teach with the moveset already full.
     @State private var pendingLearn: PendingLearn?
     struct PendingLearn: Equatable { let moveID: Int; let isTM: Bool }
+    /// The species whose Pokédex page is showing in this screen's place — this mon's own species
+    /// from the header button, or another one reached through that page's "better options".
+    @State private var dexSpeciesID: Int?
 
     private var isTraining: Bool { mon.id == store.trainingMon?.id }
     /// 실제로 보여줄 특성 슬러그 — 진짜 롤이 있으면 그것, 없으면(특성 도입 전 개체) baseStats 가
@@ -1396,6 +1399,19 @@ private struct MonDetailView: View {
     }
 
     var body: some View {
+        if let dexSpeciesID, let species = CompanionStore.dexList(
+            seen: store.dexSpecies, includingUnseen: true, catalog: .shared, language: store.language
+        ).first(where: { $0.id == dexSpeciesID }) {
+            // Back from the dex page returns to this mon, not to the PC grid.
+            DexSpeciesDetailView(store: store, species: species,
+                                 onOpenSpecies: { self.dexSpeciesID = $0 }) { self.dexSpeciesID = nil }
+                .id(species.id)
+        } else {
+            details
+        }
+    }
+
+    private var details: some View {
         // 스탯·IV/EV 레이더·비타민까지 다 쌓이면 도감/PC 격자용 고정 높이(CollectionView.contentHeight)
         // 를 넘길 수 있다 — 그렇다고 그 공유 높이를 키우면 안 쓰는 격자·로그까지 밑에 빈 공간이 남으므로,
         // 이 화면만 ScrollView 로 넘치는 만큼 스크롤하게 한다(상점/가방/로그와 같은 기존 패턴).
@@ -1802,6 +1818,11 @@ private struct MonDetailView: View {
                 .accessibilityLabel(store.l.back)
             Text(store.l.pcTitle).font(.callout.weight(.semibold))
             Spacer()
+            Button { dexSpeciesID = mon.currentID } label: {
+                Label(store.l.pcOpenDexEntry, systemImage: "book.closed")
+            }
+            .buttonStyle(.borderless).controlSize(.small)
+            .help(store.l.pcOpenDexEntryHint)
         }
     }
 

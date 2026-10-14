@@ -975,6 +975,8 @@ struct L {
     // MARK: Dex — show all + battle info
     var dexShowAll: String { t("전체 보기", "Show all", "すべて表示", "Ver todos") }
     var dexShowAllHint: String { t("아직 못 만난 포켓몬도 흐리게 보여줘요", "Also show Pokémon you haven't met yet, greyed out", "まだ出会っていないポケモンも薄く表示します", "Muestra también los Pokémon que aún no has visto, en gris") }
+    var pcOpenDexEntry: String { t("도감", "Pokédex", "図鑑", "Pokédex") }
+    var pcOpenDexEntryHint: String { t("이 포켓몬의 도감 페이지 — 배틀 정보와 추천 육성", "This Pokémon's Pokédex page — battle info and suggested build", "このポケモンの図鑑ページ — バトル情報とおすすめ育成", "Página de la Pokédex de este Pokémon: info de combate y build recomendado") }
     var dexNotSeen: String { t("아직 못 만남", "Not seen yet", "まだ見ていない", "Aún no visto") }
     var battleInfoTitle: String { t("배틀 정보", "Battle info", "バトル情報", "Info de combate") }
     func battleTierHelp(_ smogonTier: String) -> String {
