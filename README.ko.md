@@ -127,6 +127,20 @@ Antigravity 2.0 과 IDE 가 추정치가 아닌 실제 할당량을 보고합니
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-badges.png" width="300" alt="배지: 지방별 체육관 관장, 사천왕, 챔피언"></td>
 </tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-dex-show-all.png" width="300" alt="전체 보기를 켠 도감: 모든 종, 만나지 못한 종은 회색"></td>
+<td width="55%" valign="middle">
+<h3>📖 도감 전체와 배틀 정보</h3>
+<b>전체 보기</b>를 켜면 649종 전부가 보이고, 아직 만나지 못한 종은 회색으로 표시됩니다. 모든 종 페이지에 배틀 정보가 있어요: S–F 티어, 역할, 이 앱에서 실제로 배울 수 있는 기술로 짠 추천 빌드, 같은 타입의 더 나은 선택지. 기술을 누르면 위력·명중·PP·게임 속 설명이 나옵니다.
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>⚔️ 추천 빌드와 기술 상세</h3>
+빌드는 Smogon 블랙·화이트 세트를 이 앱 규칙에 맞춘 것입니다: 알 기술·가르침 기술·이전 세대 기술은 모두 배울 수 있고, 기술머신은 여전히 상점에서 삽니다.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-battle-info.png" width="300" alt="배틀 정보: 티어, 역할, 추천 빌드, 더 나은 선택지"><br><br><img src="assets/screenshot-move-detail.png" width="300" alt="기술 상세: 위력, 명중, PP, 설명"></td>
+</tr>
 </table>
 
 ## 이 밖에도
