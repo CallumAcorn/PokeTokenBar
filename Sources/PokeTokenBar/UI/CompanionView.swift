@@ -1400,7 +1400,7 @@ private struct MonDetailView: View {
 
     var body: some View {
         if let dexSpeciesID, let species = CompanionStore.dexList(
-            seen: store.dexSpecies, includingUnseen: true, catalog: .shared, language: store.language
+            seen: store.dexSpecies, includingUnseen: true, catalog: .shared
         ).first(where: { $0.id == dexSpeciesID }) {
             // Back from the dex page returns to this mon, not to the PC grid.
             DexSpeciesDetailView(store: store, species: species,
@@ -2143,8 +2143,7 @@ private struct DexGridView: View {
         // The detail can open any species (a "better option" may be one not met yet), so it looks
         // the species up in the full list whether or not the grid is showing all.
         let seen = store.dexSpecies
-        let everyone = CompanionStore.dexList(seen: seen, includingUnseen: true, catalog: .shared,
-                                              language: store.language)
+        let everyone = CompanionStore.dexList(seen: seen, includingUnseen: true, catalog: .shared)
         if let id = selectedSpeciesID, let species = everyone.first(where: { $0.id == id }) {
             DexSpeciesDetailView(store: store, species: species,
                                  onOpenSpecies: { selectedSpeciesID = $0 }) { selectedSpeciesID = nil }
@@ -2286,6 +2285,13 @@ private struct DexSpeciesDetailView: View {
     /// MonDetailView's learnset use, this is never gated by an individual's level; it's a reference
     /// list of everything the species can learn.
     @State private var learnset: [LearnableMove] = []
+
+    /// A species never met has no saved name (the bundle carries none); the evolution line this page
+    /// already loads has it, so no extra request.
+    private var displayName: String {
+        guard !species.isSeen, let line else { return species.name }
+        return line.localizedName(species.id, store.language)
+    }
 
     /// species.id 까지의 조상 경로를 트리에서 찾아 CompanionStore.lineItems 에 그대로 넘긴다 — 개체용
     /// pathIDs 가 없어도 같은 계산을 재사용할 수 있다(EvoNode.pathToNode 주석 참고: 종에 도달했다는
@@ -2465,7 +2471,7 @@ private struct DexSpeciesDetailView: View {
             spriteSlot(shiny: true, label: store.l.dexShinyLabel, locked: !species.isShiny)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(species.name).font(.callout.weight(.semibold))
+                    Text(displayName).font(.callout.weight(.semibold))
                     Text("#\(species.id)").font(.caption2).foregroundStyle(.secondary)
                     Text(store.l.rarityLabel(species.rarity).uppercased()).font(.system(size: 8, weight: .bold))
                         .padding(.horizontal, 5).padding(.vertical, 1)
@@ -2565,8 +2571,13 @@ private struct BattleInfoSection: View {
 
     @State private var abilityName: String?
     @State private var lostMoveNames: [String] = []
+    /// Names for the line peak and the alternatives. The bundle has no names, so they come from the
+    /// save (met species) or PokéAPI; until then a row shows its Dex number.
+    @State private var speciesNames: [Int: String] = [:]
 
     private var dex: CompetitiveDex { .shared }
+
+    private func name(_ id: Int) -> String { speciesNames[id] ?? store.speciesName(id) }
 
     var body: some View {
         let l = store.l
@@ -2580,7 +2591,7 @@ private struct BattleInfoSection: View {
             .help(l.battleTierHelp(entry.smogonTier))
             Text(l.battleTierBlurb(entry.tier)).font(.caption).fixedSize(horizontal: false, vertical: true)
             if let peak = dex.linePeak(of: entry.id), peak.id != entry.id, peak.tier < entry.tier {
-                Text(l.battleLinePeak(peak.tier.rawValue, peak.name(store.language)))
+                Text(l.battleLinePeak(peak.tier.rawValue, name(peak.id)))
                     .font(.caption2).foregroundStyle(.secondary)
             }
             adjustmentNotes(l)
@@ -2602,6 +2613,10 @@ private struct BattleInfoSection: View {
                 if let move = await store.moveDetail(id: id) { names.append(move.localizedName(store.language)) }
             }
             lostMoveNames = names
+            var resolved: [Int: String] = [:]
+            let ids = [dex.linePeak(of: entry.id)?.id].compactMap { $0 } + dex.alternatives(to: entry.id).map(\.id)
+            for id in ids { resolved[id] = await store.catalogSpeciesName(id) }
+            speciesNames = resolved
         }
     }
 
@@ -2719,7 +2734,7 @@ private struct BattleInfoSection: View {
                 .frame(width: 28, height: 28)
                 .grayscale(seen ? 0 : 1).opacity(seen ? 1 : 0.5)
             VStack(alignment: .leading, spacing: 1) {
-                Text(alt.name(store.language)).font(.caption.weight(.semibold)).lineLimit(1)
+                Text(name(alt.id)).font(.caption.weight(.semibold)).lineLimit(1)
                 HStack(spacing: 3) {
                     ForEach(alt.types, id: \.self) { t in
                         Text(l.typeName(t).uppercased()).font(.system(size: 7, weight: .bold))
@@ -2741,7 +2756,7 @@ private struct BattleInfoSection: View {
         .padding(4)
         .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
-        .accessibilityLabel([alt.name(store.language), alt.tier.rawValue, rarity.map(l.rarityLabel) ?? "",
+        .accessibilityLabel([name(alt.id), alt.tier.rawValue, rarity.map(l.rarityLabel) ?? "",
                              seen ? "" : l.dexNotSeen].filter { !$0.isEmpty }.joined(separator: " · "))
     }
 }
@@ -2774,6 +2789,10 @@ private struct DexSpeciesCell: View {
     let store: CompanionStore
     let species: CompanionStore.DexSpecies
     let onTap: () -> Void
+    /// Name for a species never met: the bundle carries none, so it is fetched (cached per species).
+    @State private var fetchedName: String?
+
+    private var name: String { fetchedName ?? species.name }
 
     /// 로그(56)보다 작다 — 24칸 격자에 이름까지 담아야 한다. 원본 96×96 픽셀아트를
     /// interpolation(.none) 으로 축소하므로 이 크기에서도 식별에 문제없다.
@@ -2786,7 +2805,7 @@ private struct DexSpeciesCell: View {
                     .frame(width: Self.thumb, height: Self.thumb)
                     .grayscale(species.isSeen ? 0 : 1)
                     .opacity(species.isSeen ? 1 : 0.35)
-                Text(species.name)
+                Text(name)
                     .font(.system(size: 9))
                     .foregroundStyle(species.isSeen ? .primary : .secondary)
                     .lineLimit(1).minimumScaleFactor(0.8)
@@ -2795,6 +2814,10 @@ private struct DexSpeciesCell: View {
             // 번호·이로치는 스프라이트(44)가 아니라 **칸 안쪽 폭**(74)에 건다 — 스프라이트에 걸면
             // 가운데 정렬된 44 기준이라 좌우 15 씩 안으로 밀려 번호가 칸 중앙 쪽에 떠 보인다.
             // 칸 기준으로 두면 양 끝으로 붙고, 픽셀아트 몸통과 겹치는 폭도 줄어든다.
+            .task(id: "\(species.id)-\(store.language.rawValue)") {
+                guard !species.isSeen else { return }
+                fetchedName = await store.catalogSpeciesName(species.id)
+            }
             .overlay(alignment: .topLeading) { numberTag }
             .overlay(alignment: .topTrailing) {
                 // ✨ = 이 종의 이로치를 잡은 적이 있다는 표식. 탭하면(상세 화면에서) 실제로 볼 수 있다.
@@ -2828,7 +2851,7 @@ private struct DexSpeciesCell: View {
     /// 툴팁과 접근성 라벨이 같은 문장을 쓴다 — 칸이 글자로 못 보여주는 희귀도를 담는다.
     /// ✨ 는 이모지라 스크린리더가 일관되게 읽지 못하므로 명사로 함께 넣는다.
     private var tooltip: String {
-        var parts = ["#\(species.id) \(species.name)", store.l.rarityLabel(species.rarity)]
+        var parts = ["#\(species.id) \(name)", store.l.rarityLabel(species.rarity)]
         if species.isShiny { parts.append(store.l.dexShinyLabel) }
         if !species.isSeen { parts.append(store.l.dexNotSeen) }
         return parts.joined(separator: " · ")

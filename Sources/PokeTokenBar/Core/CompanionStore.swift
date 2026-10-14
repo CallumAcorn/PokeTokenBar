@@ -242,14 +242,14 @@ final class CompanionStore {
 
     /// The dex list, optionally padded out to every species in the bundled catalog ("Show all").
     /// Met species keep their own entry (stored name, shiny flag); the rest become greyed
-    /// placeholders named and rated from the catalog. An empty catalog (resource failed to load)
-    /// falls back to the met species alone rather than an empty dex.
-    nonisolated static func dexList(seen: [DexSpecies], includingUnseen: Bool, catalog: CompetitiveDex,
-                        language: AppLanguage) -> [DexSpecies] {
+    /// placeholders rated from the catalog, named "#id" until `catalogSpeciesName` resolves them.
+    /// An empty catalog (resource failed to load) falls back to the met species alone.
+    nonisolated static func dexList(seen: [DexSpecies], includingUnseen: Bool,
+                                    catalog: CompetitiveDex) -> [DexSpecies] {
         guard includingUnseen, !catalog.entries.isEmpty else { return seen }
         let byID = Dictionary(seen.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return catalog.all.map { entry in
-            byID[entry.id] ?? DexSpecies(id: entry.id, name: entry.name(language),
+            byID[entry.id] ?? DexSpecies(id: entry.id, name: "#\(entry.id)",
                                          rarity: catalog.rarity(of: entry.id) ?? .common,
                                          isShiny: false, baseID: entry.baseID, isSeen: false)
         }
@@ -269,6 +269,15 @@ final class CompanionStore {
     /// back to "#id" only for the placeholder case (shouldn't happen for anything actually owned).
     func speciesName(_ speciesID: Int) -> String {
         state.dexUnlocked[speciesID]?.names.flatMap { state.language.resolveName($0) } ?? "#\(speciesID)"
+    }
+
+    /// Name for any species, met or not. Owned species read the saved name (no network); the rest
+    /// come from PokéAPI, so the app bundles no Pokémon names. Offline falls back to "#id".
+    func catalogSpeciesName(_ speciesID: Int) async -> String {
+        let known = speciesName(speciesID)
+        guard known.hasPrefix("#"), let names = try? await provider.speciesNames(speciesID: speciesID),
+              let name = state.language.resolveName(names) else { return known }
+        return name
     }
 
     /// Same value as `speciesName` when the species is already known (free, no network); otherwise

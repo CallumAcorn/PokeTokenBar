@@ -50,6 +50,9 @@ protocol PokeProviding: Sendable {
     func flavorText(speciesID: Int) async throws -> [String: String]
     /// 분류(langCode → text, 예: "Mouse Pokémon") — `pokemon-species` 의 genera. 도감 종 개요 화면 전용.
     func genus(speciesID: Int) async throws -> [String: String]
+    /// Localized names (langCode → name) from `pokemon-species`. For species the player has never
+    /// met, so Pokémon names are fetched at runtime rather than bundled.
+    func speciesNames(speciesID: Int) async throws -> [String: String]
     /// This species' learnset (level-up/TM, per `MoveDataVersion.versionGroup`) — for the PC detail
     /// screen's learn-a-move flow only.
     func learnableMoves(speciesID: Int) async throws -> [LearnableMove]
@@ -75,6 +78,7 @@ extension PokeProviding {
     func abilityNames(slug: String) async throws -> [String: String] { throw URLError(.unsupportedURL) }
     func flavorText(speciesID: Int) async throws -> [String: String] { throw URLError(.unsupportedURL) }
     func genus(speciesID: Int) async throws -> [String: String] { throw URLError(.unsupportedURL) }
+    func speciesNames(speciesID: Int) async throws -> [String: String] { throw URLError(.unsupportedURL) }
     func learnableMoves(speciesID: Int) async throws -> [LearnableMove] { throw URLError(.unsupportedURL) }
     func moveDetail(id: Int) async throws -> Move { throw URLError(.unsupportedURL) }
     func moveDetail(name: String) async throws -> Move { throw URLError(.unsupportedURL) }
@@ -134,6 +138,14 @@ actor PokeAPIClient: PokeProviding {
         let sp = try await species(id)
         var byLang: [String: String] = [:]
         for g in sp.genera where langCodes.contains(g.language.name) { byLang[g.language.name] = g.genus }
+        return byLang
+    }
+
+    /// Same `pokemon-species` response as genus/flavorText, so a cache hit costs no network.
+    func speciesNames(speciesID id: Int) async throws -> [String: String] {
+        let sp = try await species(id)
+        var byLang: [String: String] = [:]
+        for n in sp.names where langCodes.contains(n.language.name) { byLang[n.language.name] = n.name }
         return byLang
     }
 

@@ -10,7 +10,7 @@
 // Sources:
 //   - Tiers, learnsets, move/ability ids: Pokémon Showdown's Gen 5 data via @pkmn/dex (MIT).
 //   - Suggested sets: Smogon's Black/White analyses as published by data.pkmn.cc.
-//   - Names, capture rates, evolution roots: PokéAPI's CSV dump.
+//   - Capture rates and evolution roots: PokéAPI's CSV dump. No names: those stay a runtime fetch.
 //
 // App rules applied (battles run on the Gen 5 sim with BW level-up/TM learnsets and no held items):
 //   - Every suggested move must be learnable in-app (Gen 5 level-up, TM, egg or tutor move, or a
@@ -181,19 +181,14 @@ function role(moveIDs) {
   };
 }
 
-const [speciesRows, nameRows, abilityRows] = await Promise.all(
-  ['pokemon_species', 'pokemon_species_names', 'abilities'].map(csv));
+// No species names: they are Pokémon content the app fetches from PokéAPI at runtime and never
+// bundles (CompetitiveDexTests.testBundleCarriesNoPokemonNames enforces this).
+const [speciesRows, abilityRows] = await Promise.all(
+  ['pokemon_species', 'abilities'].map(csv));
 const setsRes = await fetch(SETS_URL);
 if (!setsRes.ok) throw new Error(`sets: HTTP ${setsRes.status}`);
 const SETS = await setsRes.json();
 
-// PokéAPI language ids → the codes AppLanguage.apiCodes uses.
-const LANG = {1: 'ja-Hrkt', 3: 'ko', 5: 'fr', 7: 'es', 9: 'en', 11: 'ja'};
-const names = {};
-for (const r of nameRows) {
-  const code = LANG[r.local_language_id];
-  if (code && +r.pokemon_species_id <= MAX_ID) (names[r.pokemon_species_id] ??= {})[code] = r.name;
-}
 const speciesByID = Object.fromEntries(speciesRows.map(r => [r.id, r]));
 const abilitySlug = Object.fromEntries(abilityRows.map(r => [r.id, r.identifier]));
 const rootOf = id => { let r = speciesByID[id]; while (r.evolves_from_species_id) r = speciesByID[r.evolves_from_species_id]; return +r.id; };
@@ -248,7 +243,6 @@ for (let id = 1; id <= MAX_ID; id++) {
   const lostMoveIDs = lostMoves.map(m => dex.moves.get(m)).filter(m => m.exists).map(m => m.num);
   out.push({
     id,
-    names: names[id],
     captureRate: +row.capture_rate,
     legendary: row.is_legendary === '1',
     mythical: row.is_mythical === '1',

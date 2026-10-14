@@ -16,7 +16,6 @@ final class CompetitiveDexTests: XCTestCase {
         for entry in dex.all {
             XCTAssertNotNil(dex.entries[entry.baseID], "#\(entry.id) line base #\(entry.baseID) missing")
             XCTAssertFalse(entry.types.isEmpty, "#\(entry.id) has no types")
-            XCTAssertNotNil(entry.names["en"], "#\(entry.id) has no English name")
             XCTAssertFalse(entry.build.ability.isEmpty, "#\(entry.id) has no ability")
             XCTAssertTrue((1...4).contains(entry.build.moves.count), "#\(entry.id) has \(entry.build.moves.count) moves")
             XCTAssertEqual(Set(entry.build.moves).count, entry.build.moves.count, "#\(entry.id) repeats a move")
@@ -26,12 +25,18 @@ final class CompetitiveDexTests: XCTestCase {
         }
     }
 
-    /// Names resolve per language the same way species names do elsewhere (pt falls back to English).
-    func testNamesFollowAppLanguage() throws {
-        let pikachu = try XCTUnwrap(dex.entries[25])
-        XCTAssertEqual(pikachu.name(.en), "Pikachu")
-        XCTAssertEqual(pikachu.name(.ko), "피카츄")
-        XCTAssertEqual(pikachu.name(.pt), "Pikachu")
+    /// The bundle must carry no Pokémon names: they are trademarked content the app fetches from
+    /// PokéAPI at runtime and never ships. Checked on the raw file so a regenerated bundle that
+    /// brings them back fails here, even though the decoder would silently ignore the key.
+    func testBundleCarriesNoPokemonNames() throws {
+        let url = try XCTUnwrap(CompetitiveDex.resourceURL)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let species = try XCTUnwrap(root["species"] as? [[String: Any]])
+        XCTAssertFalse(species.isEmpty)
+        for entry in species {
+            XCTAssertNil(entry["names"], "#\(entry["id"] ?? "?") carries names")
+            XCTAssertNil(entry["name"], "#\(entry["id"] ?? "?") carries a name")
+        }
     }
 
     // MARK: - Rarity
@@ -126,7 +131,7 @@ final class CompetitiveDexTests: XCTestCase {
         func row(_ id: Int, _ types: [String], _ tier: String, _ role: String, _ category: String) -> String {
             let typeList = types.map { "\"\($0)\"" }.joined(separator: ",")
             return """
-            {"id":\(id),"names":{"en":"M\(id)"},"captureRate":45,"legendary":false,"mythical":false,"baseID":\(id),
+            {"id":\(id),"captureRate":45,"legendary":false,"mythical":false,"baseID":\(id),
              "types":[\(typeList)],"smogonTier":"OU","tier":"\(tier)","role":"\(role)","category":"\(category)",
              "build":{"ability":"blaze","nature":"timid","evs":{"hp":0,"attack":0,"defense":0,"specialAttack":252,
              "specialDefense":0,"speed":252},"moves":[53]},"source":{"kind":"auto"}}
@@ -164,38 +169,87 @@ final class DexShowAllTests: XCTestCase {
     ]
 
     func testOffShowsOnlyMetSpecies() {
-        let list = CompanionStore.dexList(seen: met, includingUnseen: false, catalog: .shared, language: .en)
+        let list = CompanionStore.dexList(seen: met, includingUnseen: false, catalog: .shared)
         XCTAssertEqual(list.map(\.id), [4, 25])
     }
 
     func testOnListsEverySpeciesInDexOrder() {
-        let list = CompanionStore.dexList(seen: met, includingUnseen: true, catalog: .shared, language: .en)
+        let list = CompanionStore.dexList(seen: met, includingUnseen: true, catalog: .shared)
         XCTAssertEqual(list.map(\.id), Array(PokemonAssets.animatedSpeciesIDs))
         XCTAssertEqual(list.filter(\.isSeen).map(\.id), [4, 25])
     }
 
     /// A met species keeps the save's own entry — its stored name and shiny flag aren't replaced.
     func testMetSpeciesKeepTheirOwnEntry() throws {
-        let list = CompanionStore.dexList(seen: met, includingUnseen: true, catalog: .shared, language: .en)
+        let list = CompanionStore.dexList(seen: met, includingUnseen: true, catalog: .shared)
         let charmander = try XCTUnwrap(list.first { $0.id == 4 })
         XCTAssertEqual(charmander.name, "My Charmander")
         XCTAssertTrue(charmander.isShiny)
     }
 
-    /// Placeholders take name, rarity and line from the catalog, in the app's language, never shiny.
+    /// Placeholders take rarity and line from the catalog and are never shiny. The name is only the
+    /// Dex number: the bundle carries no Pokémon names, they are fetched from PokéAPI on display.
     func testUnseenPlaceholderComesFromTheCatalog() throws {
-        let list = CompanionStore.dexList(seen: met, includingUnseen: true, catalog: .shared, language: .ko)
+        let list = CompanionStore.dexList(seen: met, includingUnseen: true, catalog: .shared)
         let dragonite = try XCTUnwrap(list.first { $0.id == 149 })
         XCTAssertFalse(dragonite.isSeen)
         XCTAssertFalse(dragonite.isShiny)
-        XCTAssertEqual(dragonite.name, "망나뇽")
+        XCTAssertEqual(dragonite.name, "#149")
         XCTAssertEqual(dragonite.rarity, .rare)
         XCTAssertEqual(dragonite.baseID, 147)
     }
 
     func testEmptyCatalogFallsBackToMetSpecies() {
         let list = CompanionStore.dexList(seen: met, includingUnseen: true,
-                                          catalog: CompetitiveDex(entries: [:]), language: .en)
+                                          catalog: CompetitiveDex(entries: [:]))
         XCTAssertEqual(list.map(\.id), [4, 25])
+    }
+}
+
+/// Names for species shown from the catalog. The bundle carries none, so they come from the save
+/// for owned species and from PokéAPI for the rest.
+@MainActor
+final class CatalogSpeciesNameTests: XCTestCase {
+    private final class NamesProvider: PokeProviding, @unchecked Sendable {
+        nonisolated(unsafe) var requested: [Int] = []
+        let names: [Int: [String: String]]
+        init(_ names: [Int: [String: String]]) { self.names = names }
+        func line(baseSpeciesID: Int) async throws -> EvoLine { throw URLError(.unsupportedURL) }
+        func baseSpeciesIndex() async throws -> [BaseSpecies] { [] }
+        func speciesNames(speciesID: Int) async throws -> [String: String] {
+            requested.append(speciesID)
+            guard let n = names[speciesID] else { throw URLError(.notConnectedToInternet) }
+            return n
+        }
+    }
+
+    private func store(_ provider: NamesProvider) throws -> CompanionStore {
+        var s = CompanionState()
+        s.dexUnlocked[4] = DexUnlock(baseID: 4, rarity: .rare, names: ["en": "Charmander"], isShiny: false)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("csn-\(UUID().uuidString).json")
+        try JSONEncoder().encode(s).write(to: url)
+        return CompanionStore(provider: provider, clock: { Date() }, fileURL: url, rng: SeededRNG(seed: 1))
+    }
+
+    func testOwnedSpeciesUseTheSavedNameWithoutANetworkCall() async throws {
+        let provider = NamesProvider([:])
+        let s = try store(provider)
+        let name = await s.catalogSpeciesName(4)
+        XCTAssertEqual(name, "Charmander")
+        XCTAssertTrue(provider.requested.isEmpty)
+    }
+
+    func testUnmetSpeciesAreNamedFromPokeAPI() async throws {
+        let provider = NamesProvider([149: ["en": "Dragonite", "ko": "망나뇽"]])
+        let s = try store(provider)
+        let name = await s.catalogSpeciesName(149)
+        XCTAssertEqual(name, "Dragonite")
+        XCTAssertEqual(provider.requested, [149])
+    }
+
+    func testOfflineFallsBackToTheDexNumber() async throws {
+        let s = try store(NamesProvider([:]))
+        let name = await s.catalogSpeciesName(150)
+        XCTAssertEqual(name, "#150")
     }
 }

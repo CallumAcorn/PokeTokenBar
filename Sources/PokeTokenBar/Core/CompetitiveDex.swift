@@ -25,12 +25,11 @@ enum BattleCategory: String, Codable, Sendable {
 /// One species' row from `Resources/competitive-gen5.json`.
 ///
 /// Bundled rather than fetched: PokéAPI has no competitive data, and fetching it live would add new
-/// third-party hosts. It also carries localized names and capture rates for every species #1–649, so
-/// the dex can list species the player hasn't met yet without a network round trip per cell.
+/// third-party hosts. It carries no Pokémon names: those are fetched from PokéAPI at runtime like
+/// everywhere else in the app (`CompanionStore.catalogSpeciesName`), so the bundle holds numbers,
+/// tiers and builds only. Capture rates let the dex rate species the player hasn't met.
 struct CompetitiveEntry: Decodable, Sendable, Identifiable {
     let id: Int
-    /// PokéAPI language code → name, same shape `AppLanguage.resolveName` reads.
-    let names: [String: String]
     let captureRate: Int
     let legendary: Bool
     let mythical: Bool
@@ -74,10 +73,6 @@ struct CompetitiveEntry: Decodable, Sendable, Identifiable {
         /// Smogon's set name ("Swords Dance", …) — nil for an automatic build.
         let set: String?
     }
-
-    func name(_ language: AppLanguage) -> String {
-        language.resolveName(names) ?? "#\(id)"
-    }
 }
 
 /// The bundled competitive catalog plus the questions the dex asks of it.
@@ -86,8 +81,10 @@ struct CompetitiveDex: Sendable {
 
     /// Loaded once from the app bundle. A missing or corrupt resource leaves the catalog empty rather
     /// than crashing — the dex then simply shows no competitive section.
+    static var resourceURL: URL? { Bundle.module.url(forResource: "competitive-gen5", withExtension: "json") }
+
     static let shared: CompetitiveDex = {
-        guard let url = Bundle.module.url(forResource: "competitive-gen5", withExtension: "json"),
+        guard let url = resourceURL,
               let data = try? Data(contentsOf: url),
               let dex = try? CompetitiveDex(json: data) else { return CompetitiveDex(entries: [:]) }
         return dex
