@@ -638,10 +638,16 @@ struct Move: Sendable, Codable, Equatable {
     }
 }
 
-/// How a species learns a given move — only level-up/TM are modeled (egg/tutor are out of scope, YAGNI).
+/// How a species learns a given move. Tutor moves aren't modeled.
+///
+/// `egg`: every Pokémon in this app hatches from an egg, so egg moves are treated as always known
+/// to be available — learnable for free at any level, like a level-up move already reached. PokéAPI
+/// lists them only on a line's first stage, so a mon's egg moves come from every species on its
+/// evolution path (`CompanionStore.learnableMoves(speciesID:pathIDs:)`).
 enum LearnMethod: String, Sendable, Equatable {
     case levelUp = "level-up"
     case machine
+    case egg
 }
 
 /// One line of a species' learnset — `PokeAPIClient.learnableMoves(speciesID:)` filters down to
@@ -898,6 +904,9 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     var knownMoves: [Int] = []
     // pathIDs 가 비면(손상된 상태 파일) baseID 로 폴백 — 렌더마다 읽히므로 out-of-bounds 크래시 방지.
     var currentID: Int { pathIDs.isEmpty ? baseID : pathIDs[min(stageIndex, pathIDs.count - 1)] }
+    /// The stages this mon has actually been, first stage first, ending at `currentID` — not the
+    /// planned future ones. Where its egg moves come from (`CompanionStore.learnableMoves(speciesID:pathIDs:)`).
+    var reachedPathIDs: [Int] { pathIDs.isEmpty ? [baseID] : Array(pathIDs.prefix(min(stageIndex, pathIDs.count - 1) + 1)) }
     /// 표시 전용 레벨(Lv.1~100) — PokemonBalance.level 참고.
     var level: Int { PokemonBalance.level(rarity: rarity, totalForms: totalForms, stageIndex: stageIndex, usedAtStage: usedAtStage) }
     /// 화면/계산에 실제로 쓸 IV — 진짜 부화 롤(ivs)이 있으면 그것, 없으면(구버전 개체) id 로 결정적

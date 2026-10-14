@@ -120,14 +120,17 @@ struct CompetitiveDex: Sendable {
 
     /// Up to `limit` higher-tier species that could do this one's job.
     ///
-    /// Candidates must be rated above this species — or above its line's peak, so an unevolved
-    /// Charmander is compared against what Charizard becomes — share a type with it, and sit outside
-    /// its own line. Ranked by sharing its main (first) type, then the same physical/special lean,
-    /// then the same role, then tier.
+    /// An unevolved species is judged as what its line becomes: Charmander is compared using
+    /// Charizard's tier, types, role and lean, so both get the same list. Candidates must be rated
+    /// above that, share a type with it, and sit outside the line. Ranked by sharing its main (first)
+    /// type, then the same physical/special lean, then the same role, then tier.
     // ponytail: role/lean come from a 4-move heuristic, so this is a shortlist to compare, not a verdict.
     func alternatives(to id: Int, limit: Int = 10) -> [CompetitiveEntry] {
-        guard let me = entries[id], let mainType = me.types.first else { return [] }
-        let bar = min(me.tier, linePeak(of: id)?.tier ?? me.tier)
+        guard let entry = entries[id] else { return [] }
+        let peak = linePeak(of: id) ?? entry
+        let me = peak.tier < entry.tier ? peak : entry
+        guard let mainType = me.types.first else { return [] }
+        let bar = me.tier
         func score(_ other: CompetitiveEntry) -> Int {
             (other.types.contains(mainType) ? 4 : 0)
                 + (other.category == me.category ? 2 : 0)

@@ -54,16 +54,25 @@ final class CompetitiveDexTests: XCTestCase {
         XCTAssertNil(dex.linePeak(of: 9999))
     }
 
-    /// Cloyster is Uber on Smogon, but its rated sets are built on Shell Smash and Icicle Spear —
-    /// moves only Shellder learns in BW, so an in-app Cloyster can't run them. Losing two or more
-    /// moves drops two tiers, and the moves are recorded so the dex can name them.
+    /// Cloyster is Uber on Smogon, but its rated sets are built on Shell Smash, which only Shellder
+    /// learns (by level-up) in BW — an in-app Cloyster can't run it. Its egg moves (Icicle Spear,
+    /// Rock Blast, Rapid Spin) *are* available, so only the one move is lost: one tier down.
     func testAdjustmentRecordsTheMovesTheAppCannotTeach() throws {
         let cloyster = try XCTUnwrap(dex.entries[91])
         let adjusted = try XCTUnwrap(cloyster.adjusted)
         XCTAssertEqual(adjusted.from, .s)
-        XCTAssertEqual(cloyster.tier, .b)
+        XCTAssertEqual(cloyster.tier, .a)
         XCTAssertEqual(adjusted.reasons, [.moves])
-        XCTAssertTrue(adjusted.lostMoves?.contains(504) == true, "Shell Smash")   // PokéAPI move id
+        XCTAssertEqual(adjusted.lostMoves, [504], "only Shell Smash")   // PokéAPI move id
+    }
+
+    /// Egg moves count as learnable: Tyranitar's Pursuit is a Larvitar egg move, so its OU rating
+    /// stands unadjusted and the build may use it.
+    func testEggMovesFromTheLineCountAsLearnable() throws {
+        let tyranitar = try XCTUnwrap(dex.entries[248])
+        XCTAssertEqual(tyranitar.tier, .a)
+        XCTAssertNil(tyranitar.adjusted)
+        XCTAssertTrue(tyranitar.build.moves.contains(228), "Pursuit")
     }
 
     /// Every suggested move must be one this species can be taught — the move lists on the same dex

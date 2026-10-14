@@ -13,8 +13,8 @@
 //   - Names, capture rates, evolution roots: PokéAPI's CSV dump.
 //
 // App rules applied (battles run on the Gen 5 sim with BW level-up/TM learnsets and no held items):
-//   - Every suggested move must be learnable in-app (BW level-up or TM). Egg/tutor/event moves are
-//     dropped and the slot refilled.
+//   - Every suggested move must be learnable in-app (BW level-up, TM or egg move). Tutor/event
+//     moves are dropped and the slot refilled.
 //   - Sets built around an item (Choice, Eviolite, ...) are avoided where another set exists.
 //   - A species whose Smogon set lost a move, or still depends on a key item, is lowered one tier
 //     per reason (max two), and the reason is recorded so the app can explain it.
@@ -65,14 +65,19 @@ async function csv(name) {
   return rows.map(r => Object.fromEntries(r.split(',').map((v, i) => [keys[i], v])));
 }
 
-// Moves this species can learn in the app: its OWN BW level-up or TM list — exactly what the dex's
-// move lists and the learn-a-move flow offer (PokeAPIClient.learnableMoves is per species). Moves a
-// pre-evolution learns are left out: the app gives no reliable way to learn them before evolving.
+// Moves this species can learn in the app — exactly what the dex's move lists and the learn-a-move
+// flow offer: its OWN BW level-up or TM list (PokeAPIClient.learnableMoves is per species), plus the
+// egg moves of its line. Every mon in the app hatched from an egg, so egg moves are free at any level
+// (LearnMethod.egg); Showdown lists them on the stage that breeds them, hence walking the prevos.
+// A pre-evolution's level-up moves stay out: the app can't teach them once the mon has evolved.
 async function learnable(species) {
   const ok = new Set();
-  const ls = await gen.learnsets.get(species.id);
-  for (const [move, sources] of Object.entries(ls?.learnset ?? {}))
+  const own = await gen.learnsets.get(species.id);
+  for (const [move, sources] of Object.entries(own?.learnset ?? {}))
     if (sources.some(s => s.startsWith('5L') || s.startsWith('5M'))) ok.add(move);
+  for await (const ls of gen.learnsets.all(species))
+    for (const [move, sources] of Object.entries(ls.learnset ?? {}))
+      if (sources.some(s => s.startsWith('5E'))) ok.add(move);
   return ok;
 }
 

@@ -1448,7 +1448,7 @@ private struct MonDetailView: View {
         }
         // The learnset doesn't depend on language (just id/level) — key on currentID alone.
         .task(id: mon.currentID) {
-            learnset = await store.learnableMoves(speciesID: mon.currentID)
+            learnset = await store.learnableMoves(speciesID: mon.currentID, pathIDs: mon.reachedPathIDs)
             pendingLearn = nil   // Switching mons (re-selecting in the grid) drops any in-progress slot pick for the old one
         }
     }
@@ -1674,6 +1674,7 @@ private struct MonDetailView: View {
             Text(store.l.pcMovesTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             knownMovesTable
             learnableSection
+            eggMovesSection
             teachTMSection
         }
     }
@@ -1708,6 +1709,20 @@ private struct MonDetailView: View {
                 Text(store.l.moveLearnableTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 ForEach(pendingLevelUpMoves, id: \.moveID) { lm in
                     learnRow(moveID: lm.moveID, isTM: false, subtitle: store.l.moveLearnAtLevel(lm.level))
+                }
+            }
+        }
+    }
+
+    /// Egg moves not known yet — free at any level (`LearnMethod.egg`). Hidden when there are none.
+    @ViewBuilder
+    private var eggMovesSection: some View {
+        let eggMoves = learnset.filter { $0.method == .egg && !mon.knownMoves.contains($0.moveID) }
+        if !eggMoves.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.l.dexMovesEggTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(eggMoves, id: \.moveID) { lm in
+                    learnRow(moveID: lm.moveID, isTM: false, subtitle: store.l.moveEggSubtitle)
                 }
             }
         }
@@ -2312,6 +2327,7 @@ private struct DexSpeciesDetailView: View {
                 abilitiesSection
                 statsRangeSection
                 levelUpMovesSection
+                eggMovesSection
                 tmMovesSection
             }
         }
@@ -2326,7 +2342,11 @@ private struct DexSpeciesDetailView: View {
             genus = await store.genus(speciesID: species.id)
         }
         // Learnset doesn't depend on language (just id/level) — key on species.id alone.
-        .task(id: species.id) { learnset = await store.learnableMoves(speciesID: species.id) }
+        .task(id: species.id) {
+            // Egg moves come from the earlier stages of the line (see LearnMethod.egg).
+            let path = await store.line(baseID: species.baseID)?.tree.pathToNode(species.id) ?? [species.id]
+            learnset = await store.learnableMoves(speciesID: species.id, pathIDs: path)
+        }
     }
 
     /// Every level-up move this species can ever learn, lowest level first — a reference list, not
@@ -2336,6 +2356,23 @@ private struct DexSpeciesDetailView: View {
     }
     private var machineMoves: [LearnableMove] {
         learnset.filter { $0.method == .machine }
+    }
+    private var eggMoves: [LearnableMove] {
+        learnset.filter { $0.method == .egg }
+    }
+
+    @ViewBuilder
+    private var eggMovesSection: some View {
+        if !eggMoves.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.l.dexMovesEggTitle).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(eggMoves, id: \.moveID) { lm in
+                    moveButton(lm.moveID) {
+                        HStack { MoveRow(store: store, moveID: lm.moveID); Spacer(minLength: 4) }
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
