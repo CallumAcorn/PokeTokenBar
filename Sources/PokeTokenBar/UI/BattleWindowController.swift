@@ -42,9 +42,13 @@ final class BattleWindowController {
                 .environment(battle)
                 .environment(spectator)
                 .environment(online))
+        // Resizable: the window takes only its *minimum* from SwiftUI (the default also pins it to the
+        // content's ideal size, which fights a drag-resize), and opens at that minimum.
+        hosting.sizingOptions = [.minSize]
         let w = NSWindow(contentViewController: hosting)
         w.title = L(companion.language).battleTitle
-        w.styleMask = [.titled, .closable, .miniaturizable]
+        w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        w.setContentSize(hosting.view.fittingSize)
         w.isReleasedWhenClosed = false   // this controller keeps owning it — reopen must reuse, not recreate
         w.center()
         window = w

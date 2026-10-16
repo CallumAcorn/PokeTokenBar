@@ -1,9 +1,8 @@
 import SwiftUI
 
-/// Fixed content size for the standalone battle window (BattleWindowController) — this screen lives
-/// in a real window now, not the 360pt popover strip, so it gets real screen real estate instead of
-/// PopoverMetrics. Not resizable (styleMask omits `.resizable`) — keeps the battle-scene layout math
-/// (below) simple; revisit if that ever feels cramped.
+/// Starting (and minimum) content size for the standalone battle window (BattleWindowController) —
+/// this screen lives in a real window, not the 360pt popover strip. The window is resizable: content
+/// fills whatever is larger, so the roster picker's party grid and badge panel get the extra room.
 enum BattleWindowMetrics {
     static let width: CGFloat = 520
     static let height: CGFloat = 460
@@ -33,6 +32,11 @@ struct BattleView: View {
     /// order* (append on select, remove on deselect), not party order. `RosterPickerGrid`'s own drag
     /// reordering mutates this same array by moving an id, so both stay in sync for free.
     @State private var selectedMonIDs: [MonState.ID] = []
+    /// Each eligible mon's English species name and types — the same fields `GymBadge` scores an
+    /// opponent's team on — loaded when the roster picker opens. Drives "Play as a gym leader".
+    @State private var leaderFacts: [MonState.ID: (name: String, types: [PokemonType])] = [:]
+    /// "Play as a gym leader" foldout — closed by default so it doesn't crowd the party grid.
+    @AppStorage("battlePlayAsExpanded") private var playAsExpanded = false
     @State private var confirmingLink: BattleDeepLink?
     @State private var copiedFeedback = false
     @State private var pastedInviteLink = ""
@@ -185,7 +189,8 @@ struct BattleView: View {
                 SpectatorView(onClose: { spectator.stop() })
             } else {
                 content
-                    .frame(width: BattleWindowMetrics.width, height: BattleWindowMetrics.height, alignment: .top)
+                    .frame(minWidth: BattleWindowMetrics.width, maxWidth: .infinity,
+                           minHeight: BattleWindowMetrics.height, maxHeight: .infinity, alignment: .top)
             }
         }
         .task { checkPendingInvite() }
@@ -591,7 +596,7 @@ struct BattleView: View {
         case .battling(_, let view):
             // Deliberately no padding — a battle scene reads as a real game screen only if the
             // background actually fills the window edge to edge, not sitting in a padded card.
-            battlingContent(view)
+            battlingContent(view).battleLetterbox()
         case .failed(let error):
             statusView(message: friendlyMessage(for: error), showsSpinner: false, showsRetry: true)
                 .padding(BattleWindowMetrics.padding)
@@ -783,10 +788,12 @@ struct BattleView: View {
                 Text(l.battleNoBenchedMons).font(.caption2).foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                // Your picked team, always visible above the full party — 3 wide × 2 high (up to 6),
+                // Your picked team, always visible above the full party — one row of 6,
                 // empty dashed slots for the rest. Tap a filled one to drop it back out.
+                gymLeaderPicker(eligible)
                 RosterPickerGrid(companion: companion, eligible: eligible, maxCount: BattleClient.maxRosterSize,
-                                  selectedIDs: $selectedMonIDs, teamLabel: l.battleYourTeam, poolLabel: l.battleYourParty)
+                                  selectedIDs: $selectedMonIDs, teamLabel: l.battleYourTeam, poolLabel: l.battleYourParty,
+                                  types: leaderFacts.mapValues(\.types))
                 Button {
                     let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
                     let roster = selectedMonIDs.compactMap { byID[$0] }
@@ -807,9 +814,141 @@ struct BattleView: View {
                 .disabled(selectedMonIDs.isEmpty || !hasValidDisplayName)
             }
         }
+        .task(id: eligible.map(\.id)) {
+            var facts: [MonState.ID: (name: String, types: [PokemonType])] = [:]
+            for mon in eligible {
+                let id = mon.currentID
+                guard let name = await companion.line(baseID: mon.baseID)?.names[id]?["en"],
+                      let types = await companion.baseStats(speciesID: id)?.types else { continue }
+                facts[mon.id] = (name, types)
+            }
+            leaderFacts = facts
+        }
     }
 
-    /// Small uppercase/tracked label over a section of the picker — "Your Team" over the 3×2 picked
+    /// The roster picker's badge panel: "Play as a gym leader" — a strip of every trainer the party
+    /// can field a team for; tapping one fills the roster — then "Badges at stake": what a win
+    /// against the current pick hands out, why each one counts, and what one more pick would add.
+    /// Scored with the same `GymBadge` rules as a real win, so what it shows is what happens.
+    @ViewBuilder
+    private func gymLeaderPicker(_ eligible: [MonState]) -> some View {
+        // Highest level first — suggestedRoster takes the first ones, so a team is your strongest.
+        let party = eligible.sorted { $0.level > $1.level }
+            .compactMap { mon in leaderFacts[mon.id].map { (id: mon.id, name: $0.name, types: $0.types) } }
+        let options = GymBadge.allCases.compactMap { badge in
+            badge.suggestedRoster(from: party, maxCount: BattleClient.maxRosterSize).map { (badge: badge, roster: $0) }
+        }
+        let picked = selectedMonIDs.compactMap { id in leaderFacts[id] }
+        // A pick whose name/types haven't loaded (offline) hides the stakes panel rather than
+        // scoring a partial team — a partial "gives away nothing" would be wrong.
+        let known = picked.count == selectedMonIDs.count
+        let atStake = known ? GymBadge.allCases.filter(GymBadge.earned(against: picked).contains) : []
+        VStack(alignment: .leading, spacing: 8) {
+            DisclosureGroup(isExpanded: $playAsExpanded) {
+              VStack(alignment: .leading, spacing: 4) {
+                if options.isEmpty {
+                    Text(leaderFacts.isEmpty ? "···" : l.battlePlayAsNone).font(.caption2).foregroundStyle(.tertiary)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(options, id: \.badge) { option in
+                                playAsChip(option.badge, active: atStake.contains(option.badge)) {
+                                    selectedMonIDs = option.roster
+                                }
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    Text(l.battlePlayAsHint).font(.caption2).foregroundStyle(.tertiary)
+                }
+              }
+              .padding(.top, 4)
+            } label: {
+                HStack(spacing: 6) {
+                    sectionHeader(l.battlePlayAsLeader)
+                    if !options.isEmpty {
+                        Text("\(options.count)").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { playAsExpanded.toggle() } }
+            }
+            if !selectedMonIDs.isEmpty, known {
+                stakesPanel(atStake: atStake, team: picked)
+            }
+        }
+    }
+
+    private func playAsChip(_ badge: GymBadge, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                BadgeGlyph(badge: badge, earned: true, size: 26)
+                Text(badge.info.trainerName).font(.system(size: 9, weight: .medium)).lineLimit(1)
+            }
+            .frame(width: 58, height: 46)
+            .background(gymBadgeAccentColor(badge).opacity(active ? 0.22 : 0.08), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(gymBadgeAccentColor(badge).opacity(active ? 0.9 : 0), lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
+        .help("\(badge.info.title) · \(badge.info.region)")
+    }
+
+    /// What beating the current team gives away. Green "nothing" when the team is safe.
+    private func stakesPanel(atStake: [GymBadge], team: [(name: String, types: [PokemonType])]) -> some View {
+        let nearMisses = GymBadge.nearMisses(for: team)
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                sectionHeader(l.battleStakesTitle)
+                Spacer()
+                if !atStake.isEmpty {
+                    Text("\(atStake.count)").font(.system(size: 11, weight: .bold)).foregroundStyle(.orange)
+                }
+            }
+            if atStake.isEmpty {
+                Label(l.battleStakesNone, systemImage: "checkmark.shield.fill")
+                    .font(.caption).foregroundStyle(.green)
+            } else {
+                Text(l.battleStakesHint).font(.caption2).foregroundStyle(.secondary)
+                ForEach(atStake, id: \.self) { badge in stakeRow(badge, team: team) }
+            }
+            ForEach(nearMisses, id: \.badge) { miss in
+                if case .allOpponentType(let type, _) = miss.badge.info.criterion {
+                    Label(l.battleNearMiss(miss.missing, l.typeName(type), miss.badge.info.trainerName), systemImage: "plus.circle")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func stakeRow(_ badge: GymBadge, team: [(name: String, types: [PokemonType])]) -> some View {
+        let reason: String
+        switch badge.info.criterion {
+        case .allOpponentType(let type, let minRosterSize):
+            reason = l.battleStakeType(l.typeName(type), minRosterSize)
+        case .opponentRosterContainsAny(let names):
+            let wanted = Set(names.map { $0.lowercased() })
+            reason = l.battleStakeSignature(team.map(\.name).filter { wanted.contains($0.lowercased()) }.joined(separator: ", "))
+        }
+        return HStack(spacing: 8) {
+            BadgeGlyph(badge: badge, earned: true, size: 24)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(badge.info.title).font(.system(size: 11, weight: .semibold))
+                Text("\(badge.info.trainerName) · \(badge.info.region)").font(.system(size: 9)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Text(reason)
+                .font(.system(size: 9, weight: .bold))
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                // Same solid-color + white-text chip as move type labels — tinted color text was
+                // unreadable on the popover's grey (see RaisingBadge).
+                .background(gymBadgeAccentColor(badge), in: Capsule())
+                .foregroundStyle(.white)
+        }
+    }
+
+    /// Small uppercase/tracked label over a section of the picker — "Your Team" over the 1×6 picked
     /// grid, "Your Party" over the full scrollable grid below it, so the two are never mistaken for
     /// one continuous list.
     private func sectionHeader(_ title: String) -> some View {
@@ -2289,5 +2428,16 @@ private struct HPBar: View {
             }
             .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Color.black.opacity(0.4), lineWidth: 0.75))
         }
+    }
+}
+
+extension View {
+    /// The battle scene pins sprites and info cards to its corners, laid out for the window's
+    /// designed size. In a window dragged bigger they would drift apart, so the scene keeps that
+    /// size and the extra room is a dark letterbox, like a game screen in a larger window.
+    func battleLetterbox() -> some View {
+        frame(width: BattleWindowMetrics.width, height: BattleWindowMetrics.height)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black)
     }
 }

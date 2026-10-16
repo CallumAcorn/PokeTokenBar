@@ -523,6 +523,23 @@ struct L {
     var gymBadgeHowToUnlock: String { t("획득 방법", "How to unlock", "獲得方法", "Cómo desbloquear", "Comment débloquer", "Como desbloquear") }
     var gymBadgeGroupGyms: String { t("체육관 배지", "Gym Badges", "ジムバッジ", "Medallas de gimnasio", "Badges d'arène", "Insígnias de ginásio") }
     var gymBadgeGroupEliteFour: String { t("사천왕", "Elite Four", "四天王", "Alto Mando", "Conseil 4", "Elite Four") }
+    var battlePlayAsLeader: String { t("체육관 관장으로 플레이", "Play as a gym leader", "ジムリーダーとして戦う", "Jugar como líder de gimnasio") }
+    var battlePlayAsHint: String { t("배지를 탭하면 그 관장의 팀으로 채워져요", "Tap a badge to fill your team as that trainer", "バッジをタップするとそのトレーナーのチームになります", "Toca una medalla para formar el equipo de ese entrenador") }
+    var battlePlayAsNone: String { t("아직 관장 팀을 꾸릴 수 없어요", "No gym leader teams in your party yet", "まだジムリーダーのチームを組めません", "Aún no puedes formar un equipo de líder") }
+    var battleSearchPlaceholder: String { t("이름 또는 타입으로 검색", "Search by name or type", "名前またはタイプで検索", "Buscar por nombre o tipo") }
+    var battleStakesTitle: String { t("걸린 배지", "Badges at stake", "懸かっているバッジ", "Medallas en juego") }
+    var battleStakesHint: String { t("이 팀을 이긴 상대가 얻는 배지예요", "An opponent who beats this team earns these", "このチームに勝った相手が獲得します", "Quien venza a este equipo las gana") }
+    var battleStakesNone: String { t("이 팀은 배지를 내주지 않아요", "This team gives away no badges", "このチームはバッジを渡しません", "Este equipo no entrega medallas") }
+    func battleStakeType(_ type: String, _ minRosterSize: Int) -> String {
+        t("전원 \(type) · \(minRosterSize)마리 이상", "All \(type) · \(minRosterSize)+", "全員\(type)・\(minRosterSize)匹以上", "Todo \(type) · \(minRosterSize)+")
+    }
+    func battleStakeSignature(_ names: String) -> String { t("\(names) 포함", "Has \(names)", "\(names)を含む", "Incluye \(names)") }
+    func battleNearMiss(_ missing: Int, _ type: String, _ trainer: String) -> String {
+        t("\(type) \(missing)마리를 더 넣으면 \(trainer)의 배지도 걸려요",
+          "\(missing) more \(type) to also give away \(trainer)'s badge",
+          "\(type)をあと\(missing)匹入れると\(trainer)のバッジも懸かります",
+          "\(missing) más de tipo \(type) y también entregas la medalla de \(trainer)")
+    }
     var gymBadgeGroupChampion: String { t("챔피언", "Champion", "チャンピオン", "Campeón", "Champion", "Campeão") }
     /// type 은 이미 번역된 typeName(_:) 결과를 그대로 받는다 — 트레이너/지역 고유명사와 달리
     /// "타입" 자체는 원작 고유명사가 아니라 일반 UI 어휘라 번역한다.

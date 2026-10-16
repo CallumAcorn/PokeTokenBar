@@ -75,4 +75,52 @@ final class GymBadgeTests: XCTestCase {
             XCTAssertFalse(badge.info.trainerName.isEmpty, "\(badge) has no trainerName")
         }
     }
+
+    // MARK: Play as a gym leader
+
+    /// Every badge's suggested team, scored the way a real win is, earns that badge — "Play as"
+    /// never offers a team that wouldn't hand it out. Off-type mons and non-signature mons in the
+    /// party are left out.
+    func testSuggestedRosterEarnsItsBadge() {
+        let filler: [(id: Int, name: String, types: [PokemonType])] = [(100, "Magikarp", [.water]), (101, "Pikachu", [.electric])]
+        for badge in GymBadge.allCases {
+            var party = filler
+            switch badge.info.criterion {
+            case .allOpponentType(let type, _):
+                party += (0..<8).map { (id: $0, name: "Mon\($0)", types: [type, .normal]) }
+            case .opponentRosterContainsAny(let names):
+                party.append((id: 0, name: names[0].uppercased(), types: []))
+            }
+            guard let roster = badge.suggestedRoster(from: party, maxCount: BattleClient.maxRosterSize) else {
+                return XCTFail("\(badge) has no suggestion from a party built for it")
+            }
+            XCTAssertLessThanOrEqual(roster.count, BattleClient.maxRosterSize, "\(badge)")
+            let team = roster.compactMap { id in party.first { $0.id == id }.map { (name: $0.name, types: $0.types) } }
+            XCTAssertTrue(GymBadge.earned(against: team).contains(badge), "\(badge)'s suggested team doesn't earn it")
+        }
+    }
+
+    /// One short of a type leader's team size → not offered. Roxanne needs 3 Rock.
+    func testSuggestedRosterNeedsTheLeadersTeamSize() {
+        let twoRock: [(id: Int, name: String, types: [PokemonType])] = [(1, "Geodude", [.rock, .ground]), (2, "Onix", [.rock, .ground])]
+        XCTAssertNil(GymBadge.hoennStone.suggestedRoster(from: twoRock, maxCount: 6))
+        XCTAssertEqual(GymBadge.kantoBoulder.suggestedRoster(from: twoRock, maxCount: 6), [1, 2])
+        // A bigger Rock party still gives Brock exactly his 2, the first (strongest) ones.
+        let fourRock = twoRock + [(3, "Graveler", [.rock, .ground]), (4, "Golem", [.rock, .ground])]
+        XCTAssertEqual(GymBadge.kantoBoulder.suggestedRoster(from: fourRock, maxCount: 6), [1, 2])
+        XCTAssertEqual(GymBadge.hoennStone.suggestedRoster(from: fourRock, maxCount: 6), [1, 2, 3])
+        XCTAssertNil(GymBadge.kantoEliteLance.suggestedRoster(from: twoRock, maxCount: 6))
+    }
+
+    /// Two Rock mons are one short of Roxanne (3) — the nearest Rock badge — not Roark (4). A mixed
+    /// team is short of nothing by size alone, and a team that already earns a badge doesn't list it.
+    func testNearMissesNameTheNearestBadgePerType() {
+        let twoRock: [(name: String, types: [PokemonType])] = [("Nosepass", [.rock]), ("Sudowoodo", [.rock])]
+        let misses = GymBadge.nearMisses(for: twoRock)
+        XCTAssertEqual(misses.map(\.badge), [.hoennStone], "Roxanne, not Roark (further) or Brock (already earned)")
+        XCTAssertEqual(misses.first?.missing, 1)
+        XCTAssertTrue(GymBadge.nearMisses(for: [("Geodude", [.rock]), ("Pikachu", [.electric])]).isEmpty)
+        XCTAssertTrue(GymBadge.nearMisses(for: []).isEmpty)
+    }
 }
+

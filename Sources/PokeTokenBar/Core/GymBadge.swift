@@ -233,4 +233,39 @@ extension GymBadge {
         }
         return out
     }
+
+    /// A team from `party` that plays as this badge's trainer — beating it earns the badge
+    /// (`earned(against:)`). What the battle screen's "Play as a gym leader" fills the roster with.
+    /// Type leaders: exactly their team size of that type, first in party order (callers pass the
+    /// party strongest-first) — Misty gets your best 2 Water, not every Water you own. Elite Four and
+    /// Champions: the signature mons the party has, up to `maxCount`. Nil when the party can't field one.
+    func suggestedRoster<ID>(from party: [(id: ID, name: String, types: [PokemonType])], maxCount: Int) -> [ID]? {
+        let picks: [(id: ID, name: String, types: [PokemonType])]
+        switch info.criterion {
+        case .allOpponentType(let type, let minRosterSize):
+            picks = Array(party.filter { $0.types.contains(type) }.prefix(min(minRosterSize, maxCount)))
+            guard picks.count >= minRosterSize else { return nil }
+        case .opponentRosterContainsAny(let names):
+            let wanted = Set(names.map { $0.lowercased() })
+            picks = Array(party.filter { wanted.contains($0.name.lowercased()) }.prefix(maxCount))
+            guard !picks.isEmpty else { return nil }
+        }
+        return picks.map(\.id)
+    }
+
+    /// Type-leader badges a team is short of only by size: every mon already shares the type, but
+    /// there aren't enough of them yet. The nearest one per type, with how many more mons it needs
+    /// (two Rock mons → Roxanne, 1 more). Lets the roster picker say what one more pick would give away.
+    static func nearMisses(for team: [(name: String, types: [PokemonType])]) -> [(badge: GymBadge, missing: Int)] {
+        guard !team.isEmpty else { return [] }
+        var nearest: [PokemonType: (badge: GymBadge, missing: Int)] = [:]
+        for badge in GymBadge.allCases {
+            guard case .allOpponentType(let type, let minRosterSize) = badge.info.criterion,
+                  team.count < minRosterSize, team.allSatisfy({ $0.types.contains(type) }) else { continue }
+            let missing = minRosterSize - team.count
+            if nearest[type].map({ missing < $0.missing }) ?? true { nearest[type] = (badge, missing) }
+        }
+        return GymBadge.allCases.compactMap { badge in nearest.values.first { $0.badge == badge } }
+    }
 }
+
