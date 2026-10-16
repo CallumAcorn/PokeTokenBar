@@ -45,7 +45,10 @@ struct SpectatorView: View {
             ProgressView(l.spectatorConnecting)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .watching(_, let view):
+            // Same corner-pinned scene as a battle: keep its designed size in a bigger window.
             watchingContent(view)
+                .frame(maxWidth: BattleWindowMetrics.width, maxHeight: BattleWindowMetrics.height)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(.server(status: 404)):
             statusMessage(l.battleExpiredTitle)
         case .failed:

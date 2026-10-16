@@ -596,7 +596,7 @@ struct BattleView: View {
         case .battling(_, let view):
             // Deliberately no padding — a battle scene reads as a real game screen only if the
             // background actually fills the window edge to edge, not sitting in a padded card.
-            battlingContent(view)
+            battlingContent(view).battleLetterbox()
         case .failed(let error):
             statusView(message: friendlyMessage(for: error), showsSpinner: false, showsRetry: true)
                 .padding(BattleWindowMetrics.padding)
@@ -2428,5 +2428,16 @@ private struct HPBar: View {
             }
             .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Color.black.opacity(0.4), lineWidth: 0.75))
         }
+    }
+}
+
+extension View {
+    /// The battle scene pins sprites and info cards to its corners, laid out for the window's
+    /// designed size. In a window dragged bigger they would drift apart, so the scene keeps that
+    /// size and the extra room is a dark letterbox, like a game screen in a larger window.
+    func battleLetterbox() -> some View {
+        frame(width: BattleWindowMetrics.width, height: BattleWindowMetrics.height)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black)
     }
 }
