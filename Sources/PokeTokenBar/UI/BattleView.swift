@@ -33,6 +33,9 @@ struct BattleView: View {
     /// order* (append on select, remove on deselect), not party order. `RosterPickerGrid`'s own drag
     /// reordering mutates this same array by moving an id, so both stay in sync for free.
     @State private var selectedMonIDs: [MonState.ID] = []
+    /// Each eligible mon's English species name and types — the same fields `GymBadge` scores an
+    /// opponent's team on — loaded when the roster picker opens. Drives "Play as a gym leader".
+    @State private var leaderFacts: [MonState.ID: (name: String, types: [PokemonType])] = [:]
     @State private var confirmingLink: BattleDeepLink?
     @State private var copiedFeedback = false
     @State private var pastedInviteLink = ""
@@ -785,6 +788,7 @@ struct BattleView: View {
             } else {
                 // Your picked team, always visible above the full party — 3 wide × 2 high (up to 6),
                 // empty dashed slots for the rest. Tap a filled one to drop it back out.
+                gymLeaderPicker(eligible)
                 RosterPickerGrid(companion: companion, eligible: eligible, maxCount: BattleClient.maxRosterSize,
                                   selectedIDs: $selectedMonIDs, teamLabel: l.battleYourTeam, poolLabel: l.battleYourParty)
                 Button {
@@ -805,6 +809,53 @@ struct BattleView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .disabled(selectedMonIDs.isEmpty || !hasValidDisplayName)
+            }
+        }
+        .task(id: eligible.map(\.id)) {
+            var facts: [MonState.ID: (name: String, types: [PokemonType])] = [:]
+            for mon in eligible {
+                let id = mon.currentID
+                guard let name = await companion.line(baseID: mon.baseID)?.names[id]?["en"],
+                      let types = await companion.baseStats(speciesID: id)?.types else { continue }
+                facts[mon.id] = (name, types)
+            }
+            leaderFacts = facts
+        }
+    }
+
+    /// "Play as a gym leader": every trainer the party can field a team for, grouped by region —
+    /// picking one fills the roster with that team. Underneath, who the current pick plays as, so
+    /// players know which badge a win against them hands out.
+    @ViewBuilder
+    private func gymLeaderPicker(_ eligible: [MonState]) -> some View {
+        let party = eligible.compactMap { mon in leaderFacts[mon.id].map { (id: mon.id, name: $0.name, types: $0.types) } }
+        let options = GymBadge.allCases.compactMap { badge in
+            badge.suggestedRoster(from: party, maxCount: BattleClient.maxRosterSize).map { (badge: badge, roster: $0) }
+        }
+        let regions = options.reduce(into: [String]()) { if !$0.contains($1.badge.info.region) { $0.append($1.badge.info.region) } }
+        VStack(alignment: .leading, spacing: 4) {
+            Menu {
+                ForEach(regions, id: \.self) { region in
+                    Section(region) {
+                        ForEach(options.filter { $0.badge.info.region == region }, id: \.badge) { option in
+                            Button("\(option.badge.info.trainerName) · \(option.badge.info.title)") {
+                                selectedMonIDs = option.roster
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Label(options.isEmpty ? l.battlePlayAsNone : l.battlePlayAsLeader, systemImage: "rosette")
+                    .font(.caption)
+            }
+            .fixedSize()
+            .disabled(options.isEmpty)
+            let picked = selectedMonIDs.compactMap { id in leaderFacts[id] }
+            let playsAs = GymBadge.allCases.filter(GymBadge.earned(against: picked).contains)
+            if picked.count == selectedMonIDs.count, !playsAs.isEmpty {
+                Text(l.battlePlaysAs(playsAs.map(\.info.trainerName).joined(separator: ", ")))
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

@@ -523,6 +523,14 @@ struct L {
     var gymBadgeHowToUnlock: String { t("획득 방법", "How to unlock", "獲得方法", "Cómo desbloquear", "Comment débloquer", "Como desbloquear") }
     var gymBadgeGroupGyms: String { t("체육관 배지", "Gym Badges", "ジムバッジ", "Medallas de gimnasio", "Badges d'arène", "Insígnias de ginásio") }
     var gymBadgeGroupEliteFour: String { t("사천왕", "Elite Four", "四天王", "Alto Mando", "Conseil 4", "Elite Four") }
+    var battlePlayAsLeader: String { t("체육관 관장으로 플레이", "Play as a gym leader", "ジムリーダーとして戦う", "Jugar como líder de gimnasio") }
+    var battlePlayAsNone: String { t("아직 관장 팀을 꾸릴 수 없어요", "No gym leader teams in your party yet", "まだジムリーダーのチームを組めません", "Aún no puedes formar un equipo de líder") }
+    func battlePlaysAs(_ trainers: String) -> String {
+        t("\(trainers)(으)로 플레이 중 — 이 팀을 이기면 상대가 배지를 얻어요",
+          "Playing as \(trainers). Beat this team to earn their badge.",
+          "\(trainers)として対戦中 — このチームに勝つとバッジを獲得できます",
+          "Juegas como \(trainers). Quien venza a este equipo gana su medalla.")
+    }
     var gymBadgeGroupChampion: String { t("챔피언", "Champion", "チャンピオン", "Campeón", "Champion", "Campeão") }
     /// type 은 이미 번역된 typeName(_:) 결과를 그대로 받는다 — 트레이너/지역 고유명사와 달리
     /// "타입" 자체는 원작 고유명사가 아니라 일반 UI 어휘라 번역한다.
