@@ -35,6 +35,8 @@ struct BattleView: View {
     /// Each eligible mon's English species name and types — the same fields `GymBadge` scores an
     /// opponent's team on — loaded when the roster picker opens. Drives "Play as a gym leader".
     @State private var leaderFacts: [MonState.ID: (name: String, types: [PokemonType])] = [:]
+    /// "Play as a gym leader" foldout — closed by default so it doesn't crowd the party grid.
+    @AppStorage("battlePlayAsExpanded") private var playAsExpanded = false
     @State private var confirmingLink: BattleDeepLink?
     @State private var copiedFeedback = false
     @State private var pastedInviteLink = ""
@@ -786,7 +788,7 @@ struct BattleView: View {
                 Text(l.battleNoBenchedMons).font(.caption2).foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                // Your picked team, always visible above the full party — 3 wide × 2 high (up to 6),
+                // Your picked team, always visible above the full party — one row of 6,
                 // empty dashed slots for the rest. Tap a filled one to drop it back out.
                 gymLeaderPicker(eligible)
                 RosterPickerGrid(companion: companion, eligible: eligible, maxCount: BattleClient.maxRosterSize,
@@ -842,8 +844,8 @@ struct BattleView: View {
         let known = picked.count == selectedMonIDs.count
         let atStake = known ? GymBadge.allCases.filter(GymBadge.earned(against: picked).contains) : []
         VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                sectionHeader(l.battlePlayAsLeader)
+            DisclosureGroup(isExpanded: $playAsExpanded) {
+              VStack(alignment: .leading, spacing: 4) {
                 if options.isEmpty {
                     Text(leaderFacts.isEmpty ? "···" : l.battlePlayAsNone).font(.caption2).foregroundStyle(.tertiary)
                 } else {
@@ -859,6 +861,17 @@ struct BattleView: View {
                     }
                     Text(l.battlePlayAsHint).font(.caption2).foregroundStyle(.tertiary)
                 }
+              }
+              .padding(.top, 4)
+            } label: {
+                HStack(spacing: 6) {
+                    sectionHeader(l.battlePlayAsLeader)
+                    if !options.isEmpty {
+                        Text("\(options.count)").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { playAsExpanded.toggle() } }
             }
             if !selectedMonIDs.isEmpty, known {
                 stakesPanel(atStake: atStake, team: picked)
@@ -935,7 +948,7 @@ struct BattleView: View {
         }
     }
 
-    /// Small uppercase/tracked label over a section of the picker — "Your Team" over the 3×2 picked
+    /// Small uppercase/tracked label over a section of the picker — "Your Team" over the 1×6 picked
     /// grid, "Your Party" over the full scrollable grid below it, so the two are never mistaken for
     /// one continuous list.
     private func sectionHeader(_ title: String) -> some View {

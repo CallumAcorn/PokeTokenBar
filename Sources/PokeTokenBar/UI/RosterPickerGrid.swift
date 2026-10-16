@@ -53,7 +53,7 @@ struct RosterPickerGrid: View {
             .tracking(0.5)
     }
 
-    /// Fixed 3-column grid (not "as many columns as fit") — a team is always up to `maxCount`, so a
+    /// One fixed row of `maxCount` slots (not "as many columns as fit") — a team is always up to `maxCount`, so a
     /// stable grid reads as "your team" rather than a list that reflows as you add/remove picks.
     /// Order follows pick order (`selectedIDs`), not pool order — this is exactly the order a
     /// caller's own submit maps it in. Filled tiles are also drag-reorderable — dropping one onto
@@ -61,7 +61,7 @@ struct RosterPickerGrid: View {
     /// remove-then-re-add-in-order.
     private var teamGrid: some View {
         let selected = selectedIDs.compactMap { byID[$0] }
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: maxCount), spacing: 6) {
             ForEach(0..<maxCount, id: \.self) { slot in
                 if slot < selected.count {
                     tile(selected[slot], selected: true, size: 38)
@@ -70,7 +70,8 @@ struct RosterPickerGrid: View {
                 } else {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4]))
-                        .frame(height: 62)   // matches the taller tile now that it carries a name line too
+                        // Matches a filled tile's height: name + level line, plus the type chips when shown.
+                        .frame(height: types == nil ? 62 : 76)
                         .dropDestination(for: String.self) { items, _ in moveDropped(items, toSlot: slot) }
                 }
             }
