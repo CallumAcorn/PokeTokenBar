@@ -251,4 +251,20 @@ extension GymBadge {
         }
         return picks.map(\.id)
     }
+
+    /// Type-leader badges a team is short of only by size: every mon already shares the type, but
+    /// there aren't enough of them yet. The nearest one per type, with how many more mons it needs
+    /// (two Rock mons → Roxanne, 1 more). Lets the roster picker say what one more pick would give away.
+    static func nearMisses(for team: [(name: String, types: [PokemonType])]) -> [(badge: GymBadge, missing: Int)] {
+        guard !team.isEmpty else { return [] }
+        var nearest: [PokemonType: (badge: GymBadge, missing: Int)] = [:]
+        for badge in GymBadge.allCases {
+            guard case .allOpponentType(let type, let minRosterSize) = badge.info.criterion,
+                  team.count < minRosterSize, team.allSatisfy({ $0.types.contains(type) }) else { continue }
+            let missing = minRosterSize - team.count
+            if nearest[type].map({ missing < $0.missing }) ?? true { nearest[type] = (badge, missing) }
+        }
+        return GymBadge.allCases.compactMap { badge in nearest.values.first { $0.badge == badge } }
+    }
 }
+

@@ -1,9 +1,8 @@
 import SwiftUI
 
-/// Fixed content size for the standalone battle window (BattleWindowController) — this screen lives
-/// in a real window now, not the 360pt popover strip, so it gets real screen real estate instead of
-/// PopoverMetrics. Not resizable (styleMask omits `.resizable`) — keeps the battle-scene layout math
-/// (below) simple; revisit if that ever feels cramped.
+/// Starting (and minimum) content size for the standalone battle window (BattleWindowController) —
+/// this screen lives in a real window, not the 360pt popover strip. The window is resizable: content
+/// fills whatever is larger, so the roster picker's party grid and badge panel get the extra room.
 enum BattleWindowMetrics {
     static let width: CGFloat = 520
     static let height: CGFloat = 460
@@ -188,7 +187,8 @@ struct BattleView: View {
                 SpectatorView(onClose: { spectator.stop() })
             } else {
                 content
-                    .frame(width: BattleWindowMetrics.width, height: BattleWindowMetrics.height, alignment: .top)
+                    .frame(minWidth: BattleWindowMetrics.width, maxWidth: .infinity,
+                           minHeight: BattleWindowMetrics.height, maxHeight: .infinity, alignment: .top)
             }
         }
         .task { checkPendingInvite() }
@@ -790,7 +790,8 @@ struct BattleView: View {
                 // empty dashed slots for the rest. Tap a filled one to drop it back out.
                 gymLeaderPicker(eligible)
                 RosterPickerGrid(companion: companion, eligible: eligible, maxCount: BattleClient.maxRosterSize,
-                                  selectedIDs: $selectedMonIDs, teamLabel: l.battleYourTeam, poolLabel: l.battleYourParty)
+                                  selectedIDs: $selectedMonIDs, teamLabel: l.battleYourTeam, poolLabel: l.battleYourParty,
+                                  types: leaderFacts.mapValues(\.types))
                 Button {
                     let byID = Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
                     let roster = selectedMonIDs.compactMap { byID[$0] }
@@ -823,40 +824,114 @@ struct BattleView: View {
         }
     }
 
-    /// "Play as a gym leader": every trainer the party can field a team for, grouped by region —
-    /// picking one fills the roster with that team. Underneath, who the current pick plays as, so
-    /// players know which badge a win against them hands out.
+    /// The roster picker's badge panel: "Play as a gym leader" — a strip of every trainer the party
+    /// can field a team for; tapping one fills the roster — then "Badges at stake": what a win
+    /// against the current pick hands out, why each one counts, and what one more pick would add.
+    /// Scored with the same `GymBadge` rules as a real win, so what it shows is what happens.
     @ViewBuilder
     private func gymLeaderPicker(_ eligible: [MonState]) -> some View {
-        let party = eligible.compactMap { mon in leaderFacts[mon.id].map { (id: mon.id, name: $0.name, types: $0.types) } }
+        // Highest level first, so a suggested team brings the party's strongest of that type.
+        let party = eligible.sorted { $0.level > $1.level }
+            .compactMap { mon in leaderFacts[mon.id].map { (id: mon.id, name: $0.name, types: $0.types) } }
         let options = GymBadge.allCases.compactMap { badge in
             badge.suggestedRoster(from: party, maxCount: BattleClient.maxRosterSize).map { (badge: badge, roster: $0) }
         }
-        let regions = options.reduce(into: [String]()) { if !$0.contains($1.badge.info.region) { $0.append($1.badge.info.region) } }
-        VStack(alignment: .leading, spacing: 4) {
-            Menu {
-                ForEach(regions, id: \.self) { region in
-                    Section(region) {
-                        ForEach(options.filter { $0.badge.info.region == region }, id: \.badge) { option in
-                            Button("\(option.badge.info.trainerName) · \(option.badge.info.title)") {
-                                selectedMonIDs = option.roster
+        let picked = selectedMonIDs.compactMap { id in leaderFacts[id] }
+        // A pick whose name/types haven't loaded (offline) hides the stakes panel rather than
+        // scoring a partial team — a partial "gives away nothing" would be wrong.
+        let known = picked.count == selectedMonIDs.count
+        let atStake = known ? GymBadge.allCases.filter(GymBadge.earned(against: picked).contains) : []
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                sectionHeader(l.battlePlayAsLeader)
+                if options.isEmpty {
+                    Text(leaderFacts.isEmpty ? "···" : l.battlePlayAsNone).font(.caption2).foregroundStyle(.tertiary)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(options, id: \.badge) { option in
+                                playAsChip(option.badge, active: atStake.contains(option.badge)) {
+                                    selectedMonIDs = option.roster
+                                }
                             }
                         }
+                        .padding(.vertical, 2)
                     }
+                    Text(l.battlePlayAsHint).font(.caption2).foregroundStyle(.tertiary)
                 }
-            } label: {
-                Label(options.isEmpty ? l.battlePlayAsNone : l.battlePlayAsLeader, systemImage: "rosette")
-                    .font(.caption)
             }
-            .fixedSize()
-            .disabled(options.isEmpty)
-            let picked = selectedMonIDs.compactMap { id in leaderFacts[id] }
-            let playsAs = GymBadge.allCases.filter(GymBadge.earned(against: picked).contains)
-            if picked.count == selectedMonIDs.count, !playsAs.isEmpty {
-                Text(l.battlePlaysAs(playsAs.map(\.info.trainerName).joined(separator: ", ")))
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            if !selectedMonIDs.isEmpty, known {
+                stakesPanel(atStake: atStake, team: picked)
             }
+        }
+    }
+
+    private func playAsChip(_ badge: GymBadge, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                BadgeGlyph(badge: badge, earned: true, size: 26)
+                Text(badge.info.trainerName).font(.system(size: 9, weight: .medium)).lineLimit(1)
+            }
+            .frame(width: 58, height: 46)
+            .background(gymBadgeAccentColor(badge).opacity(active ? 0.22 : 0.08), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(gymBadgeAccentColor(badge).opacity(active ? 0.9 : 0), lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
+        .help("\(badge.info.title) · \(badge.info.region)")
+    }
+
+    /// What beating the current team gives away. Green "nothing" when the team is safe.
+    private func stakesPanel(atStake: [GymBadge], team: [(name: String, types: [PokemonType])]) -> some View {
+        let nearMisses = GymBadge.nearMisses(for: team)
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                sectionHeader(l.battleStakesTitle)
+                Spacer()
+                if !atStake.isEmpty {
+                    Text("\(atStake.count)").font(.system(size: 11, weight: .bold)).foregroundStyle(.orange)
+                }
+            }
+            if atStake.isEmpty {
+                Label(l.battleStakesNone, systemImage: "checkmark.shield.fill")
+                    .font(.caption).foregroundStyle(.green)
+            } else {
+                Text(l.battleStakesHint).font(.caption2).foregroundStyle(.secondary)
+                ForEach(atStake, id: \.self) { badge in stakeRow(badge, team: team) }
+            }
+            ForEach(nearMisses, id: \.badge) { miss in
+                if case .allOpponentType(let type, _) = miss.badge.info.criterion {
+                    Label(l.battleNearMiss(miss.missing, l.typeName(type), miss.badge.info.trainerName), systemImage: "plus.circle")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func stakeRow(_ badge: GymBadge, team: [(name: String, types: [PokemonType])]) -> some View {
+        let reason: String
+        switch badge.info.criterion {
+        case .allOpponentType(let type, let minRosterSize):
+            reason = l.battleStakeType(l.typeName(type), minRosterSize)
+        case .opponentRosterContainsAny(let names):
+            let wanted = Set(names.map { $0.lowercased() })
+            reason = l.battleStakeSignature(team.map(\.name).filter { wanted.contains($0.lowercased()) }.joined(separator: ", "))
+        }
+        return HStack(spacing: 8) {
+            BadgeGlyph(badge: badge, earned: true, size: 24)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(badge.info.title).font(.system(size: 11, weight: .semibold))
+                Text("\(badge.info.trainerName) · \(badge.info.region)").font(.system(size: 9)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Text(reason)
+                .font(.system(size: 9, weight: .bold))
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                // Same solid-color + white-text chip as move type labels — tinted color text was
+                // unreadable on the popover's grey (see RaisingBadge).
+                .background(gymBadgeAccentColor(badge), in: Capsule())
+                .foregroundStyle(.white)
         }
     }
 

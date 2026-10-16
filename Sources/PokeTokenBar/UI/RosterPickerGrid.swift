@@ -12,6 +12,11 @@ struct RosterPickerGrid: View {
     @Binding var selectedIDs: [MonState.ID]
     let teamLabel: String
     let poolLabel: String
+    /// Each mon's types. When given (the battle picker), every tile shows type chips and the pool
+    /// gets a search box that matches species or type names, so it's clear what types you're adding.
+    /// Nil (trading) keeps the plain grid.
+    var types: [MonState.ID: [PokemonType]]? = nil
+    @State private var search = ""
 
     private var byID: [MonState.ID: MonState] {
         Dictionary(uniqueKeysWithValues: eligible.map { ($0.id, $0) })
@@ -27,6 +32,11 @@ struct RosterPickerGrid: View {
             }
             teamGrid
             sectionHeader(poolLabel)
+            if types != nil {
+                TextField(companion.l.battleSearchPlaceholder, text: $search)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+            }
             // Flexible, not a fixed height — fills whatever space is left below the fixed-size team
             // grid/headers, matching battles.md's original roster picker (unlike TradeView's old
             // single-mon offer list, which used a fixed height — no longer applicable once this is
@@ -71,8 +81,9 @@ struct RosterPickerGrid: View {
     /// `teamGrid` instead). Draggable up into a team slot — `moveDropped` treats a not-yet-selected
     /// id as a pick rather than a move.
     private var poolGrid: some View {
-        let unselected = eligible.filter { !selectedIDs.contains($0.id) }
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
+        let unselected = eligible.filter { !selectedIDs.contains($0.id) && matchesSearch($0) }
+        // 4 wide, not 5, once tiles carry type chips — the chips need the width.
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: types == nil ? 5 : 4), spacing: 6) {
             ForEach(unselected) { mon in
                 tile(mon, selected: false, size: 30)
                     .draggable(mon.id)
@@ -90,6 +101,19 @@ struct RosterPickerGrid: View {
                 Text(companion.speciesName(mon.currentID)).font(.system(size: 8, weight: .semibold))
                     .lineLimit(1).minimumScaleFactor(0.7)
                 Text(companion.l.pcLevel(mon.level)).font(.system(size: 7)).foregroundStyle(.secondary).lineLimit(1)
+                if let monTypes = types?[mon.id] {
+                    HStack(spacing: 2) {
+                        ForEach(monTypes, id: \.self) { type in
+                            Text(companion.l.typeName(type))
+                                .font(.system(size: 7, weight: .bold))
+                                .lineLimit(1).minimumScaleFactor(0.6)
+                                .padding(.horizontal, 3).padding(.vertical, 1)
+                                .background(typeColor(type), in: Capsule())
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
@@ -100,6 +124,15 @@ struct RosterPickerGrid: View {
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+
+    /// Species name or type name, in the app's language or English ("rock" finds Rock types in any
+    /// language). Empty matches everything.
+    private func matchesSearch(_ mon: MonState) -> Bool {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return true }
+        let typeWords = (types?[mon.id] ?? []).flatMap { [companion.l.typeName($0), $0.rawValue] }
+        return ([companion.speciesName(mon.currentID)] + typeWords).contains { $0.localizedCaseInsensitiveContains(query) }
     }
 
     private func toggle(_ id: MonState.ID) {

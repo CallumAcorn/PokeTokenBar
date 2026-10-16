@@ -33,7 +33,8 @@ struct SpectatorView: View {
 
     var body: some View {
         content
-            .frame(width: BattleWindowMetrics.width, height: BattleWindowMetrics.height, alignment: .top)
+            .frame(minWidth: BattleWindowMetrics.width, maxWidth: .infinity,
+                   minHeight: BattleWindowMetrics.height, maxHeight: .infinity, alignment: .top)
             .padding(BattleWindowMetrics.padding)
     }
 

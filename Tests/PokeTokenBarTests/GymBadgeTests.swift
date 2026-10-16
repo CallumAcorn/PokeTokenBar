@@ -107,5 +107,16 @@ final class GymBadgeTests: XCTestCase {
         XCTAssertEqual(GymBadge.kantoBoulder.suggestedRoster(from: twoRock, maxCount: 6), [1, 2])
         XCTAssertNil(GymBadge.kantoEliteLance.suggestedRoster(from: twoRock, maxCount: 6))
     }
+
+    /// Two Rock mons are one short of Roxanne (3) — the nearest Rock badge — not Roark (4). A mixed
+    /// team is short of nothing by size alone, and a team that already earns a badge doesn't list it.
+    func testNearMissesNameTheNearestBadgePerType() {
+        let twoRock: [(name: String, types: [PokemonType])] = [("Nosepass", [.rock]), ("Sudowoodo", [.rock])]
+        let misses = GymBadge.nearMisses(for: twoRock)
+        XCTAssertEqual(misses.map(\.badge), [.hoennStone], "Roxanne, not Roark (further) or Brock (already earned)")
+        XCTAssertEqual(misses.first?.missing, 1)
+        XCTAssertTrue(GymBadge.nearMisses(for: [("Geodude", [.rock]), ("Pikachu", [.electric])]).isEmpty)
+        XCTAssertTrue(GymBadge.nearMisses(for: []).isEmpty)
+    }
 }
 
