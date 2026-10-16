@@ -105,6 +105,10 @@ final class GymBadgeTests: XCTestCase {
         let twoRock: [(id: Int, name: String, types: [PokemonType])] = [(1, "Geodude", [.rock, .ground]), (2, "Onix", [.rock, .ground])]
         XCTAssertNil(GymBadge.hoennStone.suggestedRoster(from: twoRock, maxCount: 6))
         XCTAssertEqual(GymBadge.kantoBoulder.suggestedRoster(from: twoRock, maxCount: 6), [1, 2])
+        // A bigger Rock party still gives Brock exactly his 2, the first (strongest) ones.
+        let fourRock = twoRock + [(3, "Graveler", [.rock, .ground]), (4, "Golem", [.rock, .ground])]
+        XCTAssertEqual(GymBadge.kantoBoulder.suggestedRoster(from: fourRock, maxCount: 6), [1, 2])
+        XCTAssertEqual(GymBadge.hoennStone.suggestedRoster(from: fourRock, maxCount: 6), [1, 2, 3])
         XCTAssertNil(GymBadge.kantoEliteLance.suggestedRoster(from: twoRock, maxCount: 6))
     }
 

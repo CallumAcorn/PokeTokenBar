@@ -832,7 +832,7 @@ struct BattleView: View {
     /// Scored with the same `GymBadge` rules as a real win, so what it shows is what happens.
     @ViewBuilder
     private func gymLeaderPicker(_ eligible: [MonState]) -> some View {
-        // Highest level first, so a suggested team brings the party's strongest of that type.
+        // Highest level first — suggestedRoster takes the first ones, so a team is your strongest.
         let party = eligible.sorted { $0.level > $1.level }
             .compactMap { mon in leaderFacts[mon.id].map { (id: mon.id, name: $0.name, types: $0.types) } }
         let options = GymBadge.allCases.compactMap { badge in

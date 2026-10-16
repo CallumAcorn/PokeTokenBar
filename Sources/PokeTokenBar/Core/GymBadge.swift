@@ -236,13 +236,14 @@ extension GymBadge {
 
     /// A team from `party` that plays as this badge's trainer — beating it earns the badge
     /// (`earned(against:)`). What the battle screen's "Play as a gym leader" fills the roster with.
-    /// Type leaders: every mon of that type, in party order, up to `maxCount`. Elite Four and
-    /// Champions: the signature mons the party has. Nil when the party can't field one.
+    /// Type leaders: exactly their team size of that type, first in party order (callers pass the
+    /// party strongest-first) — Misty gets your best 2 Water, not every Water you own. Elite Four and
+    /// Champions: the signature mons the party has, up to `maxCount`. Nil when the party can't field one.
     func suggestedRoster<ID>(from party: [(id: ID, name: String, types: [PokemonType])], maxCount: Int) -> [ID]? {
         let picks: [(id: ID, name: String, types: [PokemonType])]
         switch info.criterion {
         case .allOpponentType(let type, let minRosterSize):
-            picks = Array(party.filter { $0.types.contains(type) }.prefix(maxCount))
+            picks = Array(party.filter { $0.types.contains(type) }.prefix(min(minRosterSize, maxCount)))
             guard picks.count >= minRosterSize else { return nil }
         case .opponentRosterContainsAny(let names):
             let wanted = Set(names.map { $0.lowercased() })
