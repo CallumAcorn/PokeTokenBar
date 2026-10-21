@@ -51,6 +51,8 @@ final class LocalizationInterpolationTests: XCTestCase {
             expect(lang, "codexWindow(m)", l.codexWindow(37), "37")
             expect(lang, "percentRemaining", l.percentRemaining(a), a)
             expect(lang, "paceHint", l.paceHint(a), a)
+            expect(lang, "paceDelta(+)", l.paceDelta(4242) ?? "", "4242")
+            expect(lang, "paceDelta(-)", l.paceDelta(-4242) ?? "", "4242")
             expect(lang, "limitRefreshHTTPError(401)", l.limitRefreshHTTPError(401), "401")
             expect(lang, "limitRefreshHTTPError(404)", l.limitRefreshHTTPError(404), "404")
 

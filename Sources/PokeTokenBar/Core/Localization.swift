@@ -60,6 +60,35 @@ struct L {
     var staleLimits: String { t("갱신 지연", "Stale", "更新遅延", "Desactualizado", "Périmé", "Desatualizado") }
     var refresh: String { t("갱신", "Refresh", "更新", "Actualizar", "Actualiser", "Atualizar") }
     var limitsTapToLoad: String { t("공식 한도 불러오기", "Load official limits", "公式上限を読み込む", "Cargar límites oficiales", "Charger les limites officielles", "Carregar limites oficiais") }
+    /// 페이스 대비 단계 이름. paceHint 와 같은 이유로 "적정"처럼 규범적인 말은 피하고
+    /// 소진 속도만 묘사한다.
+    func paceTier(_ tier: PaceTier) -> String {
+        switch tier {
+        case .wayUnder: return t("여유 많음", "Well under pace", "かなり余裕", "Muy por debajo del ritmo", "Bien sous le rythme", "Bem abaixo do ritmo")
+        case .under: return t("여유", "Under pace", "余裕あり", "Por debajo del ritmo", "Sous le rythme", "Abaixo do ritmo")
+        case .onPace: return t("페이스대로", "On pace", "ペース通り", "Al ritmo", "Dans le rythme", "No ritmo")
+        case .slightlyOver: return t("조금 빠름", "Slightly fast", "やや速い", "Algo rápido", "Un peu rapide", "Um pouco rápido")
+        case .over: return t("빠름", "Fast", "速い", "Rápido", "Rapide", "Rápido")
+        case .wayOver: return t("매우 빠름", "Very fast", "とても速い", "Muy rápido", "Très rapide", "Muito rápido")
+        }
+    }
+    /// 페이스 대비 차이(%p). **쓴 양**으로 말한다, "앞섬/위" 같은 위치 표현은 잔량 모드에서
+    /// 채움이 마커보다 짧게 그려질 때 방향이 반대로 읽힌다(#286 부류). 0 이면 문구 없음.
+    /// 유럽어는 단계 이름("Under pace")이 이미 "페이스"를 말하므로 여기선 반복하지 않는다.
+    func paceDelta(_ points: Int) -> String? {
+        if points > 0 {
+            return t("페이스보다 \(points)%p 더 씀", "\(points) pts more used", "ペースより\(points)pt多く使用",
+                     "\(points) pts más de uso", "\(points) pts de plus utilisés",
+                     "\(points) p.p. a mais de uso")
+        }
+        if points < 0 {
+            let n = -points
+            return t("페이스보다 \(n)%p 덜 씀", "\(n) pts less used", "ペースより\(n)pt少なく使用",
+                     "\(n) pts menos de uso", "\(n) pts de moins utilisés",
+                     "\(n) p.p. a menos de uso")
+        }
+        return nil
+    }
 
     /// 프로바이더 상태 페이지 인시던트 지표 → 현지화 라벨(표시 전용).
     func providerStatusLabel(_ indicator: ProviderStatusIndicator) -> String {

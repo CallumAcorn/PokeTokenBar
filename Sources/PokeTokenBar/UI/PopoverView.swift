@@ -545,9 +545,16 @@ struct PopoverView: View {
     }
 
     /// 툴팁 문구. 숫자도 `limitDisplayPercent` 를 거쳐 눈금 위치와 같은 방향을 말한다.
-    private func paceHelp(_ pace: Double?) -> String? {
+    /// 단계가 있으면 이름과 차이를 첫 줄에 둔다, 행에는 색만 있으므로 글로 된 단계는 여기서 준다.
+    private func paceHelp(_ pace: Double?, tier: PaceTier?, utilization: Double) -> String? {
         guard let pace else { return nil }
-        return l.paceHint(TokenFormatter.percent(store.limitDisplayPercent(pace * 100)))
+        let hint = l.paceHint(TokenFormatter.percent(store.limitDisplayPercent(pace * 100)))
+        guard let tier else { return hint }
+        var head = l.paceTier(tier)
+        if let delta = l.paceDelta(PaceTier.roundedDelta(utilization: utilization, pace: pace)) {
+            head += " · " + delta
+        }
+        return head + "\n" + hint
     }
 
     @ViewBuilder
@@ -563,6 +570,10 @@ struct PopoverView: View {
     private func quotaRow(name: String, utilization: Double, reset: Date?,
                           span: TimeInterval? = nil, detail: String? = nil) -> some View {
         let pace = paceFraction(reset: reset, span: span)
+        // 페이스가 있으면 페이스 대비 단계색, 없거나 창 초반 보류 중이면 기존 절대 임계색.
+        let tier = PaceTier.tier(utilization: utilization, pace: pace, critThreshold: store.critThreshold)
+        let tint = tier?.color ?? limitColor(utilization)
+        let percentTint = tier?.percentColor ?? limitColor(utilization)
         return VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(name).font(.callout)
@@ -581,11 +592,11 @@ struct PopoverView: View {
                 Text(limitPercentText(utilization))
                     .font(.callout)
                     .monospacedDigit()
-                    .foregroundStyle(limitColor(utilization))
+                    .foregroundStyle(percentTint)
             }
-            LimitProgressBar(usedPercent: utilization, tint: limitColor(utilization), pace: pace)
+            LimitProgressBar(usedPercent: utilization, tint: tint, pace: pace)
         }
-        .helpIfPresent(paceHelp(pace))
+        .helpIfPresent(paceHelp(pace, tier: tier, utilization: utilization))
     }
 
     @ViewBuilder
@@ -981,4 +992,23 @@ struct LimitProgressBar: View {
     private static let trackHeight: CGFloat = 6
     private static let markerOverhang: CGFloat = 2
     private static let markerHeight: CGFloat = trackHeight + markerOverhang * 2
+}
+
+/// 단계색은 시스템 색, 라이트/다크에서 각각 조정된 값으로 바뀌고, 최상위(.red)는
+/// `limitColor` 의 crit 색과 같아 "crit 이면 항상 빨강"이 두 경로에서 같은 색으로 보인다.
+extension PaceTier {
+    var color: Color {
+        switch self {
+        case .wayUnder: return .blue
+        case .under: return .teal
+        case .onPace: return .green
+        case .slightlyOver: return .yellow
+        case .over: return .orange
+        case .wayOver: return .red
+        }
+    }
+
+    /// % 숫자색. 노랑 글자는 라이트 모드 배경에서 거의 안 읽혀 그 단계만 기본 글자색으로 둔다 , 
+    /// 단계는 채움 색과 툴팁이 여전히 말해 준다.
+    var percentColor: Color { self == .slightlyOver ? .primary : color }
 }
