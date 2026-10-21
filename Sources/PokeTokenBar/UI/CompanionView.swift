@@ -292,6 +292,68 @@ struct SpriteView: View {
 /// 폭 제한 없는 HStack 은 팝오버 콘텐츠 폭(332pt)을 넘고, **넘친 자식이 부모 VStack 폭을 부풀려
 /// 팝오버 전체가 좌우로 잘린다**(진화줄뿐 아니라 탭바·합계까지). `maxWidth` 를 주면 그 폭 안에서
 /// 가로 스크롤한다 — 썸네일 크기는 유지하고, 가장자리 페이드 + 셰브론으로 스크롤 가능함을 알린다.
+/// Search, shiny-only and sort controls shared by the Pokédex grid and the catch log (upstream #329).
+/// Generic over the sort, since the grid sorts species and the log sorts individuals.
+struct DexFilterBar<Sort: CaseIterable & Identifiable & Hashable>: View where Sort.AllCases: RandomAccessCollection {
+    let l: L
+    @Binding var query: String
+    @Binding var shinyOnly: Bool
+    @Binding var sort: Sort
+    let defaultSort: Sort
+    let label: (Sort) -> String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.system(size: 11))
+                TextField(l.dexSearchPlaceholder, text: $query)
+                    .textFieldStyle(.plain).font(.system(size: 11))
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(l.clearFilters)
+                }
+            }
+            .padding(.horizontal, 6).padding(.vertical, 4)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
+
+            Button { shinyOnly.toggle() } label: {
+                Image(systemName: shinyOnly ? "sparkles" : "sparkle")
+                    .font(.system(size: 11, weight: shinyOnly ? .bold : .regular))
+                    .foregroundStyle(shinyOnly ? Color.yellow : Color.secondary)
+                    .frame(width: 16, height: 16)
+                    .padding(.horizontal, 6).padding(.vertical, 4)
+                    .background(shinyOnly ? Color.yellow.opacity(0.18) : Color(nsColor: .controlBackgroundColor),
+                                in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(shinyOnly ? Color.yellow.opacity(0.6) : Color.secondary.opacity(0.2), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .help(l.filterShinyOnly)
+            .accessibilityLabel(l.filterShinyOnly)
+
+            Menu {
+                ForEach(Array(Sort.allCases)) { option in
+                    Button { sort = option } label: {
+                        if sort == option { Label(label(option), systemImage: "checkmark") } else { Text(label(option)) }
+                    }
+                }
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 11))
+                    .foregroundStyle(sort != defaultSort ? Color.accentColor : Color.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help(l.sortTitle)
+            .accessibilityLabel(l.sortTitle)
+        }
+    }
+}
+
 /// A page arrow with a 22pt square hit area around the ~7x12pt glyph, which clicks often missed
 /// (upstream #380). The frame's own padding is the gap to the page number (the footer drops its
 /// spacing to match), and the fixed 18pt footer lets the taller hit area overflow without moving
@@ -937,6 +999,9 @@ struct CollectionView: View {
     @State private var segment: CollectionSegment = .pc
     /// 로그 전용 희귀도 필터. 도감은 개수 단위가 종이라 자기 필터를 따로 갖는다(DexGridView).
     @State private var selectedRarity: Rarity?
+    @State private var logQuery = ""
+    @State private var logShinyOnly = false
+    @State private var logSort: CompanionStore.CatchLogSortOption = .recentFirst
 
     /// 세 세그먼트 공통 높이 — 상점·가방과 같은 520. 세그먼트를 전환할 때도, 탭을 넘나들 때도
     /// 팝오버가 리사이즈되지 않는다.
@@ -951,8 +1016,7 @@ struct CollectionView: View {
 
     /// 선택된 희귀도만 노출(없으면 전체). 상단 캡슐 토글로 설정.
     private var visibleEntries: [DexEntry] {
-        guard let r = selectedRarity else { return store.dexEntriesSorted }
-        return store.dexEntriesSorted.filter { $0.rarity == r }
+        store.filteredDexEntries(query: logQuery, rarity: selectedRarity, shinyOnly: logShinyOnly, sort: logSort)
     }
 
     var body: some View {
@@ -993,6 +1057,12 @@ struct CollectionView: View {
             }
             // maxHeight 는 팝오버 재오픈 시 ScrollView fitting size 가 작게 잡혀 크기가 줄어드는
             // 문제가 있어, 바깥 VStack 을 height 로 고정해 스크롤 영역이 나머지를 채우게 한다.
+            DexFilterBar(l: store.l, query: $logQuery, shinyOnly: $logShinyOnly, sort: $logSort,
+                         defaultSort: .recentFirst, label: { store.l.label(for: $0) })
+            if visibleEntries.isEmpty {
+                Text(store.l.noSearchResults).font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             ScrollViewReader { proxy in
                 ScrollView {
                     // The log only grows. Building every row up front loads every row's evolution-line
@@ -2245,6 +2315,9 @@ private struct DexGridView: View {
     /// "Show all": pad the grid out to every species, greying the ones not met yet. Remembered
     /// across popover opens — it's a viewing preference, not navigation.
     @AppStorage("dexShowAll") private var showAll = false
+    @State private var query = ""
+    @State private var shinyOnly = false
+    @State private var sort: CompanionStore.DexSortOption = .numberAsc
 
     private static let columns = 4
     private static let rows = 6
@@ -2272,17 +2345,25 @@ private struct DexGridView: View {
         } else {
             // 종별 집계는 한 번만 훑고 하위로 넘긴다 — 칸마다 재집계하면 도감이 O(칸×도감) 이 된다.
             let all = showAll ? everyone : seen
-            let visible = selectedRarity.map { r in all.filter { $0.rarity == r } } ?? all
+            let visible = store.filteredDexSpecies(all, query: query, rarity: selectedRarity,
+                                                   shinyOnly: shinyOnly, sort: sort)
             let pageCount = max(1, (visible.count + Self.pageSize - 1) / Self.pageSize)
             let current = min(page, pageCount - 1)   // 보유 종이 줄어든 경우(필터 등) 범위 방어
             let slice = Array(visible.dropFirst(current * Self.pageSize).prefix(Self.pageSize))
             VStack(alignment: .leading, spacing: 8) {
                 header(all, seenCount: seen.count)
-                grid(slice)
+                DexFilterBar(l: store.l, query: $query, shinyOnly: $shinyOnly, sort: $sort,
+                             defaultSort: .numberAsc, label: { store.l.label(for: $0) })
+                if visible.isEmpty {
+                    Text(store.l.noSearchResults).font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    grid(slice)
                     .background(ScrollWheelPager { step in
                         let next = DexScrollPager.pageAfterScroll(current: current, pageCount: pageCount, step: step)
                         if next != current { page = next }
                     })
+                }
                 footer(current: current, pageCount: pageCount)
             }
             // 이름이 저장돼 있지 않은 구버전 졸업분을 채운다 — 격자는 저장분만 읽으므로 이게 없으면

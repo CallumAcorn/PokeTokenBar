@@ -752,6 +752,12 @@ read_when:
   (`-side*`/`-field*`)이라고 한 케이스에 묶기 전에, **각각의 실제 인자 개수를 독립적으로 확인**한다 —
   "제 소스가 아니면 증거가 아니다"(외부 로그 포맷 규칙, 위 §외부 로그·사용량 소스)와 같은 교훈을
   wire 프로토콜에도 적용한 사례.
+- **`localizedCaseInsensitiveContains` ignores case, not diacritics.** Pokédex and Catch Log search
+  promised accent-insensitive names but each screen had its own matcher built on it, so "flabebe"
+  missed Flabébé; the tests only searched ASCII names. Name search goes through the one shared
+  `CompanionStore.DexSearchMatcher` (`.caseInsensitive` + `.diacriticInsensitive`), and any new
+  searchable list reuses it instead of adding a matcher. Guard:
+  `testNameSearchIgnoresCaseAndDiacriticsInPokedexAndCatchLog` queries both screens.
 
 - **숫자 표기 구간은 원값이 아니라 반올림된 문자열로 판정한다.**
   `TokenFormatter.percent` 는 `value == value.rounded()` 로 정수 여부를 보고 아니면 `%.1f` 를 찍었다 —

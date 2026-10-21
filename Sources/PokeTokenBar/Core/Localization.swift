@@ -1232,6 +1232,60 @@ struct L {
         case .trade(let from):
             guard let from, !from.isEmpty else { return t("거래", "Traded", "交換", "Intercambio") }
             return t("\(from)에게서 거래", "Traded from \(from)", "\(from)から交換", "Intercambiado de \(from)")
+    var dexAppearance: String { t("모습", "Appearance", "姿", "Aspecto", "Apparence", "Aparência") }
+    var dexAppearancePreview: String { t("수집한 모습 · 종 정보", "Collected appearance · species reference", "収集した姿・種情報", "Aspecto coleccionado · datos de especie", "Apparence collectionnée · données de l’espèce", "Aparência coletada · dados da espécie") }
+    // MARK: Pokémon 상세
+    var loadingPokemonDetails: String { t("포켓몬 정보를 불러오는 중…", "Loading Pokémon details…", "ポケモン情報を読み込み中…", "Cargando detalles del Pokémon…", "Chargement des détails du Pokémon…", "Carregando detalhes do Pokémon…") }
+    var pokemonDetailsUnavailable: String { t("포켓몬 정보를 불러오지 못했어요.", "Pokémon details could not be loaded.", "ポケモン情報を読み込めませんでした。", "No se pudieron cargar los detalles.", "Impossible de charger les détails.", "Não foi possível carregar os detalhes.") }
+    var pokemonIndividual: String { t("개체", "Individual", "個体", "Ejemplar", "Individu", "Indivíduo") }
+    var level: String { t("레벨", "Level", "レベル", "Nivel", "Niveau", "Nível") }
+    var gender: String { t("성별", "Gender", "性別", "Sexo", "Sexe", "Gênero") }
+    var nature: String { t("성격", "Nature", "性格", "Naturaleza", "Nature", "Natureza") }
+    var ability: String { t("특성", "Ability", "特性", "Habilidad", "Talent", "Habilidade") }
+    var hiddenAbility: String { t("숨겨진 특성", "Hidden Ability", "隠れ特性", "Habilidad oculta", "Talent caché", "Habilidade oculta") }
+    var hidden: String { t("숨김", "Hidden", "隠れ", "Oculta", "Caché", "Oculta") }
+    var activeMoves: String { t("배운 기술", "Known moves", "覚えている技", "Movimientos conocidos", "Capacités connues", "Golpes conhecidos") }
+    var noLevelMoves: String { t("현재 레벨에서 배운 기술이 없어요.", "No level-up moves learned at this level.", "現在のレベルで覚えた技はありません。", "No hay movimientos aprendidos a este nivel.", "Aucune capacité apprise à ce niveau.", "Nenhum golpe aprendido neste nível.") }
+    var actualStats: String { t("실제 능력치", "Actual stats", "実能力値", "Estadísticas reales", "Stats réelles", "Atributos reais") }
+    var baseStats: String { t("기본 능력치", "Base stats", "種族値", "Estadísticas base", "Stats de base", "Atributos base") }
+    var speciesData: String { t("종 정보", "Species data", "種情報", "Datos de especie", "Données de l’espèce", "Dados da espécie") }
+    var height: String { t("키", "Height", "高さ", "Altura", "Taille", "Altura") }
+    var weight: String { t("몸무게", "Weight", "重さ", "Peso", "Poids", "Peso") }
+    var baseStatTotal: String { t("합계", "Base total", "合計", "Total base", "Total de base", "Total base") }
+    var possibleAbilities: String { t("가능한 특성", "Possible abilities", "可能な特性", "Habilidades posibles", "Talents possibles", "Habilidades possíveis") }
+    func completeMoveList(_ count: Int) -> String { t("전체 기술 목록 \(count)개", "Complete move list · \(count)", "全技リスト・\(count)", "Lista completa · \(count)", "Liste complète · \(count)", "Lista completa · \(count)") }
+        }
+    }
+    var dexSearchPlaceholder: String { t("이름 또는 #번호 검색…", "Search name or #…", "名前または#番号で検索…", "Buscar por nombre o #…", "Rechercher par nom ou #…", "Buscar por nome ou #…") }
+    var sortTitle: String { t("정렬", "Sort", "並び替え", "Ordenar", "Trier", "Ordenar") }
+    var sortDexNumberAsc: String { t("도감 번호 (낮은 순)", "Number (Low to High)", "図鑑番号（昇順）", "Nº de Pokédex (asc.)", "N° de Pokédex (croissant)", "Nº da Pokédex (crescente)") }
+    var sortDexNumberDesc: String { t("도감 번호 (높은 순)", "Number (High to Low)", "図鑑番号（降順）", "Nº de Pokédex (desc.)", "N° de Pokédex (décroissant)", "Nº da Pokédex (decrescente)") }
+    var sortNameAsc: String { t("이름 (가나다·A-Z)", "Name (A–Z)", "名前（五十音・A-Z）", "Nombre (A–Z)", "Nom (A–Z)", "Nome (A–Z)") }
+    var sortNameDesc: String { t("이름 (역순)", "Name (Z–A)", "名前（逆順）", "Nombre (Z–A)", "Nom (Z–A)", "Nome (Z–A)") }
+    var sortRarity: String { t("희귀도 순", "Rarity (High to Low)", "希少度順", "Rareza (mayor a menor)", "Rareté (décroissante)", "Raridade (maior a menor)") }
+    var sortDateDesc: String { t("최근 잡은 순", "Most Recent", "最近捕獲", "Más recientes", "Plus récents", "Mais recentes") }
+    var sortDateAsc: String { t("오래된 순", "Oldest First", "古い順", "Más antiguos", "Plus anciens", "Mais antigos") }
+    var filterShinyOnly: String { t("이로치만", "Shiny only", "色違いのみ", "Solo variocolor", "Chromatique uniquement", "Apenas Shiny") }
+    var noSearchResults: String { t("검색 결과가 없어요", "No Pokémon found", "見つかりませんでした", "No se encontraron Pokémon", "Aucun Pokémon trouvé", "Nenhum Pokémon encontrado") }
+    var clearFilters: String { t("필터 초기화", "Reset filters", "フィルターを解除", "Restablecer filtros", "Réinitialiser les filtres", "Redefinir filtros") }
+    func label(for option: CompanionStore.DexSortOption) -> String {
+        switch option {
+        case .numberAsc: return sortDexNumberAsc
+        case .numberDesc: return sortDexNumberDesc
+        case .nameAsc: return sortNameAsc
+        case .nameDesc: return sortNameDesc
+        case .rarityDesc: return sortRarity
+        }
+    }
+    func label(for option: CompanionStore.CatchLogSortOption) -> String {
+        switch option {
+        case .recentFirst: return sortDateDesc
+        case .oldestFirst: return sortDateAsc
+        case .numberAsc: return sortDexNumberAsc
+        case .numberDesc: return sortDexNumberDesc
+        case .nameAsc: return sortNameAsc
+        case .nameDesc: return sortNameDesc
+        case .rarityDesc: return sortRarity
         }
     }
     var dexNormalLabel: String { t("일반", "Normal", "通常色", "Normal") }
