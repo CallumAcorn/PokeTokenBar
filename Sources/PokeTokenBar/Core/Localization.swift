@@ -171,6 +171,27 @@ struct L {
     var todayCost: String { t("오늘 비용 ($)", "Today's cost ($)", "本日のコスト ($)", "Coste de hoy ($)", "Coût du jour ($)", "Custo de hoje ($)") }
     var limitPercent: String { t("한도 %", "Limit %", "上限 %", "Límite %", "Limite %", "Limite %") }
     var animationQualityLabel: String { t("애니메이션", "Animation", "アニメーション", "Animación", "Animation", "Animação") }
+    var menuLimitColor: String {
+        t("퍼센트 색상", "Percent color", "パーセントの色", "Color del porcentaje", "Couleur du pourcentage",
+          "Cor da porcentagem")
+    }
+    var menuLimitColorHint: String {
+        t("팝오버 한도 게이지와 같은 색", "Same colors as the popover limit gauges",
+          "ポップオーバーの上限ゲージと同じ色", "Los mismos colores que los medidores de límite",
+          "Les mêmes couleurs que les jauges de limite", "As mesmas cores dos medidores de limite")
+    }
+    func menuLimitColorMode(_ mode: UsageStore.MenuLimitColorMode) -> String {
+        switch mode {
+        case .gauge:
+            return t("게이지와 같게", "Match gauges", "ゲージと同じ", "Como los medidores",
+                     "Comme les jauges", "Como os medidores")
+        case .attention:
+            return t("주의 단계만", "Only when fast", "速いときだけ", "Solo si va rápido",
+                     "Seulement si rapide", "Só quando rápido")
+        case .off:
+            return t("끔", "Off", "オフ", "Desactivado", "Désactivé", "Desligado")
+        }
+    }
     var animationQualityHint: String {
         t("부드러울수록 배터리를 더 씁니다", "Smoother uses more battery",
           "滑らかにするとバッテリー消費が増えます", "Más fluido consume más batería",
