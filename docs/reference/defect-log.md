@@ -71,6 +71,15 @@ read_when:
   Catch-log rows must resolve legacy entries even when old names exist, and prefer persisted
   multilingual names over previously rendered strings after a language change.
 
+- **`speciesName` only knows species in the Pokédex — a screen that can show an unowned species must
+  resolve names.** The Day Care slot showed `#1` for the egg: its baby is the mother's line *base*, which
+  a traded mother never unlocked, and `speciesName` reads `dexUnlocked` alone. Tests passed because
+  their stub names were `#id` too, so the placeholder looked like a real name. Anything that can name a
+  species the player hasn't met (eggs, trade partners, battle opponents) goes through
+  `catalogSpeciesName`/`resolvedSpeciesName`, or saves the names when it already fetched the line
+  (`DayCareSlot.babyNames`). Stubs should return real-looking names so a `#id` fallback is visible.
+  `DayCareTests.testSlotNamesABabyThePokedexDoesNotKnow`.
+
 - **Translate at display time, including errors and accessibility labels.** Storing translated
   error strings left session-key and quota-refresh failures in the previous language. Store the
   failure and resolve it through the shared language selector. `LocalizationErrorsTests` switches

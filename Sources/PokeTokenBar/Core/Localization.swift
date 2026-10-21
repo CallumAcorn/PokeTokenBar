@@ -1292,6 +1292,9 @@ struct L {
         case .carbos:  return t("알칼로이드", "Carbos", "インドメタシン", "Carburante")
         case .bottlecapSilver: return t("은 병뚜껑", "Silver Bottle Cap", "ぎんのおうかん", "Tapón Plateado")
         case .bottlecapGold:   return t("금 병뚜껑", "Gold Bottle Cap", "きんのおうかん", "Tapón Dorado")
+        case .destinyKnot: return t("빨간실", "Destiny Knot", "あかいいと", "Lazo Destino")
+        case .everstone:   return t("변함없는돌", "Everstone", "かわらずのいし", "Piedra Eterna")
+        case .dayCareSlot: return t("키우미집 두 번째 자리", "Second Day Care Slot", "育て屋の2つめの枠", "Segunda plaza de la Guardería")
         }
     }
     func itemDescription(_ kind: ItemKind) -> String {
@@ -1334,6 +1337,22 @@ struct L {
                      "Same as the Silver Bottle Cap, but Hyper Trains all six stats at once.",
                      "ぎんのおうかんと同じですが、6つのステータス全てを一度にハイパートレーニングします。",
                      "Igual que el Tapón Plateado, pero Hiperentrena las seis estadísticas a la vez.")
+        case .destinyKnot:
+            let knot = DayCare.destinyKnotInheritedIVCount, normal = DayCare.inheritedIVCount
+            return t("키우미집에 맡길 때 함께 쓰면 아기가 부모의 개체값을 \(normal)개 대신 \(knot)개 물려받아요.",
+                     "Attach it when dropping off at the Day Care: the baby copies \(knot) of its parents' IVs instead of \(normal).",
+                     "育て屋に預けるときに使うと、子どもが親の個体値を\(normal)つではなく\(knot)つ受け継ぎます。",
+                     "Úsalo al dejar una pareja en la Guardería: la cría copia \(knot) IVs de sus padres en vez de \(normal).")
+        case .everstone:
+            return t("키우미집에 맡길 때 부모 한 마리에게 쓰면 아기가 그 부모의 성격을 물려받아요.",
+                     "Give it to one parent when dropping off at the Day Care: the baby gets that parent's nature.",
+                     "育て屋に預けるときに親の1匹に使うと、子どもがその親のせいかくを受け継ぎます。",
+                     "Dáselo a uno de los padres al dejarlos en la Guardería: la cría hereda su naturaleza.")
+        case .dayCareSlot:
+            return t("키우미집 자리를 하나 더 열어 알 두 개를 동시에 키울 수 있어요.",
+                     "Opens a second Day Care slot, so two eggs can incubate at once.",
+                     "育て屋の枠をもう1つ開けて、タマゴを2つ同時に育てられます。",
+                     "Abre una segunda plaza en la Guardería para incubar dos huevos a la vez.")
         }
     }
     /// itemDescription 에서 쓰는 스탯 이름 — pcStats* 라벨(HP/공격/…)을 그대로 재사용.
@@ -1424,6 +1443,138 @@ struct L {
           "Move \(monName) to your PC and start the \(eggName)? (you keep \(monName))",
           "\(monName) をPCに送って \(eggName) にしますか？（\(monName) は失いません）",
           "¿Mover a \(monName) a tu PC y empezar \(eggName)? (conservas a \(monName))")
+    }
+
+    // MARK: Day Care (doc: specs/2026-10-21-day-care.md)
+    var dayCareTitle: String { t("키우미집", "Day Care", "育て屋", "Guardería") }
+    var dayCareHint: String {
+        t("궁합이 맞는 포켓몬 두 마리를 맡기면, 토큰을 쓰는 동안 알이 자라요. 훈련 중인 포켓몬의 성장은 그대로예요.",
+          "Leave two compatible Pokémon here. Their egg grows as you use tokens, and your training Pokémon keeps all its growth.",
+          "相性のいいポケモンを2匹預けると、トークンを使うあいだにタマゴが育ちます。育成中のポケモンの成長はそのままです。",
+          "Deja aquí dos Pokémon compatibles. Su huevo crece mientras usas tokens, y tu Pokémon en entrenamiento no pierde crecimiento.")
+    }
+    func dayCareSlotLabel(_ n: Int) -> String { t("\(n)번 자리", "Slot \(n)", "\(n)つめの枠", "Plaza \(n)") }
+    var dayCareEmpty: String { t("비어 있어요", "Empty", "空き", "Vacía") }
+    var dayCareDropOffPair: String { t("두 마리 맡기기", "Drop off a pair", "2匹預ける", "Dejar una pareja") }
+    func dayCareSecondSlotHint(_ price: String) -> String {
+        t("상점에서 두 번째 자리를 살 수 있어요 (\(price))", "Buy a second slot in the shop (\(price))",
+          "ショップで2つめの枠を買えます（\(price)）", "Compra una segunda plaza en la tienda (\(price))")
+    }
+    var dayCareIncubating: String { t("알을 키우는 중", "Incubating", "タマゴを育成中", "Incubando") }
+    func dayCareProgressLabel(_ done: String, _ total: String) -> String { "\(done) / \(total)" }
+    var dayCareCancelAction: String { t("데려가기", "Take them back", "引き取る", "Recogerlos") }
+    func dayCareCancelConfirm(_ fee: String) -> String {
+        t("두 마리를 데려갈까요? 진행이 사라지고 맡긴 비용 \(fee)은(는) 돌려받지 못해요.",
+          "Take both Pokémon back? Progress is lost and the \(fee) fee isn't refunded.",
+          "2匹を引き取りますか？進行は失われ、預け料 \(fee) は戻りません。",
+          "¿Recoger a los dos Pokémon? Se pierde el progreso y la tarifa de \(fee) no se devuelve.")
+    }
+    var dayCareEggReady: String { t("알이 준비됐어요!", "Egg ready!", "タマゴができました！", "¡Huevo listo!") }
+    var dayCareHatchAction: String { t("이 알 부화시키기", "Hatch this egg", "このタマゴをかえす", "Eclosionar este huevo") }
+    func dayCareHatchConfirm(_ monName: String) -> String {
+        t("\(monName)을(를) PC로 보내고 이 알을 부화시킬까요?", "Move \(monName) to your PC and hatch this egg?",
+          "\(monName) をPCに送って、このタマゴをかえしますか？", "¿Mover a \(monName) al PC y eclosionar este huevo?")
+    }
+    var dayCareHatchBlocked: String {
+        t("지금 알을 먼저 부화시킨 뒤 다시 시도해 주세요.", "Hatch your current egg first, then try again.",
+          "いまのタマゴを先にかえしてから、もう一度試してください。", "Primero eclosiona tu huevo actual y vuelve a intentarlo.")
+    }
+    var dayCareDiscardAction: String { t("알 버리기", "Discard egg", "タマゴを手放す", "Desechar huevo") }
+    var dayCareDiscardConfirm: String { t("이 알은 사라져요. 버릴까요?", "This egg will be lost. Discard it?", "このタマゴは失われます。手放しますか？", "Este huevo se perderá. ¿Desecharlo?") }
+    var dayCarePickTitle: String { t("포켓몬 두 마리 고르기", "Pick two Pokémon", "ポケモンを2匹選ぶ", "Elige dos Pokémon") }
+    var dayCarePickHint: String {
+        t("훈련 중인 포켓몬은 맡길 수 없어요.", "Your training Pokémon can't be left here.",
+          "育成中のポケモンは預けられません。", "Tu Pokémon en entrenamiento no se puede dejar aquí.")
+    }
+    var dayCareChecking: String { t("궁합 확인 중…", "Checking…", "相性を確認中…", "Comprobando…") }
+    var dayCareDataUnavailable: String {
+        t("종 정보를 불러오지 못했어요. 온라인에서 다시 시도해 주세요.", "Couldn't load species data. Try again when you're online.",
+          "種の情報を読み込めませんでした。オンラインで再度お試しください。", "No se pudieron cargar los datos. Inténtalo de nuevo con conexión.")
+    }
+    func dayCareCompatibility(_ c: DayCare.Compatibility) -> String {
+        switch c {
+        case .compatible: return t("알을 낳을 수 있어요", "These two can make an egg", "タマゴができます", "Pueden tener un huevo")
+        case .sameMon: return t("서로 다른 두 마리를 골라 주세요", "Pick two different Pokémon", "別々の2匹を選んでください", "Elige dos Pokémon distintos")
+        case .undiscovered: return t("알을 낳을 수 없는 포켓몬이 있어요", "One of these can't make eggs", "タマゴができないポケモンがいます", "Uno de ellos no puede tener huevos")
+        case .bothDitto: return t("메타몽끼리는 알을 낳지 못해요", "Two Ditto can't make an egg", "メタモン同士ではタマゴができません", "Dos Ditto no pueden tener un huevo")
+        case .noSharedEggGroup: return t("알 그룹이 겹치지 않아요", "They don't share an egg group", "タマゴグループが合いません", "No comparten grupo huevo")
+        case .genderMismatch: return t("수컷과 암컷이어야 해요 (또는 한 마리가 메타몽)", "They need to be a male and a female (or one Ditto)",
+                                       "オスとメスが必要です（または片方がメタモン）", "Deben ser macho y hembra (o uno Ditto)")
+        }
+    }
+    /// Short reason for a picker row's trailing edge — the full sentence is in its tooltip.
+    func dayCareCompatibilityShort(_ c: DayCare.Compatibility) -> String {
+        switch c {
+        case .compatible: return t("궁합 좋음", "Compatible", "相性よし", "Compatibles")
+        case .sameMon: return ""
+        case .undiscovered: return t("알을 못 낳아요", "No eggs", "タマゴ不可", "Sin huevos")
+        case .bothDitto: return t("메타몽끼리", "Two Ditto", "メタモン同士", "Dos Ditto")
+        case .noSharedEggGroup: return t("그룹이 달라요", "No shared group", "グループ違い", "Otro grupo")
+        case .genderMismatch: return t("성별이 안 맞아요", "Same gender", "性別が合わない", "Mismo género")
+        }
+    }
+    var dayCarePickPartner: String { t("짝을 골라 주세요", "Pick a partner", "相手を選んでください", "Elige pareja") }
+    var dayCareEggGroupsLabel: String { t("알 그룹", "Egg groups", "タマゴグループ", "Grupos huevo") }
+    /// Official egg group names, keyed by PokéAPI slug.
+    func eggGroupName(_ slug: String) -> String {
+        switch slug {
+        case "monster": return t("괴수", "Monster", "かいじゅう", "Monstruo")
+        case "water1": return t("수중1", "Water 1", "すいちゅう1", "Agua 1")
+        case "water2": return t("수중2", "Water 2", "すいちゅう2", "Agua 2")
+        case "water3": return t("수중3", "Water 3", "すいちゅう3", "Agua 3")
+        case "bug": return t("벌레", "Bug", "むし", "Bicho")
+        case "flying": return t("비행", "Flying", "ひこう", "Volador")
+        case "ground": return t("육상", "Field", "りくじょう", "Campo")
+        case "fairy": return t("요정", "Fairy", "ようせい", "Hada")
+        case "plant": return t("식물", "Grass", "しょくぶつ", "Planta")
+        case "humanshape": return t("인간형", "Human-Like", "ひとがた", "Humanoide")
+        case "mineral": return t("광물", "Mineral", "こうぶつ", "Mineral")
+        case "indeterminate": return t("부정형", "Amorphous", "ふていけい", "Amorfo")
+        case "ditto": return t("메타몽", "Ditto", "メタモン", "Ditto")
+        case "dragon": return t("드래곤", "Dragon", "ドラゴン", "Dragón")
+        case "no-eggs": return t("미발견", "Undiscovered", "タマゴみはっけん", "Desconocido")
+        default: return slug
+        }
+    }
+    func dayCareDropOffResult(_ r: DayCareDropOffResult) -> String? {
+        switch r {
+        case .droppedOff: return nil
+        case .slotUnavailable: return t("이 자리는 비어 있지 않아요", "That slot isn't free", "この枠は空いていません", "Esa plaza no está libre")
+        case .invalidParent: return t("PC에 있는 서로 다른 두 마리를 골라 주세요", "Pick two different benched Pokémon", "PCにいる別々の2匹を選んでください", "Elige dos Pokémon distintos del PC")
+        case .notEnoughTokens: return notEnoughTokens
+        case .missingItem: return t("가방에 그 아이템이 없어요", "That item isn't in your bag", "そのアイテムがバッグにありません", "Ese objeto no está en tu mochila")
+        case .dataUnavailable: return dayCareDataUnavailable
+        case .incompatible(let c): return dayCareCompatibility(c)
+        }
+    }
+    func dayCareFee(_ fee: String) -> String { t("맡기는 비용 \(fee)", "Fee \(fee)", "預け料 \(fee)", "Tarifa \(fee)") }
+    var dayCareDropOffAction: String { t("맡기기", "Drop off", "預ける", "Dejar") }
+    func dayCareDestinyKnotToggle(_ n: Int) -> String {
+        t("빨간실 사용 (개체값 \(n)개)", "Attach Destiny Knot (\(n) IVs)", "あかいいとを使う（個体値\(n)つ）", "Usar Lazo Destino (\(n) IVs)")
+    }
+    var dayCareEverstoneLabel: String { itemName(.everstone) }
+    var dayCareEverstoneNone: String { t("사용 안 함", "None", "使わない", "Ninguno") }
+    var dayCareAtDayCare: String { t("키우미집에 맡김", "At the Day Care", "育て屋に預け中", "En la Guardería") }
+    var dayCareLockedHint: String {
+        t("알이 준비될 때까지 훈련·교환·아이템 사용을 할 수 없어요.", "Can't train, trade or take items until the egg is ready.",
+          "タマゴができるまで育成・交換・アイテム使用はできません。", "No puede entrenar, intercambiarse ni usar objetos hasta que el huevo esté listo.")
+    }
+    var dayCareEggReadyBanner: String { t("키우미집 알이 준비됐어요", "Your Day Care egg is ready", "育て屋のタマゴができました", "Tu huevo de la Guardería está listo") }
+    var dayCareEggHint: String { t("키우미집 알", "Day Care egg", "育て屋のタマゴ", "Huevo de la Guardería") }
+    var useFromDayCare: String { t("키우미집에서 맡길 때 써요", "Used when dropping off at the Day Care", "育て屋に預けるときに使います", "Se usa al dejar una pareja en la Guardería") }
+    func genderLabel(_ g: Gender) -> String {
+        switch g {
+        case .male: return t("수컷", "Male", "オス", "Macho")
+        case .female: return t("암컷", "Female", "メス", "Hembra")
+        case .genderless: return t("성별 없음", "Genderless", "性別不明", "Sin género")
+        }
+    }
+    var notifDayCareReadyTitle: String { t("🥚 키우미집 알이 준비됐어요!", "🥚 Your Day Care egg is ready!", "🥚 育て屋のタマゴができました！", "🥚 ¡Tu huevo de la Guardería está listo!") }
+    func notifDayCareReadyBody(_ name: String) -> String {
+        t("\(name)의 알이 기다리고 있어요. PC의 키우미집에서 부화시켜 주세요.",
+          "A \(name) egg is waiting. Hatch it from the Day Care in your PC.",
+          "\(name) のタマゴが待っています。PCの育て屋からかえしてあげましょう。",
+          "Un huevo de \(name) te espera. Eclosiónalo desde la Guardería en tu PC.")
     }
 
     // MARK: 사탕 획득 알림 ("왜 받는지" = 토큰 한도를 다 채운 수고에 대한 보상)

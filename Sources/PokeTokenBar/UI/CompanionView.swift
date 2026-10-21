@@ -692,6 +692,10 @@ struct CompanionHeader: View {
                                     .background(rarityColor(guarantee)).foregroundStyle(.white)
                                     .clipShape(Capsule())
                             }
+                            if store.activeEggIsFromDayCare {
+                                Label(store.l.dayCareEggHint, systemImage: "house.fill")
+                                    .font(.system(size: 8, weight: .bold)).foregroundStyle(.green)
+                            }
                         }
                         LabeledProgressBar(value: store.eggProgress,
                                            label: Self.progressDetail(used: store.state.eggUsage,
@@ -717,6 +721,10 @@ struct CompanionHeader: View {
             if let g = store.justGraduated {
                 Text(store.l.graduated(g))
                     .font(.caption2).foregroundStyle(.orange)
+            }
+            if store.hasReadyDayCareEgg {
+                Label(store.l.dayCareEggReadyBanner, systemImage: "house.fill")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(.green)
             }
         }
         .onAppear {
@@ -1204,6 +1212,7 @@ private struct PartyGridView: View {
     let store: CompanionStore
     @State private var page = 0
     @State private var selectedMonID: MonState.ID?
+    @State private var showDayCare = false
 
     private static let columns = 4
     private static let rows = 6
@@ -1211,7 +1220,9 @@ private struct PartyGridView: View {
     private static let spacing: CGFloat = 4
 
     var body: some View {
-        if let id = selectedMonID, let mon = store.party.first(where: { $0.id == id }) {
+        if showDayCare {
+            DayCareView(store: store) { showDayCare = false }
+        } else if let id = selectedMonID, let mon = store.party.first(where: { $0.id == id }) {
             MonDetailView(store: store, mon: mon) { selectedMonID = nil }
         } else {
             let party = store.party
@@ -1222,6 +1233,17 @@ private struct PartyGridView: View {
                 HStack(spacing: 6) {
                     Text(store.l.pcTitle).font(.callout.weight(.semibold))
                     Text(store.l.dexTotal(party.count)).font(.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { showDayCare = true } label: {
+                        Label(store.l.dayCareTitle, systemImage: "house.fill")
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .overlay(alignment: .topTrailing) {
+                        if store.hasReadyDayCareEgg {
+                            Circle().fill(.green).frame(width: 7, height: 7).offset(x: 2, y: -2)
+                                .accessibilityLabel(store.l.dayCareEggReadyBanner)
+                        }
+                    }
                 }
                 grid(slice)
                 footer(current: current, pageCount: pageCount)
@@ -1322,6 +1344,17 @@ private struct PartyMemberCell: View {
                         .accessibilityLabel(store.l.dexShinyLabel)
                 }
             }
+            .overlay(alignment: .bottomTrailing) {
+                if store.isAtDayCare(mon.id) {
+                    Image(systemName: "house.fill")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.green)
+                        .padding(2)
+                        .background(.regularMaterial, in: Circle())
+                        .offset(y: -10)
+                        .accessibilityLabel(store.l.dayCareAtDayCare)
+                }
+            }
             .padding(3)
             .background(Color.secondary.opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -1342,6 +1375,7 @@ private struct PartyMemberCell: View {
         if mon.isShiny { parts.append(store.l.dexShinyLabel) }
         if isTraining { parts.append(store.l.dexRaising) }
         if mon.evolutionLocked { parts.append(store.l.evolutionLockedBadge) }
+        if store.isAtDayCare(mon.id) { parts.append(store.l.dayCareAtDayCare) }
         return parts.joined(separator: " · ")
     }
 }
@@ -1366,6 +1400,8 @@ private struct MonDetailView: View {
     /// The species whose Pokédex page is showing in this screen's place — this mon's own species
     /// from the header button, or another one reached through that page's "better options".
     @State private var dexSpeciesID: Int?
+    @State private var gender: Gender?
+    @State private var eggGroups: [String] = []
 
     private var isTraining: Bool { mon.id == store.trainingMon?.id }
     /// 실제로 보여줄 특성 슬러그 — 진짜 롤이 있으면 그것, 없으면(특성 도입 전 개체) baseStats 가
@@ -1438,6 +1474,8 @@ private struct MonDetailView: View {
         // has to be `.never`).
         .scrollIndicators(.never)
         .task(id: mon.baseID) { line = await store.line(baseID: mon.baseID) }
+        .task(id: mon.id) { gender = await store.gender(of: mon) }
+        .task(id: mon.currentID) { eggGroups = await store.eggInfo(speciesID: mon.currentID)?.eggGroups ?? [] }
         // currentID(폼/진화 단계)로 키 — baseID 와 달리 진화하면 바뀌어 기준 스탯도 다시 받아야 한다.
         // 특성 표시명은 baseStats(특성 후보 목록)가 있어야 effectiveAbility 를 정할 수 있으므로 그
         // 뒤에 이어서 조회한다(별개 .task 로 나누면 baseStats 가 아직 없을 때 경쟁 상태가 생긴다).
@@ -1884,6 +1922,7 @@ private struct MonDetailView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(displayName).font(.callout.weight(.semibold))
+                    GenderMark(gender: gender, l: store.l)
                     Text(store.l.pcLevel(mon.level)).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                     if mon.isShiny { Text("✨").font(.system(size: 11)) }
                     Text(store.l.rarityLabel(mon.rarity).uppercased()).font(.system(size: 8, weight: .bold))
@@ -1895,6 +1934,12 @@ private struct MonDetailView: View {
                     }
                 }
                 typeBadges
+                if !eggGroups.isEmpty {
+                    HStack(spacing: 3) {
+                        Text(store.l.dayCareEggGroupsLabel).font(.system(size: 9)).foregroundStyle(.tertiary)
+                        ForEach(eggGroups, id: \.self) { EggGroupChip(slug: $0, l: store.l) }
+                    }
+                }
                 // 홈 화면과 같은 구성: 단계·성격·특성 → 진행바 → 다음까지 남은 토큰 → (훈련 중이면) 상태 문구.
                 let nature = mon.nature.map { " · \($0.name(store.language))" } ?? ""
                 let ability = abilityDisplayName.map { " · \($0)" + (abilityIsHidden ? " (H)" : "") } ?? ""
@@ -1907,6 +1952,11 @@ private struct MonDetailView: View {
                 }
                 if isTraining {
                     Text(store.statusLine).font(.caption2).foregroundStyle(.secondary)
+                }
+                if store.isAtDayCare(mon.id) {
+                    Label(store.l.dayCareAtDayCare, systemImage: "house.fill")
+                        .font(.caption2.weight(.semibold)).foregroundStyle(.green)
+                        .help(store.l.dayCareLockedHint)
                 }
             }
             Spacer()
@@ -1934,6 +1984,8 @@ private struct MonDetailView: View {
                     store.setTrainingSlot(to: mon.id)
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(store.isAtDayCare(mon.id))
+                .help(store.isAtDayCare(mon.id) ? store.l.dayCareLockedHint : "")
             }
             Spacer(minLength: 0)
             // Icon-only (vs. the labeled buttons above) — this one applies to every mon regardless of

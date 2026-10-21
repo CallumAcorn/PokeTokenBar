@@ -185,6 +185,48 @@ enum SaveTransfer {
         return m
     }
 
+    /// Day Care slots from outside the app. A slot that couldn't come from normal play — a missing or
+    /// repeated parent, the training mon still locked, a slot that isn't owned, a parent in two slots —
+    /// is cancelled the way the player would cancel it: dropped, with its attached items returned.
+    /// Otherwise progress and target are clamped, since both feed the usage tick's arithmetic.
+    static func sanitizedDayCare(_ state: CompanionState) -> CompanionState {
+        var s = state
+        let partyIDs = Set(s.party.map(\.id))
+        let slotCount = (s.inventory[ItemKind.dayCareSlot.rawValue] ?? 0) > 0 ? DayCare.maxSlots : 1
+        var usedSlots = Set<Int>()
+        var lockedParents = Set<String>()
+        var kept: [DayCareSlot] = []
+        for var slot in s.dayCare.sorted(by: { $0.slot < $1.slot }) {
+            slot.target = min(max(1, slot.target), DayCare.incubationCap)
+            slot.progress = min(max(0, slot.progress), slot.target)
+            let parents = slot.parentIDs
+            let valid = (0..<slotCount).contains(slot.slot) && !usedSlots.contains(slot.slot)
+                && parents.count == 2 && Set(parents).count == 2 && parents.allSatisfy(partyIDs.contains)
+                && slot.traits.parentIVs.count == 2
+                && (slot.isReady || (!parents.contains { $0 == s.trainingSlotID } && lockedParents.isDisjoint(with: parents)))
+            guard valid else {
+                if slot.usedDestinyKnot { s.inventory[ItemKind.destinyKnot.rawValue, default: 0] += 1 }
+                if slot.usedEverstone { s.inventory[ItemKind.everstone.rawValue, default: 0] += 1 }
+                continue
+            }
+            slot.traits = sanitizedTraits(slot.traits)
+            usedSlots.insert(slot.slot)
+            if !slot.isReady { lockedParents.formUnion(parents) }
+            kept.append(slot)
+        }
+        s.dayCare = kept
+        return s
+    }
+
+    /// Inherited values land on the baby — clamp them to what real parents could carry.
+    static func sanitizedTraits(_ traits: InheritedTraits) -> InheritedTraits {
+        var t = traits
+        t.parentIVs = t.parentIVs.prefix(2).map { clampedSpread($0, to: 0...31) }
+        t.inheritedIVCount = min(max(0, t.inheritedIVCount), StatKind.allCases.count)
+        t.parentMoves = Array(t.parentMoves.prefix(2 * MonState.maxKnownMoves))
+        return t
+    }
+
     private static func clampedSpread(_ s: StatSpread, to range: ClosedRange<Int>) -> StatSpread {
         func c(_ v: Int) -> Int { min(max(range.lowerBound, v), range.upperBound) }
         return StatSpread(hp: c(s.hp), attack: c(s.attack), defense: c(s.defense),
@@ -218,7 +260,12 @@ enum SaveTransfer {
         // 조합으로 둘 다 들어오면 그 보증이 다음 알로 새어 영구 프리미엄이 되므로 여기서 떨군다.
         // 그 보증으로 미리 뽑아둔 종(pendingHatchID)도 함께 버린다 — 보증만 지우면 졸업 후 받는 **무료**
         // 알이 그 pre-roll 로 부화해, 아무도 사지 않은 프리미엄 결과가 나온다.
-        if s.trainingSlotID != nil { s.eggTier = nil; s.pendingHatchID = nil }
+        if s.trainingSlotID != nil { s.eggTier = nil; s.pendingHatchID = nil; s.pendingDayCareEgg = nil }
+        // A Day Care egg in the active slot hatches its parents' species — keep the pre-roll pointing there.
+        if let dayCareEgg = s.pendingDayCareEgg {
+            s.pendingDayCareEgg = sanitizedTraits(dayCareEgg)
+            s.pendingHatchID = dayCareEgg.babySpeciesID
+        }
         // 만족시킬 수 없는 보증은 알을 영구히 못 깨게 만든다 — 전설은 capture_rate 로 표현할 수 없어
         // (captureRateCeiling == nil) 두 롤 경로 모두 후보를 0개로 만들고, 부화가 없으니 보증도 소비되지
         // 않으며, 새 알 구매는 `hasActive` 게이트에 막혀 빠져나갈 수단이 없다. 디코드는 *성공*하므로
@@ -244,6 +291,8 @@ enum SaveTransfer {
         // 구별할 수 있다. 순서가 반대면 링크가 없어 아무것도 접지 못한다.
         s.party = CompanionState.collapsedRestoreClones(party: s.party, dex: s.dex)
         if let tid = s.trainingSlotID, !s.party.contains(where: { $0.id == tid }) { s.trainingSlotID = nil }
+        // After the party is final (restore/collapse above), since slots point at party members.
+        s = sanitizedDayCare(s)
         s.dexUnlocked = CompanionState.backfilledDexUnlocked(existing: s.dexUnlocked, dex: s.dex, party: s.party)
         // 대표 종 정리는 **backfill 다음**이어야 한다. dexUnlocked 가 dex/party 보다 뒤처진 세이브가
         // backfill 이 존재하는 이유인데, 그 전에 판정하면 실제로 보유한 종을 "미보유"로 읽고 고정을

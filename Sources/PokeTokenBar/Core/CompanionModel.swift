@@ -153,6 +153,9 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
     /// 실제 효과(IV 31 취급)는 즉시가 아니라 CompanionStore.startHyperTraining 이 시작하는 그라인드가
     /// 끝나야 붙는다 — see MonState.hyperTrainTarget.
     case bottlecapSilver, bottlecapGold
+    /// Day Care items (doc: specs/2026-10-21-day-care.md). Destiny Knot and Everstone are
+    /// attached to a slot at drop-off; the second slot is a permanent purchase like the Shiny Charm.
+    case destinyKnot, everstone, dayCareSlot
 
     /// PokéAPI 아이템 스프라이트 파일명(.../sprites/items/{name}.png). nil = 스프라이트 없음(이모지 폴백만).
     var spriteName: String? {
@@ -170,6 +173,9 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         // 본가 PokéAPI /item/{name} 슬러그와 일치 (bottle-cap / gold-bottle-cap).
         case .bottlecapSilver: return "bottle-cap"
         case .bottlecapGold: return "gold-bottle-cap"
+        case .destinyKnot: return "destiny-knot"
+        case .everstone: return "everstone"
+        case .dayCareSlot: return nil   // Not a real item — emoji fallback only
         }
     }
     /// 스프라이트 로딩 전/미제공/실패 시 폴백 이모지.
@@ -181,6 +187,9 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .moveReroll: return "🔀"
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return "💊"
         case .bottlecapSilver, .bottlecapGold: return "🧢"
+        case .destinyKnot: return "🪢"
+        case .everstone: return "🪨"
+        case .dayCareSlot: return "🏡"
         }
     }
     /// 상점 판매가(재화 = 사용한 토큰). nil = 상점 미판매.
@@ -193,14 +202,17 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return Vitamin.price
         case .bottlecapSilver: return Bottlecap.silverPrice
         case .bottlecapGold: return Bottlecap.goldPrice
+        // Consumed per drop-off and cosmetic-adjacent, so priced like Mint.
+        case .destinyKnot, .everstone: return Mint.price
+        case .dayCareSlot: return DayCare.secondSlotPrice
         }
     }
     /// 보유형(패시브) 아이템 — 소비하지 않고 보유하는 동안 상시 효과. 1회 구매(재구매 불가), 가방엔 "적용 중" 표시.
     var isPassive: Bool {
         switch self {
         case .rareCandy, .mint, .moveReroll, .hpUp, .protein, .iron, .calcium, .zinc, .carbos,
-             .bottlecapSilver, .bottlecapGold: return false
-        case .shinyCharm: return true
+             .bottlecapSilver, .bottlecapGold, .destinyKnot, .everstone: return false
+        case .shinyCharm, .dayCareSlot: return true
         }
     }
     /// 이 비타민이 올리는 EV 필드 — 비타민이 아니면 nil(useVitamin 이 이걸로 대상 여부도 판정).
@@ -212,7 +224,8 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
         case .calcium: return \.specialAttack
         case .zinc: return \.specialDefense
         case .carbos: return \.speed
-        case .rareCandy, .mint, .shinyCharm, .moveReroll, .bottlecapSilver, .bottlecapGold: return nil
+        case .rareCandy, .mint, .shinyCharm, .moveReroll, .bottlecapSilver, .bottlecapGold,
+             .destinyKnot, .everstone, .dayCareSlot: return nil
         }
     }
     /// 이 병뚜껑이 여는 하이퍼트레이닝 대상 종류 — 병뚜껑이 아니면 nil. 실제 대상 스탯(은)은 시작 시점에
@@ -844,6 +857,13 @@ enum StatCalc {
         var seed = legacySeed(monID + "-ability")
         return candidates[Int(legacyDraw(&seed) % UInt64(candidates.count))].name
     }
+
+    /// Fallback gender for mons hatched before gender existed — same fixed hash as legacyIVs, in its own
+    /// namespace, rolled against the line base's real `gender_rate`.
+    static func legacyGender(monID: String, genderRate: Int) -> Gender {
+        var seed = legacySeed(monID + "-gender")
+        return Gender.roll(genderRate: genderRate, roll: legacyDraw(&seed))
+    }
 }
 
 /// 게임 밸런스 — 개체 롤 확률.
@@ -918,6 +938,9 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     /// slots as the mon grows (CompanionStore.autoFillKnownMoves); past that, only a manual TM teach
     /// or a slot replacement adds more.
     var knownMoves: [Int] = []
+    /// Rolled at hatch from the species' `gender_rate`. nil for mons hatched before the Day Care existed —
+    /// `effectiveGender(genderRate:)` fills those in from the id, the same way `effectiveIVs` does.
+    var gender: Gender?
     // pathIDs 가 비면(손상된 상태 파일) baseID 로 폴백 — 렌더마다 읽히므로 out-of-bounds 크래시 방지.
     var currentID: Int { pathIDs.isEmpty ? baseID : pathIDs[min(stageIndex, pathIDs.count - 1)] }
     /// The stages this mon has actually been, first stage first, ending at `currentID` — not the
@@ -940,6 +963,13 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     func effectiveAbility(candidates: [PokemonAbility]) -> String? {
         ability ?? StatCalc.legacyAbility(monID: id, candidates: candidates)
     }
+    /// The gender to show and pair with — the hatch roll if there is one, otherwise a fixed value from
+    /// the id against `genderRate` (the line base's `gender_rate`). nil until that rate is loaded.
+    func effectiveGender(genderRate: Int?) -> Gender? {
+        if let gender { return gender }
+        guard let genderRate else { return nil }
+        return StatCalc.legacyGender(monID: id, genderRate: genderRate)
+    }
 
     init(id: String = UUID().uuidString, baseID: Int, pathIDs: [Int], plannedPathIDs: [Int]? = nil,
          stageIndex: Int, usedAtStage: Int, rarity: Rarity, totalForms: Int, isShiny: Bool = false,
@@ -947,7 +977,8 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
          dittoDisguise: Int? = nil, dittoRevealed: Bool = false,
          acquiredAt: Date = Date(), acquiredVia: AcquisitionSource = .egg, evolutionLocked: Bool = false,
          isFloating: Bool = false, isBackFacing: Bool = false, isMirrored: Bool = false, knownMoves: [Int] = [],
-         hyperTrainedStats: Set<StatKind> = [], hyperTrainTarget: HyperTrainTarget? = nil, hyperTrainProgress: Int = 0) {
+         hyperTrainedStats: Set<StatKind> = [], hyperTrainTarget: HyperTrainTarget? = nil, hyperTrainProgress: Int = 0,
+         gender: Gender? = nil) {
         self.id = id
         self.baseID = baseID
         self.pathIDs = pathIDs
@@ -977,6 +1008,7 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         self.hyperTrainedStats = hyperTrainedStats
         self.hyperTrainTarget = hyperTrainTarget
         self.hyperTrainProgress = hyperTrainProgress
+        self.gender = gender
     }
 
     // 하위호환 디코딩: shiny/nature/id/acquiredAt/acquiredVia 는 구버전 저장에 없음 → 기본값.
@@ -1017,6 +1049,7 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         hyperTrainedStats = (try? c.decodeIfPresent(Set<StatKind>.self, forKey: .hyperTrainedStats)) ?? []
         hyperTrainTarget = (try? c.decodeIfPresent(HyperTrainTarget.self, forKey: .hyperTrainTarget)) ?? nil
         hyperTrainProgress = (try? c.decodeIfPresent(Int.self, forKey: .hyperTrainProgress)) ?? 0
+        gender = (try? c.decodeIfPresent(Gender.self, forKey: .gender)) ?? nil
     }
 }
 
@@ -1178,6 +1211,11 @@ struct CompanionState: Codable, Sendable {
     // they can currently learn (lowest level first), once, to catch up saves from before this
     // feature existed. Same class of field as candyFeatureSeeded (a one-time seed flag).
     var movesFeatureSeeded = false
+    /// Day Care slots in use (doc: specs/2026-10-21-day-care.md). At most `DayCare.maxSlots`.
+    var dayCare: [DayCareSlot] = []
+    /// Traits for the egg in the active slot when it came from the Day Care. Set by "Hatch this egg"
+    /// together with `pendingHatchID`, read and cleared by the hatch. nil = an ordinary egg.
+    var pendingDayCareEgg: InheritedTraits?
 
     init() {}
 
@@ -1246,6 +1284,8 @@ struct CompanionState: Codable, Sendable {
         candyGrantTier     = c.lenient([String: Int].self, forKey: .candyGrantTier, default: [:])
         candyFeatureSeeded = c.lenient(Bool.self, forKey: .candyFeatureSeeded, default: false)
         movesFeatureSeeded = c.lenient(Bool.self, forKey: .movesFeatureSeeded, default: false)
+        dayCare            = c.lenient([Lossy<DayCareSlot>].self, forKey: .dayCare, default: []).compactMap(\.value)
+        pendingDayCareEgg       = c.lenientOptional(InheritedTraits.self, forKey: .pendingDayCareEgg)
     }
 
     /// 구버전 세이브 1회 마이그레이션 — 졸업 기록(dex) 각 항목의 chainOrder 전 종 + 구버전 active 의
