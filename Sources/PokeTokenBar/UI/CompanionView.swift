@@ -928,7 +928,9 @@ struct CollectionView: View {
             // 문제가 있어, 바깥 VStack 을 height 로 고정해 스크롤 영역이 나머지를 채우게 한다.
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
+                    // The log only grows. Building every row up front loads every row's evolution-line
+                    // sprites on entry, so rows are built as they scroll into view (upstream 184c5f41).
+                    LazyVStack(alignment: .leading, spacing: 8) {
                         Color.clear.frame(height: 0).id("dexTop")   // 스크롤 최상단 앵커
                         ForEach(visibleEntries) { entry in
                             DexEntryRow(store: store, entry: entry)
