@@ -122,4 +122,12 @@ final class GeminiUsageTests: XCTestCase {
         let c = ModelPricing.cost(model: "gemini-2.5-pro", input: 420, output: 80, cacheWrite: 0, cacheRead: 600)
         XCTAssertEqual(c, 420 * 1.25e-6 + 80 * 10e-6 + 600 * 0.3125e-6, accuracy: 1e-12)
     }
+
+    /// Each unknown model is reported once per launch, case-insensitively.
+    func testUnpricedModelIsNotedOnce() {
+        let model = "mystery-model-\(UUID().uuidString)"
+        XCTAssertTrue(ModelPricing.firstUnpricedSighting(model))
+        XCTAssertFalse(ModelPricing.firstUnpricedSighting(model))
+        XCTAssertFalse(ModelPricing.firstUnpricedSighting(model.uppercased()))
+    }
 }

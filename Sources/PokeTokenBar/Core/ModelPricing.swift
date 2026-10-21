@@ -75,8 +75,25 @@ enum ModelPricing {
             if m.contains("pro")   { return .perMillion(1.25, 10, 0, 0.3125) }
             if m.contains("flash") { return .perMillion(0.30, 2.5, 0, 0.075) }
         }
+        noteUnpriced(model)
         return .zero
     }
+
+    /// A model nothing prices costs $0 with no other trace; Opus 5.5 went unnoticed until a
+    /// screenshot. Log each unpriced model once per launch so a new one shows up the first time a
+    /// provider reports it (upstream 5f6a4f0a).
+    static func noteUnpriced(_ model: String) {
+        guard firstUnpricedSighting(model) else { return }
+        AppLog.write("Unpriced model: \(model), its cost shows as $0 until ModelPricing.table has a row")
+    }
+
+    static func firstUnpricedSighting(_ model: String) -> Bool {
+        unpricedLock.lock(); defer { unpricedLock.unlock() }
+        return unpricedSeen.insert(model.lowercased()).inserted
+    }
+
+    nonisolated(unsafe) private static var unpricedSeen: Set<String> = []
+    private static let unpricedLock = NSLock()
 
     static func cost(model: String, input: Int, output: Int, cacheWrite: Int, cacheRead: Int) -> Double {
         let r = rate(for: model)
