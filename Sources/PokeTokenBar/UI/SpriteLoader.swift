@@ -96,7 +96,7 @@ actor SpriteStore {
     /// caller's task is cancelled or the species has no animated sprite.
     func recoveringAnimatedData(
         speciesID: Int, shiny: Bool, facing: SpriteFacing = .front,
-        wait: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+        wait: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) async -> Data? {
         guard PokemonAssets.hasAnimatedSprite(speciesID: speciesID) else { return nil }
         return await Self.retrying(wait: wait) {
