@@ -71,6 +71,15 @@ read_when:
   Catch-log rows must resolve legacy entries even when old names exist, and prefer persisted
   multilingual names over previously rendered strings after a language change.
 
+- **`speciesName` only knows species in the Pokédex — a screen that can show an unowned species must
+  resolve names.** The Day Care slot showed `#1` for the egg: its baby is the mother's line *base*, which
+  a traded mother never unlocked, and `speciesName` reads `dexUnlocked` alone. Tests passed because
+  their stub names were `#id` too, so the placeholder looked like a real name. Anything that can name a
+  species the player hasn't met (eggs, trade partners, battle opponents) goes through
+  `catalogSpeciesName`/`resolvedSpeciesName`, or saves the names when it already fetched the line
+  (`DayCareSlot.babyNames`). Stubs should return real-looking names so a `#id` fallback is visible.
+  `DayCareTests.testSlotNamesABabyThePokedexDoesNotKnow`.
+
 - **Translate at display time, including errors and accessibility labels.** Storing translated
   error strings left session-key and quota-refresh failures in the previous language. Store the
   failure and resolve it through the shared language selector. `LocalizationErrorsTests` switches
@@ -1017,3 +1026,9 @@ read_when:
   **없을 때**만 봤고, **멈춘 채로 남은** 경우를 보지 않았다. 규칙: 다른 앱의 상태 파일로 기능을 켜고 끌 때는
   존재가 아니라 **최신성**(날짜·mtime)을 판정 조건으로 쓴다. 이제 카운터 날짜가 로컬 오늘·어제 또는 UTC
   오늘일 때만 측정 중이다. (2026-10-14, 2.5.1-hardened.15 에서 실측.)
+
+- **만족 불가능한 값은 디코드를 통과한다 — 세이브 경계에서 값의 *도메인*을 본다.** Day Care 알의
+  `babySpeciesID`(#50)는 정수라 어떤 값이든 디코드되고, 1~649 밖이면 부화가 영원히 실패해 알이 활성
+  슬롯을 막은 채 매 틱 PokéAPI 404 를 재시도한다. `eggTier` 의 만족 불가능한 보증과 같은 부류다. 규칙:
+  종·기술 id 처럼 외부 조회 키가 되는 값은 세이브 경계에서 지원 범위(`PokemonAssets.animatedSpeciesIDs`)로
+  검증하고, 벗어나면 일반 플레이에서 나올 수 없는 상태로 보고 취소한다(아이템 환불). (2026-10-21, #50 리뷰.)

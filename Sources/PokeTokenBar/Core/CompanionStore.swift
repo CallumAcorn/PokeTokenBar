@@ -439,6 +439,7 @@ final class CompanionStore {
                             applyUsage(delta)
                         }
                         applyHyperTrainProgress(delta)
+                        applyDayCareProgress(delta)
                     }
                 } else {
                     var ledger = state.claimedTodayTokensByProvider ?? [:]
@@ -470,6 +471,7 @@ final class CompanionStore {
                             applyUsage(delta)
                         }
                         applyHyperTrainProgress(delta)
+                        applyDayCareProgress(delta)
                     }
                 }
             }
@@ -677,6 +679,7 @@ final class CompanionStore {
         state.eggUsage = 0   // 새 알은 처음부터 인큐베이션
         state.eggTier = tier
         state.pendingHatchID = nil
+        state.pendingDayCareEgg = nil   // "Hatch this egg" sets it again right after, for a Day Care egg
         prefetchedLineID = nil
         // "알을 받는 순간" 즉시 프리패칭 시작 — 다음 부화의 종·라인·스프라이트 예열.
         Task { await self.ensureEggPrefetch() }
@@ -794,6 +797,7 @@ final class CompanionStore {
             applyUsage(gained)
         }
         applyHyperTrainProgress(gained)
+        applyDayCareProgress(gained)
         AppLog.write("desktop chat credit: +\(gained) tokens measured by Claude desktop")
         save()
     }
@@ -845,7 +849,7 @@ final class CompanionStore {
     /// 여유가 있을 때. 사탕/민트와 달리 대상은 PC 의 임의 개체(꼭 훈련 중일 필요 없음) — PC 상세
     /// 화면에서 지금 보고 있는 mon 에 바로 적용한다.
     func canUseVitamin(_ kind: ItemKind, on monID: MonState.ID) -> Bool {
-        guard let keyPath = kind.vitaminStat, itemCount(kind) > 0,
+        guard let keyPath = kind.vitaminStat, itemCount(kind) > 0, !isAtDayCare(monID),
               let mon = state.party.first(where: { $0.id == monID }) else { return false }
         return evRoom(for: mon.evs, stat: keyPath) > 0
     }
@@ -854,7 +858,7 @@ final class CompanionStore {
     /// 본가처럼 상한에 걸려 더 올릴 여지가 없으면 소모하지 않고 false(먹여도 효과 없는 상태는 안 만든다).
     @discardableResult
     func useVitamin(_ kind: ItemKind, for monID: MonState.ID) -> Bool {
-        guard let keyPath = kind.vitaminStat, itemCount(kind) > 0,
+        guard let keyPath = kind.vitaminStat, itemCount(kind) > 0, !isAtDayCare(monID),
               let idx = state.party.firstIndex(where: { $0.id == monID }) else { return false }
         let room = evRoom(for: state.party[idx].evs, stat: keyPath)
         guard room > 0 else { return false }
@@ -875,7 +879,7 @@ final class CompanionStore {
     /// 이 병뚜껑으로 지정 개체에 하이퍼트레이닝을 시작할 수 있나 — 재고>0, 이미 진행 중이 아님, 대상
     /// 스탯(들)이 아직 안 끝났을 것. 비타민(canUseVitamin)과 같은 자리, 같은 "대상은 PC 임의 개체" 원칙.
     func canStartHyperTraining(_ kind: ItemKind, target: HyperTrainTarget, on monID: MonState.ID) -> Bool {
-        guard kind.isBottlecap, itemCount(kind) > 0,
+        guard kind.isBottlecap, itemCount(kind) > 0, !isAtDayCare(monID),
               let mon = state.party.first(where: { $0.id == monID }),
               mon.hyperTrainTarget == nil else { return false }
         switch target {
@@ -983,7 +987,8 @@ final class CompanionStore {
         // chooseBase) pre-roll 이 옛 지역 기준일 수 있다. activeGeneration 을 올려 그 결과를 버리고
         // 새 지역으로 다시 굴린다(startFreshEgg 와 같은 무효화 패턴) — 안 그러면 "다음에 살 알"에만
         // 필터가 적용되는 것처럼 보이고 지금 품고 있는 알은 옛 지역 그대로 조용히 부화한다.
-        if state.trainingSlotID == nil {
+        // A Day Care egg's species is fixed by its parents — the region filter doesn't apply to it.
+        if state.trainingSlotID == nil, state.pendingDayCareEgg == nil {
             activeGeneration += 1
             state.pendingHatchID = nil
             prefetchedLineID = nil
@@ -1097,7 +1102,7 @@ final class CompanionStore {
     /// 알을 인큐베이션 중이면(trainingSlotID == nil) 전환할 대상이 없으므로 no-op.
     @discardableResult
     func setTrainingSlot(to monID: MonState.ID) -> Bool {
-        guard state.trainingSlotID != nil, state.trainingSlotID != monID,
+        guard state.trainingSlotID != nil, state.trainingSlotID != monID, !isAtDayCare(monID),
               state.party.contains(where: { $0.id == monID }) else { return false }
         carryFloatingToNewTraining(from: state.trainingSlotID, to: monID)
         state.trainingSlotID = monID
@@ -1204,13 +1209,13 @@ final class CompanionStore {
     // Once full, a slot (0..3) is required and that slot gets replaced.
 
     func canLearnLevelUpMove(_ moveID: Int, for monID: MonState.ID, learnset: [LearnableMove]) -> Bool {
-        guard let mon = state.party.first(where: { $0.id == monID }), !mon.knownMoves.contains(moveID) else { return false }
+        guard !isAtDayCare(monID), let mon = state.party.first(where: { $0.id == monID }), !mon.knownMoves.contains(moveID) else { return false }
         // Egg and tutor moves are free at any level — see `LearnMethod`.
         return learnset.contains { $0.moveID == moveID && ($0.method.isFree || ($0.method == .levelUp && $0.level <= mon.level)) }
     }
 
     func canTeachTM(_ moveID: Int, to monID: MonState.ID, learnset: [LearnableMove]) -> Bool {
-        guard tmCount(moveID) > 0,
+        guard tmCount(moveID) > 0, !isAtDayCare(monID),
               let mon = state.party.first(where: { $0.id == monID }), !mon.knownMoves.contains(moveID) else { return false }
         return learnset.contains { $0.moveID == moveID && $0.method == .machine }
     }
@@ -1348,6 +1353,178 @@ final class CompanionStore {
         return true
     }
 
+    // MARK: Day Care (doc: specs/2026-10-21-day-care.md)
+
+    /// Slots the player can use — one free, a second after the shop purchase.
+    var dayCareSlotCount: Int { itemCount(.dayCareSlot) > 0 ? DayCare.maxSlots : 1 }
+    var dayCareSlots: [DayCareSlot] { state.dayCare }
+    func dayCareSlot(_ slot: Int) -> DayCareSlot? { state.dayCare.first { $0.slot == slot } }
+    var hasReadyDayCareEgg: Bool { state.dayCare.contains(where: \.isReady) }
+    /// The Day Care egg waiting to hatch in the active slot, if the current egg came from there.
+    var activeEggIsFromDayCare: Bool { state.trainingSlotID == nil && state.pendingDayCareEgg != nil }
+
+    /// A parent whose egg is still incubating — it can't train, be traded or take items.
+    func isAtDayCare(_ monID: MonState.ID) -> Bool {
+        state.dayCare.contains { $0.lockedMonIDs.contains(monID) }
+    }
+
+    /// "Hatch this egg" needs a training Pokémon to bench — it's blocked while an egg is already in
+    /// the active slot (one egg hatching at a time).
+    var canHatchDayCareEgg: Bool { hasActive }
+
+    func eggInfo(speciesID: Int) async -> EggInfo? {
+        try? await provider.eggInfo(speciesID: speciesID)
+    }
+
+    /// The gender to show — the hatch roll, or the fixed fallback once the line's ratio is loaded.
+    func gender(of mon: MonState) async -> Gender? {
+        if let gender = mon.gender { return gender }
+        return mon.effectiveGender(genderRate: await eggInfo(speciesID: mon.baseID)?.genderRate)
+    }
+
+    /// One parent as the compatibility rules see it: its current form's egg groups and its gender.
+    func dayCareCandidate(_ mon: MonState) async -> DayCare.Candidate? {
+        guard let info = await eggInfo(speciesID: mon.currentID),
+              let gender = await gender(of: mon) else { return nil }
+        return DayCare.Candidate(monID: mon.id, info: info, gender: gender)
+    }
+
+    /// nil while species data can't be loaded.
+    func dayCareCompatibility(_ a: MonState, _ b: MonState) async -> DayCare.Compatibility? {
+        guard let ca = await dayCareCandidate(a), let cb = await dayCareCandidate(b) else { return nil }
+        return DayCare.compatibility(ca, cb)
+    }
+
+    /// Everything a drop-off needs that doesn't need the network. Run before the fetches and again
+    /// after them, since the party, wallet or slots can change during the awaits.
+    private func dropOffCheck(slot: Int, parentIDs: [String], destinyKnot: Bool,
+                              everstoneMonID: String?) -> DayCareDropOffResult? {
+        guard (0..<dayCareSlotCount).contains(slot), dayCareSlot(slot) == nil else { return .slotUnavailable }
+        guard parentIDs.count == 2, parentIDs[0] != parentIDs[1],
+              parentIDs.allSatisfy({ id in state.party.contains { $0.id == id } }),
+              !parentIDs.contains(where: { $0 == state.trainingSlotID || isAtDayCare($0) }) else { return .invalidParent }
+        if let everstoneMonID, !parentIDs.contains(everstoneMonID) { return .invalidParent }
+        guard availableTokens >= DayCare.fee else { return .notEnoughTokens }
+        if destinyKnot, itemCount(.destinyKnot) == 0 { return .missingItem }
+        if everstoneMonID != nil, itemCount(.everstone) == 0 { return .missingItem }
+        return nil
+    }
+
+    func canDropOff(slot: Int, parentIDs: [String], destinyKnot: Bool = false, everstoneMonID: String? = nil) -> Bool {
+        dropOffCheck(slot: slot, parentIDs: parentIDs, destinyKnot: destinyKnot, everstoneMonID: everstoneMonID) == nil
+    }
+
+    /// Drops a pair off: checks compatibility, works out the baby and its incubation target, copies the
+    /// parents' traits, then charges the fee and takes any attached items. Nothing is charged unless it
+    /// succeeds.
+    @discardableResult
+    func dropOff(slot: Int, parentIDs: [String], destinyKnot: Bool = false,
+                 everstoneMonID: String? = nil) async -> DayCareDropOffResult {
+        if let problem = dropOffCheck(slot: slot, parentIDs: parentIDs, destinyKnot: destinyKnot,
+                                      everstoneMonID: everstoneMonID) { return problem }
+        let parents = parentIDs.compactMap { id in state.party.first { $0.id == id } }
+        guard parents.count == 2,
+              let a = await dayCareCandidate(parents[0]),
+              let b = await dayCareCandidate(parents[1]) else { return .dataUnavailable }
+        let compatibility = DayCare.compatibility(a, b)
+        guard compatibility == .compatible else { return .incompatible(compatibility) }
+        let mother = parents[DayCare.motherIndex(a, b)]
+        let splitRoll = DayCare.genderSplitPartners[mother.baseID] != nil
+        guard let motherAbilities = await baseStats(speciesID: mother.currentID)?.abilities else { return .dataUnavailable }
+        // Both possible babies of a gender-split line share rarity and egg cycles, so the line base
+        // stands in for either when sizing the incubation.
+        let sizingSpecies = DayCare.babySpecies(motherBaseID: mother.baseID, roll: 0)
+        guard let babyInfo = await eggInfo(speciesID: sizingSpecies),
+              let babyLine = try? await provider.line(baseSpeciesID: sizingSpecies) else { return .dataUnavailable }
+        if let problem = dropOffCheck(slot: slot, parentIDs: parentIDs, destinyKnot: destinyKnot,
+                                      everstoneMonID: everstoneMonID) { return problem }
+        // Re-read the parents — the awaits above may have let their state move on.
+        let latest = parentIDs.compactMap { id in state.party.first { $0.id == id } }
+        guard latest.count == 2 else { return .invalidParent }
+        let latestMother = latest.first { $0.id == mother.id } ?? mother
+        let hidden = latestMother.effectiveAbility(candidates: motherAbilities)
+            .map { name in motherAbilities.contains { $0.name == name && $0.isHidden } } ?? false
+        let baby = DayCare.babySpecies(motherBaseID: mother.baseID, roll: splitRoll ? rng.next() : 0)
+        let traits = InheritedTraits(
+            babySpeciesID: baby,
+            parentIVs: latest.map { $0.ivs ?? StatCalc.legacyIVs(monID: $0.id) },
+            inheritedIVCount: destinyKnot ? DayCare.destinyKnotInheritedIVCount : DayCare.inheritedIVCount,
+            everstoneNature: everstoneMonID.flatMap { id in latest.first { $0.id == id } }?.nature,
+            hiddenAbilityParent: hidden,
+            parentMoves: latest.flatMap(\.knownMoves),
+            masuda: latest.contains { if case .trade = $0.acquiredVia { return true } else { return false } })
+        let target = DayCare.incubationTarget(rarity: babyLine.rarity, hatchCounter: babyInfo.hatchCounter)
+        state.spentTokens += DayCare.fee
+        if destinyKnot { state.inventory[ItemKind.destinyKnot.rawValue] = itemCount(.destinyKnot) - 1 }
+        if everstoneMonID != nil { state.inventory[ItemKind.everstone.rawValue] = itemCount(.everstone) - 1 }
+        state.dayCare.append(DayCareSlot(slot: slot, parentIDs: parentIDs, traits: traits, babyRarity: babyLine.rarity,
+                                         target: target, usedDestinyKnot: destinyKnot,
+                                         usedEverstone: everstoneMonID != nil, babyNames: babyLine.names[baby]))
+        state.dayCare.sort { $0.slot < $1.slot }
+        AppLog.write("day care: slot \(slot) baby=\(baby) rarity=\(babyLine.rarity) target=\(target) knot=\(destinyKnot) everstone=\(everstoneMonID != nil)")
+        save()
+        return .droppedOff
+    }
+
+    /// Cancels an incubating slot: the parents unlock, progress is lost, the fee isn't refunded, and any
+    /// Destiny Knot or Everstone goes back to the bag. A ready egg is discarded instead.
+    @discardableResult
+    func cancelDayCare(slot: Int) -> Bool {
+        guard let idx = state.dayCare.firstIndex(where: { $0.slot == slot }), !state.dayCare[idx].isReady else { return false }
+        let removed = state.dayCare.remove(at: idx)
+        if removed.usedDestinyKnot { state.inventory[ItemKind.destinyKnot.rawValue, default: 0] += 1 }
+        if removed.usedEverstone { state.inventory[ItemKind.everstone.rawValue, default: 0] += 1 }
+        AppLog.write("day care: slot \(slot) cancelled")
+        save()
+        return true
+    }
+
+    /// Throws away a ready egg to free its slot. No refund — the egg is what the fee bought.
+    @discardableResult
+    func discardDayCareEgg(slot: Int) -> Bool {
+        guard let idx = state.dayCare.firstIndex(where: { $0.slot == slot }), state.dayCare[idx].isReady else { return false }
+        state.dayCare.remove(at: idx)
+        AppLog.write("day care: slot \(slot) egg discarded")
+        save()
+        return true
+    }
+
+    /// "Hatch this egg": benches the training Pokémon (as buying an egg does) and puts the ready Day
+    /// Care egg in the active slot, where the normal hatch threshold applies. The slot frees up.
+    @discardableResult
+    func hatchDayCareEgg(slot: Int) -> Bool {
+        guard canHatchDayCareEgg,
+              let idx = state.dayCare.firstIndex(where: { $0.slot == slot }), state.dayCare[idx].isReady else { return false }
+        let traits = state.dayCare.remove(at: idx).traits
+        startFreshEgg(tier: nil)
+        // Set after startFreshEgg (which clears both) and before its prefetch task runs, so the egg
+        // never rolls a random species.
+        state.pendingHatchID = traits.babySpeciesID
+        state.pendingDayCareEgg = traits
+        justGraduated = nil; justEvolvedTo = nil; eventUntil = nil
+        AppLog.write("day care: slot \(slot) egg moved to the active slot, baby=\(traits.babySpeciesID)")
+        save()
+        return true
+    }
+
+    /// The baby's name without the network — saved at drop-off, else the Pokédex, else "#id".
+    func dayCareBabyName(_ slot: DayCareSlot) -> String {
+        slot.babyNames.flatMap { state.language.resolveName($0) } ?? speciesName(slot.traits.babySpeciesID)
+    }
+
+    /// Adds usage to every incubating slot, stopping at its target — usage past that isn't banked.
+    /// Like hyper training this is another observer of the same delta, not a spend.
+    private func applyDayCareProgress(_ delta: Int) {
+        guard delta > 0 else { return }
+        for idx in state.dayCare.indices where !state.dayCare[idx].isReady {
+            let remaining = state.dayCare[idx].target - state.dayCare[idx].progress
+            state.dayCare[idx].progress += min(delta, remaining)
+            if state.dayCare[idx].isReady {
+                notifyCompanionEvent(l.notifDayCareReadyTitle, l.notifDayCareReadyBody(dayCareBabyName(state.dayCare[idx])))
+            }
+        }
+    }
+
     // 보증 없는 기본 알 래퍼 — 기존 호출부/테스트 호환.
     var canBuyFreshEgg: Bool { canBuyEgg(nil) }
     @discardableResult
@@ -1358,7 +1535,8 @@ final class CompanionStore {
     /// Party members that are benched (not training) — trade-offer candidates. The training mon is
     /// excluded (decision: only benched Pokémon can be traded — this rules out ever needing to
     /// release the training slot mid-trade).
-    var benchedParty: [MonState] { state.party.filter { $0.id != state.trainingSlotID } }
+    /// Day Care parents still incubating are left out — they can't be offered until the egg is ready.
+    var benchedParty: [MonState] { state.party.filter { $0.id != state.trainingSlotID && !isAtDayCare($0.id) } }
 
     /// Removes a benched party member from the PC — call this after handing it off in a trade. Never
     /// removes the training mon (defensive — safe even if a caller passes an id outside
@@ -1371,6 +1549,9 @@ final class CompanionStore {
         guard monID != state.trainingSlotID,
               let idx = state.party.firstIndex(where: { $0.id == monID }) else { return false }
         state.party.remove(at: idx)
+        // A completed trade is final on the server, so it isn't refused here even for a Day Care
+        // parent (benchedParty already keeps those out of new offers). Cancel that slot instead.
+        if let slot = state.dayCare.first(where: { $0.lockedMonIDs.contains(monID) }) { cancelDayCare(slot: slot.slot) }
         save()
         return true
     }
@@ -1541,7 +1722,10 @@ final class CompanionStore {
         defer { isHatching = false }
         // 프리패칭된 종이 있으면 그대로 사용(라인·스프라이트 예열됨 → 딜레이 ~0), 없으면 지금 롤.
         let base: Int?
-        if let pending = state.pendingHatchID {
+        // A Day Care egg's species is its parents', even if the pre-roll was cleared by a failed hatch.
+        if let dayCareEgg = state.pendingDayCareEgg {
+            base = dayCareEgg.babySpeciesID
+        } else if let pending = state.pendingHatchID {
             base = pending
         } else {
             base = await chooseBase()
@@ -1582,6 +1766,9 @@ final class CompanionStore {
         prefetchInFlight = true
         defer { prefetchInFlight = false }
 
+        if state.pendingHatchID == nil, let dayCareEgg = state.pendingDayCareEgg {
+            state.pendingHatchID = dayCareEgg.babySpeciesID
+        }
         if state.pendingHatchID == nil {
             guard let id = await chooseBase() else { return }   // 오프라인 → 다음 틱 재시도
             // await 사이에 부화가 끝났거나(훈련 슬롯이 찼거나) 상태가 통째로 교체됐으면(세이브 불러오기)
@@ -1617,8 +1804,18 @@ final class CompanionStore {
     }
 
     /// 이로치 부화 판정(순수) — 미리 뽑은 roll 값 % 분모(부적 보유 48, 없으면 64)==0. (부수효과 없이 xctest)
-    nonisolated static func rollsShiny(roll: UInt64, charmOwned: Bool) -> Bool {
-        roll % (charmOwned ? ShinyCharm.shinyDenominator : PokemonOdds.shinyDenominator) == 0
+    nonisolated static func rollsShiny(roll: UInt64, charmOwned: Bool, masuda: Bool = false) -> Bool {
+        roll % shinyDenominator(charmOwned: charmOwned, masuda: masuda) == 0
+    }
+
+    /// Shiny odds for one hatch — the charm and the Masuda method (a Day Care parent from a trade).
+    nonisolated static func shinyDenominator(charmOwned: Bool, masuda: Bool) -> UInt64 {
+        switch (charmOwned, masuda) {
+        case (false, false): return PokemonOdds.shinyDenominator
+        case (true, false): return ShinyCharm.shinyDenominator
+        case (false, true): return DayCare.masudaShinyDenominator
+        case (true, true): return DayCare.masudaCharmShinyDenominator
+        }
     }
 
     /// IV 한 스탯 판정(순수) — 미리 뽑은 roll 값 % 32. (부수효과 없이 xctest)
@@ -1645,6 +1842,16 @@ final class CompanionStore {
             AppLog.write("hatch: line fetch failed for base \(baseID) — egg kept, retry next tick")
             return
         }
+        // A Day Care egg carries its parents' traits. Its data is fetched here, before the generation
+        // guard below, so a save swapped in during these awaits discards the hatch as well.
+        let dayCareEgg = state.pendingDayCareEgg.flatMap { $0.babySpeciesID == baseID ? $0 : nil }
+        let genderRate = (try? await provider.eggInfo(speciesID: line.baseID))?.genderRate
+        var inheritedMoves: [Int] = []
+        if let dayCareEgg, !dayCareEgg.parentMoves.isEmpty,
+           let learnset = try? await provider.learnableMoves(speciesID: line.baseID) {
+            let eggMoves = Set(learnset.filter { $0.method == .egg }.map(\.moveID))
+            inheritedMoves = Array(dayCareEgg.parentMoves.filter { eggMoves.contains($0) }.prefix(MonState.maxKnownMoves))
+        }
         // 라인 fetch 창(네트워크) 동안 활성 개체가 교체됐으면 이 부화 결과를 폐기한다. 세이브 불러오기가
         // 그 창에 들어오면, 여기서 멈추지 않는 한 갓 부화한 개체가 방금 불러온 개체를 덮어쓴다.
         // (loadCurrentLine·revealDitto 와 같은 세대 가드 — isHatching 락은 같은 앱 내 중복 부화만 막는다.)
@@ -1669,12 +1876,13 @@ final class CompanionStore {
         state.eggUsage = 0
         state.eggTier = nil   // 보증은 이 부화로 소비된다(다음 알은 다시 무보증)
         // 개체 롤 — shiny(1/64)·성격(25종)은 부화 순간 확정, 진화해도 유지.
-        let isShiny = Self.rollsShiny(roll: rng.next(), charmOwned: ownsShinyCharm)
-        let nature = PokemonNature.allCases[Int(rng.next() % UInt64(PokemonNature.allCases.count))]
+        let isShiny = Self.rollsShiny(roll: rng.next(), charmOwned: ownsShinyCharm, masuda: dayCareEgg?.masuda ?? false)
+        var nature = PokemonNature.allCases[Int(rng.next() % UInt64(PokemonNature.allCases.count))]
         // 메타몽 위장 롤 — common·≥2형태에 한해 1/128. .app 게이트(&& 단락 → 비앱에선 rng 미소비로
         // 기존 테스트 RNG 시퀀스 무영향). 위장/리빌 로직은 상태 기반으로 별도 테스트한다.
         var dittoDisguise: Int?
-        if dittoDisguiseRollingEnabled,
+        // A Day Care egg is exactly the species its parents make — never a disguised Ditto.
+        if dittoDisguiseRollingEnabled, dayCareEgg == nil,
            Self.dittoDisguiseHit(rarity: line.rarity, totalForms: line.totalForms, roll: rng.next()) {
             dittoDisguise = line.baseID
         }
@@ -1682,21 +1890,33 @@ final class CompanionStore {
         // IV — 스탯당 0~31, 부화 시 1회 확정 후 평생 고정(EV 는 아이템으로만 오르므로 부화 시 항상 0).
         // 기존 롤(shiny/nature/ditto/진화 분기 선택) 전부 뒤에 이어 붙인다 — 그 사이에 끼워 넣으면 seed 로
         // 결과(성격·분기 경로 등)를 고정 검증하는 기존 테스트가 전부 어긋난다.
-        let ivs = StatSpread(hp: Self.rollIV(rng.next()), attack: Self.rollIV(rng.next()),
+        var ivs = StatSpread(hp: Self.rollIV(rng.next()), attack: Self.rollIV(rng.next()),
                              defense: Self.rollIV(rng.next()), specialAttack: Self.rollIV(rng.next()),
                              specialDefense: Self.rollIV(rng.next()), speed: Self.rollIV(rng.next()))
         // 특성 — 종의 실제 특성 후보(pokemon-species 가 아니라 /pokemon/{id} 에만 있음)를 별도 fetch 해야
         // 롤할 수 있다. line fetch 와 달리 이 fetch 가 실패해도 부화 자체는 막지 않는다 — 전투 전엔
         // 장식 정보라(특성 미상 = nil) 부화 신뢰성을 이 fetch 에 묶을 이유가 없다.
         let abilityOptions = (try? await provider.baseStats(speciesID: line.baseID))?.abilities ?? []
-        let ability = Self.rollAbility(abilityOptions, roll: rng.next())
+        var ability = Self.rollAbility(abilityOptions, roll: rng.next())
+        // Inheritance and gender roll after every existing roll, so seeded tests keep their sequence.
+        if let dayCareEgg {
+            for (stat, parent) in DayCare.inheritedStats(count: dayCareEgg.inheritedIVCount, draw: { rng.next() })
+            where dayCareEgg.parentIVs.indices.contains(parent) {
+                ivs[keyPath: stat.keyPath] = dayCareEgg.parentIVs[parent][keyPath: stat.keyPath]
+            }
+            if let everstone = dayCareEgg.everstoneNature { nature = everstone }
+            ability = DayCare.inheritedAbility(rolled: ability, options: abilityOptions,
+                                               hiddenAbilityParent: dayCareEgg.hiddenAbilityParent, draw: { rng.next() })
+        }
+        let gender = genderRate.map { Gender.roll(genderRate: $0, roll: rng.next()) }
         // 위장 중엔 이로치를 숨긴다 — 부화 알림·연출도 일반체로(정체는 리빌 때 공개).
         let showShiny = isShiny && dittoDisguise == nil
         activeGeneration += 1
         let newMon = MonState(baseID: line.baseID, pathIDs: [line.baseID], plannedPathIDs: evolutionPlan,
                               stageIndex: 0, usedAtStage: 0, rarity: line.rarity, totalForms: evolutionPlan.count,
                               isShiny: isShiny, nature: nature, ability: ability, ivs: ivs, dittoDisguise: dittoDisguise,
-                              acquiredAt: clock(), acquiredVia: .egg)
+                              acquiredAt: clock(), acquiredVia: .egg, knownMoves: inheritedMoves, gender: gender)
+        state.pendingDayCareEgg = nil
         state.party.append(newMon)
         carryFloatingToNewTraining(from: state.trainingSlotID, to: newMon.id)
         state.trainingSlotID = newMon.id
@@ -1705,7 +1925,7 @@ final class CompanionStore {
                                   rarity: line.rarity, caughtAt: clock(), isShiny: showShiny, nature: nature,
                                   names: line.names[line.baseID].map { [line.baseID: $0] },
                                   monID: newMon.id, source: .egg))
-        AppLog.write("hatch: base=\(line.baseID) rarity=\(line.rarity) shiny=\(isShiny) forms=\(evolutionPlan.count) ditto=\(dittoDisguise != nil)")
+        AppLog.write("hatch: base=\(line.baseID) rarity=\(line.rarity) shiny=\(isShiny) forms=\(evolutionPlan.count) ditto=\(dittoDisguise != nil) dayCare=\(dayCareEgg != nil)")
         let name = line.localizedName(line.baseID, state.language)
         notifyCompanionEvent(showShiny ? l.notifShinyHatchTitle : l.notifHatchTitle,
                              showShiny ? l.notifShinyHatchBody(name) : l.notifHatchBody(name))

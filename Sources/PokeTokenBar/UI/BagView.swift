@@ -83,6 +83,7 @@ private struct ItemCard: View {
         case .shinyCharm: return false   // 보유형 — 사용 개념 없음(상시 효과)
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return false
         case .bottlecapSilver, .bottlecapGold: return false   // 비타민과 동일 — 대상 선택은 PC 상세 화면
+        case .destinyKnot, .everstone, .dayCareSlot: return false   // Used from the Day Care screen
         }
     }
     /// 사용 컨트롤 효과 힌트 ("+XP" / "성격 랜덤 변경").
@@ -94,6 +95,8 @@ private struct ItemCard: View {
         case .shinyCharm: return l.shinyCharmEffectHint
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: return ""
         case .bottlecapSilver, .bottlecapGold: return ""
+        case .destinyKnot, .everstone: return ""
+        case .dayCareSlot: return l.ownedAlready
         }
     }
     private func performUse() {
@@ -104,6 +107,7 @@ private struct ItemCard: View {
         case .shinyCharm: break   // 보유형 — 사용 동작 없음
         case .hpUp, .protein, .iron, .calcium, .zinc, .carbos: break   // PC 상세 화면에서만 사용
         case .bottlecapSilver, .bottlecapGold: break   // PC 상세 화면에서만 사용
+        case .destinyKnot, .everstone, .dayCareSlot: break   // Day Care screen only
         }
     }
 
@@ -113,7 +117,8 @@ private struct ItemCard: View {
             // 보유형(이로치 부적) — 사용 버튼 대신 상시 효과 표시.
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.seal.fill").font(.caption2).foregroundStyle(.green)
-                Text(l.shinyCharmEffectHint).font(.caption2.weight(.semibold)).foregroundStyle(.green)
+                Text(kind == .shinyCharm ? l.shinyCharmEffectHint : effectHint(l))
+                    .font(.caption2.weight(.semibold)).foregroundStyle(.green)
                 Spacer()
             }
         } else if canUse {
@@ -138,6 +143,8 @@ private struct ItemCard: View {
             }
         } else if kind.vitaminStat != nil || kind.isBottlecap {
             Text(l.useFromPcDetail).font(.caption2).foregroundStyle(.tertiary)
+        } else if kind == .destinyKnot || kind == .everstone {
+            Text(l.useFromDayCare).font(.caption2).foregroundStyle(.tertiary)
         } else {
             // 알(부화 전)/활성 없음/(사탕만)라인 미로딩 — 비활성 + 사유
             Text(store.isEgg ? l.useAfterHatch : l.useNeedsPokemon)

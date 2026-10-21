@@ -68,6 +68,9 @@ protocol PokeProviding: Sendable {
     /// real sprite, the same "only ever learn it by name" situation `moveDetail(name:)` solves for
     /// moves.
     func speciesID(name: String) async throws -> Int
+    /// Egg groups, gender ratio and egg cycles from `pokemon-species` — Day Care compatibility, gender
+    /// rolls and incubation length.
+    func eggInfo(speciesID: Int) async throws -> EggInfo
 }
 
 /// 스탯/특성/설명/분류 표시를 지원하지 않는 provider(대부분의 기존 테스트 스텁)의 기본값 — 호출부는
@@ -84,6 +87,7 @@ extension PokeProviding {
     func moveDetail(name: String) async throws -> Move { throw URLError(.unsupportedURL) }
     func tmCatalog() async throws -> [Move] { throw URLError(.unsupportedURL) }
     func speciesID(name: String) async throws -> Int { throw URLError(.unsupportedURL) }
+    func eggInfo(speciesID: Int) async throws -> EggInfo { throw URLError(.unsupportedURL) }
 }
 
 /// PokéAPI 클라이언트 — 종/진화체인을 런타임 fetch + 파싱. 포켓몬 데이터는 레포에 번들하지 않는다.
@@ -147,6 +151,14 @@ actor PokeAPIClient: PokeProviding {
         var byLang: [String: String] = [:]
         for n in sp.names where langCodes.contains(n.language.name) { byLang[n.language.name] = n.name }
         return byLang
+    }
+
+    /// Same `pokemon-species` response as genus/flavorText, so a cache hit costs no network. A response
+    /// without the egg fields reads as no egg groups (no eggs) rather than failing.
+    func eggInfo(speciesID id: Int) async throws -> EggInfo {
+        let sp = try await species(id)
+        return EggInfo(eggGroups: (sp.egg_groups ?? []).map(\.name),
+                            genderRate: sp.gender_rate ?? -1, hatchCounter: sp.hatch_counter)
     }
 
     /// 특성 슬러그의 다국어 표시명(`/ability/{slug}`) — species 이름과 같은 패턴(런타임 조회 + 캐시).
@@ -669,6 +681,10 @@ struct SpeciesDTO: Decodable, Sendable {
     let evolves_from_species: NamedRef?   // nil = 진화라인 시작점(base)
     let flavor_text_entries: [FlavorTextEntryDTO]
     let genera: [GenusEntryDTO]
+    /// Optional so trimmed fixtures without the egg fields still decode.
+    let egg_groups: [NamedRef]?
+    let gender_rate: Int?
+    let hatch_counter: Int?
 }
 struct FlavorTextEntryDTO: Decodable, Sendable { let flavor_text: String; let language: NamedRef }
 struct GenusEntryDTO: Decodable, Sendable { let genus: String; let language: NamedRef }
