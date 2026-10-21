@@ -88,6 +88,38 @@ actor SpriteStore {
         return d
     }
 
+    /// Animated GIF data that keeps retrying while the download fails (offline, a dropped
+    /// connection), instead of leaving the sprite frozen on its static frame until relaunch
+    /// (upstream #447). Falls back to the plain GIF for species with no shiny one. The wait grows
+    /// from 2 seconds to 5 minutes: upstream caps it at 30 seconds, but every visible sprite runs
+    /// its own loop, so a long outage would cost 120 requests an hour each. Returns nil when the
+    /// caller's task is cancelled or the species has no animated sprite.
+    func recoveringAnimatedData(
+        speciesID: Int, shiny: Bool, facing: SpriteFacing = .front,
+        wait: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) async -> Data? {
+        guard PokemonAssets.hasAnimatedSprite(speciesID: speciesID) else { return nil }
+        return await Self.retrying(wait: wait) {
+            if let gif = await data(speciesID: speciesID, animated: true, shiny: shiny, facing: facing) { return gif }
+            return shiny ? await data(speciesID: speciesID, animated: true, shiny: false, facing: facing) : nil
+        }
+    }
+
+    /// The retry loop on its own, so its timing is testable without the network.
+    static func retrying<T>(isolation: isolated (any Actor)? = #isolation,
+                            wait: (Duration) async throws -> Void,
+                            attempt: () async -> T?) async -> T? {
+        var delay = Duration.seconds(2)
+        while !Task.isCancelled {
+            if let value = await attempt() { return value }
+            do { try await wait(delay) } catch { return nil }
+            delay = min(delay * 2, maxAnimationRetryDelay)
+        }
+        return nil
+    }
+
+    static let maxAnimationRetryDelay = Duration.seconds(300)
+
     /// 아이템 스프라이트(정적 PNG, 이름 기반). 포켓몬과 같은 메모리/디스크 캐시 사용(키 "item-<name>",
     /// 포켓몬 파일 "<id>-..." 과 안 겹침). 미제공(404)/오프라인이면 nil → 뷰가 이모지로 폴백.
     func data(itemName: String) async -> Data? {

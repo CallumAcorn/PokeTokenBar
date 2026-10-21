@@ -257,11 +257,8 @@ struct SpriteView: View {
             }
             guard animated else { return }
             // animated GIF 시도(shiny 미제공 종은 일반 GIF 폴백) → 프레임 2개 이상이면 순환 루프
-            var gifData = await SpriteStore.shared.data(speciesID: id, animated: true, shiny: shiny, facing: facing)
-            if gifData == nil, shiny {
-                gifData = await SpriteStore.shared.data(speciesID: id, animated: true, shiny: false, facing: facing)
-            }
-            guard let data = gifData else { return }
+            guard let data = await SpriteStore.shared.recoveringAnimatedData(speciesID: id, shiny: shiny,
+                                                                             facing: facing) else { return }
             // 단일 프레임/디코드 실패 → 정적 폴백. 취소됐으면 아예 반영하지 않는다(빈 배열이라 아래서 종료).
             let ready = Self.framesToApply(GIFDecoder.frames(from: data), cancelled: Task.isCancelled)
             guard !ready.isEmpty else { return }
