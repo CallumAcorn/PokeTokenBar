@@ -86,7 +86,7 @@ declined for the same reason, not re-litigated.
 | `60808c54` | #242 | skipped | Keep released Pokémon in the Pokédex. This fork has no release feature, so it is a feature import, not a missing fix. **If ever imported**: it appends a dex row without `monID`, and `restoredPartyFromCatchLog` resurrects exactly those rows, so the restore must also skip `releasedAt != nil` or every released mon returns to the PC on next load |
 | `ff54b44e` | #238 | skipped | Kiro CLI 2.20+ JSONL sessions. Kiro is not installed on this fork's machines |
 | `b833f127` | #214 | skipped | oh-my-pi (omp) usage provider. Not installed |
-| `4fe965ee` | #197 | pending | Cursor usage from the dashboard API when local `tokenCount` is zero. Genuinely wanted (Cursor is in use), but adds a 464-line `CursorUsageAPI.swift` with a new outbound credential surface, so it goes in as its own reviewed change rather than a cherry-pick |
+| `4fe965ee` | #197 | declined | Cursor usage from the dashboard API. Callum's decision, 2026-10-21: declined; adds an outbound credential surface for a usage source |
 | `d6fb966a` | #212 | **ported** | Animation quality picker (Power saver / Balanced / Smooth). Taken as the prerequisite for #250, which carries the `AnimationQuality` enum in its own diff and cannot apply without it. Cherry-pick conflicted in 8 files: the READMEs (kept ours, took only the animation-quality bullet; their representative bullet duplicates one we already have), and `PokeTokenBarApp`/`CompanionView`, which read upstream's `representativeSubject`. This fork reimplemented representative on `dexUnlocked`, so our identity source was kept and only the fps-floor wiring taken: floor added to `frameTaskID`/`menuSpriteKey` and `store.animationQuality` observed, with our `facing` axis preserved alongside |
 | `77e159ce` | #234 | declined | German UI language. 549 lines of churn in the most-diverged file (`Localization.swift`: moves, TMs, battles), and it creates a standing tax where every new fork string needs a German value. Standing decision: no machine-translated fork strings. Revisit only if someone actually needs German |
 | `a69444c8` | #239 | declined | Upstream readme edits. The READMEs here have diverged (moves, TMs, battles); apply anything relevant by hand instead |
@@ -134,22 +134,22 @@ declined for the same reason, not re-litigated.
 | `5e08e6fe` | #296 | declined | Require release notes and contributor attribution. Rewrites `release.sh`, which this fork has heavily reworked (source-only releases, asset waivers, `-hardened` versioning) |
 | `dec297a5` | #254 | declined | 2x growth on repeat hatches. Changes the balance of an existing feature |
 | `69ff39bb` | #289 | declined | Distinguish estimated from unavailable cost by removing the model-family price fallback. Would turn every unpriced model to 'Unavailable'; this fork instead adds explicit rows. 626 lines across 28 files |
-| `b0c6074f` | #244 | deferred | Difficulty multipliers (growth and shop-price slider, default unchanged). Changes shop and growth code paths; awaiting the maintainer's call |
-| `5963293b` | #287 | deferred | Fix for #244: difficulty changes advancing earned progress. Take with #244 |
-| `d4d34e7d` | #284 | deferred | Removes the floating-pet toggle #244 added. Take with #244 |
-| `014fcb28` | #352 | deferred | First-run egg hint follows growth difficulty. Depends on #244 |
+| `b0c6074f` | #244 | declined | Difficulty multipliers. Callum's decision, 2026-10-21: not wanted |
+| `5963293b` | #287 | declined | Fix for #244 difficulty changes. Declined with #244 |
+| `d4d34e7d` | #284 | declined | Removes the floating-pet toggle #244 added. Declined with #244 |
+| `014fcb28` | #352 | declined | First-run egg hint follows growth difficulty. Declined with #244 |
 | `2fab082c` | #290 | deferred | Complete selected-language localisation, 835 lines. Heavy churn in the most-diverged file |
-| `10d1a07c` | #288 | deferred | Collect all Unown letter forms, 1,587 lines. Normalises its new state at the save boundary, but builds on the representative pin this fork reimplemented |
-| `4bfae978` | — | deferred | Select collected appearances separately. Builds on #288 |
-| `0912c68c` | #270 | deferred | Monthly day-by-day usage trend, 1,022 lines |
-| `78595ed8` | #332 | deferred | Usage recap for any week, month or year, 1,136 lines |
-| `2eec9afa` | #298 | deferred | Pace marker on quota bars |
-| `68deb094` | #349 | deferred | Colour quota bars by pace. Builds on #298 |
-| `b32717fb` | — | deferred | Colour menu-bar limit percentages like the gauges |
+| `10d1a07c` | #288 | **ported** | Unown letter forms. Ported as part of the generic forms implementation (04b12da9), not replayed; see `pokemon-forms.md` |
+| `4bfae978` | — | **ported** | Collected appearances chosen separately, shine per appearance. Fork Pokédex picker; pin takes only a collected form |
+| `0912c68c` | #270 | **ported** | Monthly day-by-day usage trend, with the shared `ProviderEnrichment.local`. omp and Aside dropped (not in the fork); desktop chat adds its ledger to the month |
+| `78595ed8` | #332 | **ported** | Usage recap for any week, month or year. Release filter dropped; Unown parts wired in with the forms port |
+| `2eec9afa` | #298 | **ported** | Pace marker on quota bars. Ported; hint string reworded without an em dash |
+| `68deb094` | #349 | **ported** | Colour quota bars by pace. Ported |
+| `b32717fb` | — | **ported** | Colour menu-bar limit percentages like the gauges. Adapted to the fork's single Claude account; no Cursor, no menu tooltip |
 | `2ecf7d2f` | #246 | **ported** | Ready egg hatches without racing the prefetch. The waiting-for-network hint is left out |
 | `2e8efddf` | #328 | deferred | Bulk Rare Candy use with growth previews. Touches the candy code fixed in #29 |
-| `13e3bf2a` | — | deferred | Local save auto-backup and corruption recovery, 776 lines. Changes the load path; worth doing as its own reviewed change |
-| `ae7bd9d3` | — | deferred | Search, sort and filters for the Pokédex and catch log, 775 lines |
+| `13e3bf2a` | — | **ported** | Local save auto-backup and corruption recovery. Every restore path goes through `SaveTransfer.sanitized`; adapted to `party` |
+| `ae7bd9d3` | — | **ported** | Search, sort and filters for the Pokédex and catch log. Fork-adapted store helpers (`isTrainingLogEntry`, `dexUnlocked`) |
 | `f0ef5ff3` | — | deferred | Colour dex numbers by rarity |
 | `279e112d` | #370 | deferred | Larger text and sprites in a 4x4 collection grid |
 | `d44329bb` | — | deferred | Fixed-height Home tab with a reserved scroll area |
@@ -159,8 +159,8 @@ declined for the same reason, not re-litigated.
 | `fe51577e` | #351 | deferred | Show real shiny odds in hatch notifications |
 | `184c5f41` | #282 | **ported** | Lazy catch-log rows. The image-cache half is left out |
 | `087fd0f7` | #285 | deferred | Dex sprite animation consistency |
-| `fd008e53` | #286 | deferred | Quota graph fill matches remaining display mode |
-| `bb92bd2a` | #292 | deferred | Align quota percentages |
+| `fd008e53` | #286 | **ported** | Quota graph fill matches the remaining display mode. Ported with the pace batch (2026-10-21) |
+| `bb92bd2a` | #292 | **ported** | Align quota percentages. Ported with the pace batch |
 | `a8b3ba82` | #293 | deferred | Display costs as plain dollars |
 | `1a8a7252` | #295 | **skipped** | Avoid English flashes loading names. Changes a view that only exists after deferred #290 (`2fab082c`) |
 | `1c695c7d` | #311 | deferred | Show a skipped release in Settings. Safe for update pinning, but conflicts across four forked UI files |
@@ -187,17 +187,17 @@ declined for the same reason, not re-litigated.
 | `a2ec3649` | #321 | **ported** | Cooldown only after a validated release, plus an in-flight guard. Upstream's tag check rejected `-hardened.N`, which would have silenced every fork update; the fork accepts its own scheme. Upstream also committed a `default.profraw`, removed |
 | `40b506ee` | #403 | deferred | Kimi Code provider. Built on omp/Aside (skipped) and upstream's parser-version cache, 17 conflicts in the cache alone |
 | `26efe4ec` | #394 | **ported** | Open a Pokédex entry by clicking a sprite, through a popover navigation hook; checked in the running app |
-| `11eebe62` | #402 | deferred | Keep recent providers' tabs across calendar resets. Built on upstream's shared `ProviderEnrichment.local`; the fork still has per-provider copies |
+| `11eebe62` | #402 | **ported** | Keep recent providers' tabs across calendar resets. Applies now the fork has `ProviderEnrichment.local` |
 | `656d603f` | #380 | **ported** | 22pt pager hit area without moving the footer; checked in the running app (7 and 10pt from the glyph page, 12pt do not) |
 | `9be4ea95` | #372 | deferred | Russian UI. Every string gains a column and the fork's own strings need translations |
-| `0269dad7` | #395 | **skipped** | Daily trend by calendar month. Depends on deferred #270 |
-| `5afeb2a5` | #368 | **skipped** | Recap chart tooltips. Depends on deferred #332 |
-| `e21fb015` | #367 | **skipped** | Return to the current period from recaps. Depends on deferred #332 |
-| `142fa08d` | #348 | **skipped** | Stack daily trend bars by provider. Depends on deferred #270 |
+| `0269dad7` | #395 | **ported** | Daily trend by calendar month. Taken with #270 |
+| `5afeb2a5` | #368 | **ported** | Recap chart tooltips. Taken with #332 |
+| `e21fb015` | #367 | **ported** | Return to the current period from recaps. Taken with #332 |
+| `142fa08d` | #348 | **ported** | Stack daily trend bars by provider. Cost via `TokenFormatter.cost` with the fork's `> 0` rule |
 | `f2d5c3e9` | #426 | **skipped** | Cursor pagination. Depends on the Cursor dashboard API (pending `4fe965ee`) |
 | `5ee12eee` | #412 | **skipped** | Cursor auth-expired notice. Same dependency |
 | `7a5742f5` | #408 | **skipped** | Cursor limit bars. Same dependency |
-| `e2f8bcca` | #420 | **skipped** | Hide a disguised Ditto's shiny in save snapshots. The fork has no snapshot feature, and its display path already hides it |
+| `e2f8bcca` | #420 | **ported** | Hide a disguised Ditto's shiny in save snapshots. Covered by the backup port (`displaysShiny`) |
 | `1a710185` | #420 | **skipped** | Empty duplicate of `e2f8bcca` |
 | `e772e1f8` | #398 | **skipped** | Difficulty slider labels. The fork has no difficulty settings |
 | `46d5d913` | #391 | **skipped** | Game-coloured type badges. The fork already has them; the rest is a header reshuffle |
@@ -211,11 +211,11 @@ declined for the same reason, not re-litigated.
 | `498bdbc6` | #400 | **declined** | Universal binary. The fork ships no binaries; everyone builds natively from source |
 | `d8887937` | #375 | **ported** | Rare Candy re-granted on reset-time jitter. The fork had the same bug (string comparison in its reset re-arm); now a window must move 30 min (five-hour) or 24 h (weekly) |
 | `a4d17d58` | #435 | **skipped** | Return to the viewed Pokédex page after Back. Not applicable: the fork's grid keeps its page across Back, and catch-log rows do not open a detail page |
-| `04b12da9` | #376 | deferred | Alternate forms for gen 1-5 species, 1,199 lines. Builds on deferred Unown forms #288 |
-| `fd12f005` | #446 | **skipped** | Collapse backup history in Settings. The fork has no backups |
-| `dc6de418` | — | **ported** | Partial: Sonnet 5.5 cache read $0.10 and Antigravity keeping its refresh credential after transient failures. The backup and form parts do not apply |
+| `04b12da9` | #376 | **ported** | Alternate forms for gen 1-5 species. Fork-native: collection from catch log + party, `FormNameStore` names instead of the general name layer (`2fab082c`). See `pokemon-forms.md` |
+| `fd12f005` | #446 | **ported** | Collapse backup history in Settings by default. Fork CI file kept |
+| `dc6de418` | — | **ported** | Sonnet 5.5 cache read $0.10, Antigravity keeping its refresh credential after transient failures, the form on backup thumbnails and the "Data uses the default form" note |
 | `594be29c` | — | **declined** | Upstream's release notes since 2.5.5 |
-| `17cf2bfb` | — | **skipped** | Test for form metadata captions. Depends on deferred forms |
+| `17cf2bfb` | — | **skipped** | Pixel-density fix for a form-caption rendering test the fork does not carry |
 | `2c0212b5` | — | **declined** | Upstream README image labels |
 | `4617c8ab` | — | **declined** | Upstream release images |
 | `b716054e` | — | **skipped** | Session-key settings reveal. The session-key feature was declined (`8953ea8f`) |
