@@ -739,7 +739,7 @@ final class UsageStore {
                 }
             }
             for await outcome in group {
-                AppLog.write("phase1 recv id=\(outcome.id) today=\(outcome.today?.totalTokens.description ?? "nil") err=\(outcome.errorDescription ?? "none")")
+                AppLog.writeIfChanged("phase1-recv-\(outcome.id)", "phase1 recv id=\(outcome.id) today=\(outcome.today?.totalTokens.description ?? "nil") err=\(outcome.errorDescription ?? "none")")
                 if let today = outcome.today { dailyByID[outcome.id] = today }
                 if let err = outcome.errorDescription {
                     failedIDs.insert(outcome.id)
@@ -837,7 +837,7 @@ final class UsageStore {
             limits = nil
             limitsAvailable = false
             limitsAuthExpired = false   // 조회 자체를 안 하므로 "세션 만료" 안내는 무의미 → 해제
-            AppLog.write("claude limits skipped: keychain access disabled")
+            AppLog.writeIfChanged("claude-limits", "claude limits skipped: keychain access disabled")
         } else if let until = claudeLimitsBackoffUntil, Date() < until {
             // 429 백오프 중 — 폴링을 쉬어 rate limit 악화 방지 (버그 리포트 실측: 매분 429 재시도)
             AppLog.write("claude limits backoff: skipping (\(Int(until.timeIntervalSinceNow))s left)")
@@ -851,14 +851,14 @@ final class UsageStore {
                 hadWorkingSilentRead = true
                 limitsSignedOut = false
                 resetLimitsBackoff()
-                AppLog.write("limits refreshed fiveHour=\(limits?.fiveHour?.utilization?.description ?? "nil") sevenDay=\(limits?.sevenDay?.utilization?.description ?? "nil")")
+                AppLog.writeIfChanged("claude-limits", "limits refreshed fiveHour=\(limits?.fiveHour?.utilization?.description ?? "nil") sevenDay=\(limits?.sevenDay?.utilization?.description ?? "nil")")
             } catch {
                 // 비공식 endpoint 실패 → 섹션 숨김, 토큰 표시는 무영향
                 if limits == nil { limitsAvailable = false }
                 updateAuthExpired(from: error)
                 updateGrantRevoked(from: error)
                 applyLimitsBackoffIfRateLimited(error)
-                AppLog.write("limits unavailable: \(error)")
+                AppLog.writeIfChanged("claude-limits", "limits unavailable: \(error)")
             }
         }
         await refreshCodexLimits()
@@ -974,7 +974,7 @@ final class UsageStore {
             if case LimitsError.httpStatus(let code) = error, code == 401 || code == 403 {
                 antigravityLimitsAuthExpired = true
             }
-            AppLog.write("antigravity limits unavailable: \(error)")
+            AppLog.writeIfChanged("antigravity-limits", "antigravity limits unavailable: \(error)")
         }
     }
 
@@ -1064,7 +1064,7 @@ final class UsageStore {
                 }.joined(separator: " | ")
                 AppLog.write("codex limits refreshed [\(buckets)] plan=\(status.rateLimits.planType ?? "nil")")
             } else {
-                AppLog.write("codex limits skipped: codex binary not found")
+                AppLog.writeIfChanged("codex-limits", "codex limits skipped: codex binary not found")
             }
         } catch {
             AppLog.write("codex limits unavailable: \(error)")
@@ -1091,7 +1091,7 @@ final class UsageStore {
         let fresh = await statusProvider.fetch()
         for (id, status) in fresh { statuses[id] = status }
         if !fresh.isEmpty {
-            AppLog.write("provider status: "
+            AppLog.writeIfChanged("provider-status", "provider status: "
                 + fresh.map { "\($0.key)=\($0.value.indicator.rawValue)" }.sorted().joined(separator: " "))
         }
     }
