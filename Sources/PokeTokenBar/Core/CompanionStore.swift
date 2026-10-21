@@ -480,14 +480,15 @@ final class CompanionStore {
         if let until = eventUntil, clock() > until {
             justGraduated = nil; justEvolvedTo = nil; eventUntil = nil
         }
-        // 알 상태 프리패칭 — 종 pre-roll + 라인/스프라이트 예열(부화 순간 딜레이 제거).
-        // 성공할 때까지 매 update 틱마다 재시도(성공 후엔 no-op).
-        if state.trainingSlotID == nil, state.installBaselineSet, !isHatching {
-            Task { await ensureEggPrefetch() }
-        }
-        // 알이 부화 임계에 도달하면 부화
-        if state.trainingSlotID == nil, state.eggUsage >= PokemonBalance.eggHatchThreshold, !isHatching {
-            Task { await hatchIfNeeded() }
+        // A ready egg hatches; before that, prefetch (species pre-roll + line/sprite warm-up). Starting
+        // both on the same tick let the hatch see the prefetch mid-roll and back off until the next
+        // tick, so a ready egg could wait a whole refresh interval (upstream 2ecf7d2f).
+        if state.trainingSlotID == nil, !isHatching {
+            if state.eggUsage >= PokemonBalance.eggHatchThreshold {
+                Task { await hatchIfNeeded() }
+            } else if state.installBaselineSet {
+                Task { await ensureEggPrefetch() }
+            }
         }
         // 훈련 중인데 라인 미로딩(앱 재시작) → 로드
         if trainingMon != nil, currentLine == nil, !isHatching {
