@@ -141,6 +141,13 @@ Antigravity 2.0 と IDE が推定値ではなく実際のクォータを返し�
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-battle-info.png" width="300" alt="バトル情報：ティア、役割、おすすめ構成、より良い選択肢"><br><br><img src="assets/screenshot-move-detail.png" width="300" alt="わざの詳細：威力、命中、PP、説明"></td>
 </tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>🏟️ ジムリーダーとして戦う</h3>
+手持ちでチームを組めるジムリーダー・四天王・チャンピオンを選ぶと、そのチームでロスターが埋まります。<b>懸かっているバッジ</b>には、このチームに勝つと相手が得るバッジと、あと1匹選ぶと増えるバッジが表示されます。手持ちは名前やタイプで検索できます。
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-battle-gym-leader.png" width="340" alt="バトルのロスター選択：ハヤトとしてプレイ、ウイングバッジが賭けられている"></td>
+</tr>
 </table>
 
 ## そのほかにも

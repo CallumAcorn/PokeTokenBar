@@ -141,6 +141,13 @@ Builds come from Smogon's Black/White sets, adjusted to what this app can teach:
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-battle-info.png" width="300" alt="Battle info: tier, role, suggested build and better options"><br><br><img src="assets/screenshot-move-detail.png" width="300" alt="Move detail: power, accuracy, PP and description"></td>
 </tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>🏟️ Play as a gym leader</h3>
+Pick any gym leader, Elite Four member or Champion your party can field a team for, and your roster fills with their team. <b>Badges at stake</b> shows what a win against your team would hand out, and what one more pick would add. Search your party by name or type.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-battle-gym-leader.png" width="340" alt="Battle roster picker: playing as Falkner, with the Zephyr Badge at stake"></td>
+</tr>
 </table>
 
 ## Also in the box
