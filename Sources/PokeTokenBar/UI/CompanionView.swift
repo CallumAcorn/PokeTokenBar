@@ -292,6 +292,46 @@ struct SpriteView: View {
 /// 폭 제한 없는 HStack 은 팝오버 콘텐츠 폭(332pt)을 넘고, **넘친 자식이 부모 VStack 폭을 부풀려
 /// 팝오버 전체가 좌우로 잘린다**(진화줄뿐 아니라 탭바·합계까지). `maxWidth` 를 주면 그 폭 안에서
 /// 가로 스크롤한다 — 썸네일 크기는 유지하고, 가장자리 페이드 + 셰브론으로 스크롤 가능함을 알린다.
+/// A page arrow with a 22pt square hit area around the ~7x12pt glyph, which clicks often missed
+/// (upstream #380). The frame's own padding is the gap to the page number (the footer drops its
+/// spacing to match), and the fixed 18pt footer lets the taller hit area overflow without moving
+/// anything. Checked in the running app: clicks 7 and 10pt from the glyph's centre page, 12pt don't.
+/// No negative padding: clicks only land inside a view's layout frame, so it would undo this.
+struct PagerButton: View {
+    let forward: Bool
+    let label: String
+    let action: () -> Void
+    static let hitSize: CGFloat = 22
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: forward ? "chevron.right" : "chevron.left")
+                .frame(width: Self.hitSize, height: Self.hitSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
+/// A sprite that opens its species' Pokédex page, or plain content when `action` is nil.
+struct DexLink<Content: View>: View {
+    let action: (() -> Void)?
+    let label: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if let action {
+            Button(action: action) { content }
+                .buttonStyle(.plain)
+                .help(label)
+                .accessibilityHint(label)
+        } else {
+            content
+        }
+    }
+}
+
 struct EvoLineView: View {
     let nodes: [EvoLineItem]
     let mysteryLabel: String
@@ -300,6 +340,11 @@ struct EvoLineView: View {
     var names: [Int: String]? = nil   // 제공되면 각 스프라이트 밑에 작은 이름 라벨(도감 단계별 이름)
     /// 한 줄이 쓸 수 있는 가로 폭. 기본 .infinity = 제한 없음(스크롤 없이 나열).
     var maxWidth: CGFloat = .infinity
+    /// Opens a species' Pokédex page. Only species `canOpen` allows become links; eggs, "?" and
+    /// stages not reached yet stay inert.
+    var onOpenSpecies: ((Int) -> Void)? = nil
+    var canOpen: (Int) -> Bool = { _ in false }
+    var openLabel = ""
 
     private static let spacing: CGFloat = 2
     /// 화살표 칸 폭 = 썸네일 × 이 비율. 고정 frame 을 줘 SF Symbol 글리프 폭에 의존하지 않게 한다 —
@@ -463,7 +508,10 @@ struct EvoLineView: View {
                     Group {
                         switch node.content {
                         case .species(let id):
-                            SpriteView(speciesID: id, size: thumb, shiny: shiny)
+                            DexLink(action: node.state == .future || !canOpen(id) ? nil : onOpenSpecies.map { open in { open(id) } },
+                                    label: openLabel) {
+                                SpriteView(speciesID: id, size: thumb, shiny: shiny)
+                            }
                         case .mystery:
                             Text("?")
                                 .font(.system(size: thumb * 0.55, weight: .bold, design: .rounded))
@@ -556,6 +604,7 @@ struct CompanionHeader: View {
 
 
     let store: CompanionStore
+    @Environment(PopoverNavigation.self) private var nav
     // 연출 상태 — 부화/진화 순간 흰 플래시 + 스프링 스케일(본가 진화 신 오마주)
     @State private var flashOpacity: Double = 0
     @State private var celebScale: CGFloat = 1
@@ -577,8 +626,12 @@ struct CompanionHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 12) {
-                SpriteView(speciesID: store.trainingSpeciesID, size: 76, bob: true, animated: true,
-                           shiny: store.trainingIsShiny)
+                DexLink(action: store.trainingSpeciesID.flatMap { id in
+                            store.state.ownsSpecies(id) ? { nav.openDex(id) } : nil },
+                        label: store.l.openInPokedex) {
+                    SpriteView(speciesID: store.trainingSpeciesID, size: 76, bob: true, animated: true,
+                               shiny: store.trainingIsShiny)
+                }
                     .frame(width: 76, height: 76)
                     .background(Color.secondary.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -709,7 +762,9 @@ struct CompanionHeader: View {
             if store.hasActive, !store.lineNodes.isEmpty {
                 // 폭을 안 주면 분기 라인(이브이)이 넘쳐 팝오버 콘텐츠 전체가 좌우로 잘린다.
                 EvoLineView(nodes: store.lineNodes, mysteryLabel: store.l.unknownNextEvolution, shiny: store.trainingIsShiny,
-                            maxWidth: PopoverMetrics.contentWidth)
+                            maxWidth: PopoverMetrics.contentWidth,
+                            onOpenSpecies: { nav.openDex($0) }, canOpen: { store.state.ownsSpecies($0) },
+                            openLabel: store.l.openInPokedex)
             }
             if let g = store.justGraduated {
                 Text(store.l.graduated(g))
@@ -870,6 +925,7 @@ private enum CollectionSegment: Hashable { case dex, pc, log, badges }
 /// 상위 탭(PopoverTab)은 그대로 4개 — 세그먼트 폭(332/4)도 짧은 라벨엔 여전히 넉넉하다.
 struct CollectionView: View {
     let store: CompanionStore
+    @Environment(PopoverNavigation.self) private var nav
     @State private var segment: CollectionSegment = .pc
     /// 로그 전용 희귀도 필터. 도감은 개수 단위가 종이라 자기 필터를 따로 갖는다(DexGridView).
     @State private var selectedRarity: Rarity?
@@ -905,13 +961,16 @@ struct CollectionView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 switch segment {
-                case .dex: DexGridView(store: store)
+                case .dex: DexGridView(store: store, link: Bindable(nav).dexSpeciesLink)
                 case .pc: PartyGridView(store: store)
                 case .log: catchLog
                 case .badges: BadgesGridView(store: store)
                 }
             }
             .frame(height: Self.contentHeight)
+            .onChange(of: nav.dexSpeciesLink, initial: true) {
+                if nav.dexSpeciesLink != nil { segment = .dex }
+            }
         }
     }
 
@@ -1256,16 +1315,16 @@ private struct PartyGridView: View {
         HStack(spacing: 8) {
             Spacer(minLength: 4)
             if pageCount > 1 {
-                Button { page = max(0, current - 1) } label: { Image(systemName: "chevron.left") }
-                    .buttonStyle(.plain).disabled(current == 0)
-                    .accessibilityLabel(store.l.dexPagePrev)
-                Text("\(current + 1) / \(pageCount)")
-                    .font(.system(size: 10, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel(store.l.dexPageLabel(current + 1, pageCount))
-                Button { page = min(pageCount - 1, current + 1) } label: { Image(systemName: "chevron.right") }
-                    .buttonStyle(.plain).disabled(current == pageCount - 1)
-                    .accessibilityLabel(store.l.dexPageNext)
+                HStack(spacing: 0) {
+                    PagerButton(forward: false, label: store.l.dexPagePrev) { page = max(0, current - 1) }
+                        .disabled(current == 0)
+                    Text("\(current + 1) / \(pageCount)")
+                        .font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(store.l.dexPageLabel(current + 1, pageCount))
+                    PagerButton(forward: true, label: store.l.dexPageNext) { page = min(pageCount - 1, current + 1) }
+                        .disabled(current == pageCount - 1)
+                }
             }
         }
         .font(.system(size: 11, weight: .semibold))
@@ -2124,6 +2183,8 @@ private struct ScrollWheelPager: NSViewRepresentable {
 
 private struct DexGridView: View {
     let store: CompanionStore
+    /// A species opened from a sprite link elsewhere. Consumed (set back to nil) once shown.
+    @Binding var link: Int?
     @State private var selectedRarity: Rarity?
     @State private var page = 0
 
@@ -2139,6 +2200,15 @@ private struct DexGridView: View {
     private static let spacing: CGFloat = 4
 
     var body: some View {
+        content.onChange(of: link, initial: true) {
+            guard let id = link else { return }
+            selectedSpeciesID = id
+            link = nil
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         // The detail can open any species (a "better option" may be one not met yet), so it looks
         // the species up in the full list whether or not the grid is showing all.
         let seen = store.dexSpecies
@@ -2243,20 +2313,16 @@ private struct DexGridView: View {
         HStack(spacing: 8) {
             Spacer(minLength: 4)
             if pageCount > 1 {
-                Button { page = max(0, current - 1) } label: {
-                    Image(systemName: "chevron.left")
+                HStack(spacing: 0) {
+                    PagerButton(forward: false, label: store.l.dexPagePrev) { page = max(0, current - 1) }
+                        .disabled(current == 0)
+                    Text("\(current + 1) / \(pageCount)")
+                        .font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(store.l.dexPageLabel(current + 1, pageCount))
+                    PagerButton(forward: true, label: store.l.dexPageNext) { page = min(pageCount - 1, current + 1) }
+                        .disabled(current == pageCount - 1)
                 }
-                .buttonStyle(.plain).disabled(current == 0)
-                .accessibilityLabel(store.l.dexPagePrev)
-                Text("\(current + 1) / \(pageCount)")
-                    .font(.system(size: 10, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel(store.l.dexPageLabel(current + 1, pageCount))
-                Button { page = min(pageCount - 1, current + 1) } label: {
-                    Image(systemName: "chevron.right")
-                }
-                .buttonStyle(.plain).disabled(current == pageCount - 1)
-                .accessibilityLabel(store.l.dexPageNext)
             }
         }
         .font(.system(size: 11, weight: .semibold))
@@ -2866,6 +2932,7 @@ private struct DexSpeciesCell: View {
 private struct DexEntryRow: View {
     let store: CompanionStore
     let entry: DexEntry
+    @Environment(PopoverNavigation.self) private var nav
     @State private var resolved: [Int: String] = [:]
 
     /// 카드 안쪽 여백. 진화 라인이 쓸 수 있는 폭 계산과 단일 소스를 공유한다.
@@ -2896,7 +2963,9 @@ private struct DexEntryRow: View {
             EvoLineView(nodes: entry.chainOrder.map { EvoLineItem(.species($0), .done) },
                         mysteryLabel: store.l.unknownNextEvolution, thumb: 56,
                         shiny: entry.isShiny, names: names,
-                        maxWidth: PopoverMetrics.contentWidth - Self.cardPadding * 2)
+                        maxWidth: PopoverMetrics.contentWidth - Self.cardPadding * 2,
+                        onOpenSpecies: { nav.openDex($0) }, canOpen: { store.state.ownsSpecies($0) },
+                        openLabel: store.l.openInPokedex)
             if let caughtAt = entry.caughtAt {
                 Text(caughtAt, style: .relative).font(.system(size: 9)).foregroundStyle(.tertiary)
             }
