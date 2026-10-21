@@ -430,6 +430,24 @@ final class UsageStore {
         return byDay.values.sorted { $0.date < $1.date }
     }
 
+    /// Day-by-day history behind the usage recap. Providers only report the current month, so the
+    /// numbers are copied into a rolling ledger at every refresh, see `UsageLedger`.
+    private(set) var dailyLedger = UsageLedger()
+
+    private func recordDailyLedger() {
+        var ledger = dailyLedger
+        ledger.merge(monthDailyTotals)
+        // This year and the one before it: the year view compares against last year, and nothing
+        // reaches further back.
+        let calendar = RecapPeriod.calendar()
+        let lastYear = RecapPeriod(scope: .year, containing: Date(), calendar: calendar)
+            .shifted(by: -1, calendar: calendar)
+        ledger.prune(before: LocalUsageReader.localDayFormatter().string(from: lastYear.start))
+        guard ledger != dailyLedger else { return }
+        dailyLedger = ledger
+        ledger.save(to: defaults)
+    }
+
     /// Claude 의 활성 5h 블록 — 5h forecast·"현재 블록" 행은 Claude 공식 한도와 짝이므로
     /// providerID 로 명시 조회한다 (전 프로바이더가 블록을 갖게 된 후 first-with-block 은 오매칭).
     private var claudeActiveBlock: BlockUsage? {
@@ -678,6 +696,7 @@ final class UsageStore {
         // until a silent read has been proven to work, so no background poll can ever raise a
         // prompt on a machine that has not granted access.
         disableKeychainAccess = d.object(forKey: "disableKeychainAccess") as? Bool ?? false
+        dailyLedger = UsageLedger.load(from: d)
 
         reschedule()
 
@@ -931,6 +950,9 @@ final class UsageStore {
         }
         // Successful empty enrichment removes obsolete carriers; failed reads retain history.
         snapshots.removeAll { !$0.hasDisplayableUsage }
+        // The daily ledger is recorded here: monthDaily only fills in phase 2, so recording right after
+        // phase 1 would leave the recap empty on the first refresh after install.
+        recordDailyLedger()
 
         // ── 한도 조회 (Keychain 프롬프트로 블로킹될 수 있어 마지막)
         if disableKeychainAccess {

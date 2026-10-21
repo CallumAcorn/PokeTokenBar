@@ -169,6 +169,61 @@ struct L {
     var advancedDisclosureLabel: String { t("고급 설정 · 진단", "Advanced · diagnostics", "詳細設定・診断", "Avanzado · diagnóstico", "Avancé · diagnostics", "Avançado · diagnóstico") }
     var aboutSupportSectionTitle: String { t("정보 & 지원", "About & Support", "情報とサポート", "Acerca de y soporte", "À propos et assistance", "Sobre e suporte") }
     var quit: String { t("종료", "Quit", "終了", "Salir", "Quitter", "Encerrar") }
+    var tokenInput: String { t("입력", "Input", "入力", "Entrada", "Entrée", "Entrada") }
+    var tokenOutput: String { t("출력", "Output", "出力", "Salida", "Sortie", "Saída") }
+    var tokenCacheWrite: String { t("캐시 쓰기", "Cache write", "キャッシュ書込", "Escritura caché", "Écriture cache", "Gravação cache") }
+    var tokenCacheRead: String { t("캐시 읽기", "Cache read", "キャッシュ読込", "Lectura caché", "Lecture cache", "Leitura cache") }
+    var website: String { t("웹사이트", "Website", "ウェブサイト", "Sitio web", "Site web", "Site") }
+    var sponsor: String { t("후원", "Sponsor", "支援", "Apoyar", "Soutenir", "Apoiar") }
+    var evolutionScrollPrevious: String { t("이전 진화 보기", "Show previous evolutions", "前の進化を見る", "Ver evoluciones anteriores", "Voir les évolutions précédentes", "Ver evoluções anteriores") }
+    var evolutionScrollNext: String { t("다음 진화 보기", "Show next evolutions", "次の進化を見る", "Ver evoluciones siguientes", "Voir les évolutions suivantes", "Ver próximas evoluções") }
+    // MARK: Usage recap
+    var recapOpen: String { t("사용량 돌아보기", "Usage recap", "使用量のふりかえり", "Resumen de uso", "Récap d'utilisation", "Resumo de uso") }
+    var recapTokensUnit: String { t("토큰", "tokens", "トークン", "tokens", "tokens", "tokens") }
+    func recapScopeName(_ scope: RecapScope) -> String {
+        switch scope {
+        case .week: t("주간", "Week", "週", "Semana", "Semaine", "Semana")
+        case .month: t("월간", "Month", "月", "Mes", "Mois", "Mês")
+        case .year: t("연간", "Year", "年", "Año", "Année", "Ano")
+        }
+    }
+    /// Shown under a running period, whose chip compares the same number of days.
+    func recapCompareSoFar(_ scope: RecapScope) -> String {
+        switch scope {
+        case .week: t("지난주 같은 기간과 비교", "Compared with the same days last week", "先週の同じ期間と比較",
+                      "Comparado con los mismos días de la semana pasada", "Comparé aux mêmes jours de la semaine dernière",
+                      "Comparado com os mesmos dias da semana passada")
+        case .month: t("지난달 같은 기간과 비교", "Compared with the same days last month", "先月の同じ期間と比較",
+                       "Comparado con los mismos días del mes pasado", "Comparé aux mêmes jours du mois dernier",
+                       "Comparado com os mesmos dias do mês passado")
+        case .year: t("작년 같은 기간과 비교", "Compared with the same days last year", "昨年の同じ期間と比較",
+                      "Comparado con los mismos días del año pasado", "Comparé aux mêmes jours de l'an dernier",
+                      "Comparado com os mesmos dias do ano passado")
+        }
+    }
+    var recapPrevious: String { t("이전", "Previous", "前へ", "Anterior", "Précédent", "Anterior") }
+    var recapNext: String { t("다음", "Next", "次へ", "Siguiente", "Suivant", "Próximo") }
+    var recapBestDay: String { t("최고의 날", "Best day", "最高の日", "Mejor día", "Meilleur jour", "Melhor dia") }
+    var recapActiveDays: String { t("활동한 날", "Active days", "稼働日", "Días activos", "Jours actifs", "Dias ativos") }
+    var recapBestStreak: String { t("최장 연속", "Best streak", "最長連続", "Mejor racha", "Meilleure série", "Melhor sequência") }
+    var recapGraduates: String { t("졸업", "Graduated", "卒業", "Graduados", "Diplômés", "Formados") }
+    var recapNoData: String { t("기록 없음", "no data", "記録なし", "sin datos", "pas de données", "sem dados") }
+    func recapDays(_ count: Int) -> String {
+        t("\(count)일", "\(count)d", "\(count)日", "\(count) d", "\(count) j", "\(count) d")
+    }
+    func recapBestDayLine(_ day: String, _ tokens: String) -> String {
+        t("최고의 날은 \(day) — \(tokens) 토큰.",
+          "Your best day was \(day) — \(tokens) tokens.",
+          "最高の日は \(day)、\(tokens) トークン。",
+          "Tu mejor día fue el \(day): \(tokens) tokens.",
+          "Ton meilleur jour, c'était \(day) : \(tokens) tokens.",
+          "Seu melhor dia foi \(day): \(tokens) tokens.")
+    }
+    var recapNoGraduates: String {
+        t("이 기간에 졸업한 포켓몬이 없어요.", "No graduation in this period.", "この期間の卒業はありません。",
+          "Ninguna graduación en este periodo.", "Aucun diplômé sur cette période.",
+          "Nenhuma formatura neste período.")
+    }
 
     // MARK: 설정
     var refreshInterval: String { t("새로고침 간격", "Refresh interval", "更新間隔", "Intervalo de actualización", "Intervalle d'actualisation", "Intervalo de atualização") }

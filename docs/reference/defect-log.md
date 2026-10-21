@@ -212,6 +212,8 @@ read_when:
 
 ## 외부 로그·사용량 소스
 
+## 외부 로그·사용량 소스
+
 - **append-only SQLite watermark 루프를 프로바이더마다 복사하지 마라.** Cursor 와 Copilot 이
   같은 `didReset` / `highWater == 0` 규칙을 두 벌로 들고 있으면 한쪽만 고친 수정이 다른 쪽에 남는다
   (#157). 루프는 `scanIncrementalStores` 한 곳, 포맷만 콜백. 회귀는 공유 헬퍼 테스트 **그리고**
@@ -396,6 +398,33 @@ read_when:
   부류이긴 하다(실기기 Claude jsonl 863개, 최대 90MB). 회귀 가드: `CodexLargeRolloutPerformanceTests` —
   **opt-in(`POKETOKENBAR_RUN_LARGE_PERF=1` / `scripts/perf-codex-large-rollout.sh`)이라 CI 는 돌리지 않는다.**
   자동으로 막히지 않으므로 이 부류를 건드리면 직접 돌린다. (#184)
+
+- **2단계 갱신에서 파생 상태는 그 값을 *채우는* 단계 뒤에 기록한다.** 사용량 요약의 일별 원장을
+  `snapshots = newSnapshots`(phase 1) 직후에 저장했더니, `monthDaily` 는 `fetchEnrichment`(phase 2)
+  에서만 채워져 **설치 후 첫 갱신이 통째로 빈 요약**을 만들었다. 두 번째 갱신부터는 phase 1 이 이전
+  스냅샷의 `prevMonthDaily` 를 이어받아 우연히 채워지므로, 단위 테스트도 손으로 앱을 열어보는 확인도
+  통과한다 — 틀리는 건 첫 갱신 한 번뿐이라 눈에 띄지 않는다(개발 앱 defaults 에 키가 안 생긴 걸 보고
+  발견). refresh 파이프라인에 새 파생 상태를 붙일 땐 그 입력이 phase 1/2 중 어디서 채워지는지 먼저
+  확인하고, 회귀 가드는 **첫 refresh 한 번**으로 검증한다(`testTheFirstRefreshAlreadyFillsTheLedger`).
+
+## 빌드·도구체인
+
+- **새 SDK에서 통과해도 CI의 AppKit Sendable 선언을 가정하지 마라.** 동시 캐시 로드 테스트가
+  `Task { await SpriteLoader.image(...) }` 로 `NSImage?` 를 반환해 로컬 Swift 6.3.3에서는 통과했지만,
+  CI의 Xcode 16.4/Swift 6.1.2에서는 `NSImage: Sendable` 이 unavailable이라 테스트 컴파일이 실패했다.
+  **왜 못 걸렀나:** 로컬 최신 도구체인으로 전체 테스트와 경고 검증을 해도 CI SDK 호환성을 검증한 것은 아니다.
+  → 포켓몬·아이템 두 동시 로드 테스트 모두 `Task<Void, Never>` 를 사용하고 이미지 결과는 `@MainActor`
+  안에 보관한다. 객체 동일성 검증과 동시 요청은 유지하며, Sendable 우회 선언을 추가하지 않는다.
+  회귀 가드: `SpriteImageCacheTests` 의 두 동시 로드 테스트와 `macos-15` CI의 테스트 컴파일.
+  (CI 실패: 2026-09-10.)
+- **SwiftUI `View`/`App` 경계는 `@MainActor` 를 명시한다.** Swift 6.3 은 `body` 밖의 `@ViewBuilder` helper·
+  동기 클로저를 nonisolated 로 검사해, `@MainActor` `@Observable` store 접근이 수십 개의 오류로 연쇄된다.
+  개별 프로퍼티에 `MainActor.assumeIsolated` 를 흩뿌리지 말고 UI 타입 선언 한 곳에 격리를 둔다.
+  `SwiftUIIsolationTests.testEverySwiftUIViewAndAppIsMainActorIsolated` 가 새 View/App 선언 누락을 소스 스캔으로 막는다.
+- **coverage profile producer와 consumer는 같은 LLVM toolchain이어야 한다.** Homebrew Swift 6.3 이 만든
+  `default.profdata` 를 구형 Xcode의 `xcrun llvm-cov` 로 읽으면 `unsupported instrumentation profile format
+  version` 으로 테스트 성공 뒤 게이트만 실패한다. `test-gate.sh` 는 현재 `swift` 실경로 옆의 `llvm-cov` 를
+  우선하고, sibling이 없는 Apple toolchain에서만 `xcrun --find llvm-cov` 로 폴백한다.
 
 ## 자격증명·Keychain
 
