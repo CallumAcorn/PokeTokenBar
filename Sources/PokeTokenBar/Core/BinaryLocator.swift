@@ -41,7 +41,7 @@ enum BinaryLocator {
         }
         let result = locate(binary, staticPaths: staticPaths)
         cache[binary] = Cached(path: result, at: Date())
-        AppLog.write(result.map { "\(binary) resolved: \($0)" } ?? "\(binary) NOT found on PATH")
+        AppLog.writeIfChanged("binary-\(binary)", result.map { "\(binary) resolved: \($0)" } ?? "\(binary) NOT found on PATH")
         return result
     }
 
@@ -104,7 +104,7 @@ enum BinaryLocator {
         }
         // 2) 로그인+인터랙티브 셸 PATH 해석 (mise activate / nvm / fnm 등은 .zshrc 에서 PATH 주입)
         guard !isShellResolutionDisabled else {
-            AppLog.write("\(binary) not in static paths and shell resolution is disabled — skipping shell spawn")
+            AppLog.writeIfChanged("binary-shell-\(binary)", "\(binary) not in static paths and shell resolution is disabled — skipping shell spawn")
             return nil
         }
         return shellResolve(binary)

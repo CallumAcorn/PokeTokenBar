@@ -141,12 +141,15 @@ private actor AntigravityTokenCache {
             cachedCredential = cred
             return cred.accessToken
         }
-        // 만료되었고 refresh_token이 있다면 갱신 시도
-        if let refreshToken = cred.refreshToken {
-            if let refreshed = try? await Self.refreshGoogleToken(refreshToken: refreshToken) {
-                cachedCredential = refreshed
-                return refreshed.accessToken
-            }
+        // Keep the refresh token in memory before trying it, so the automatic poll can retry a
+        // transient failure without reading Keychain again.
+        cachedCredential = cred
+        // A rate limit, server error or dropped connection throws here rather than falling through:
+        // sending the expired token gets a 401 that invalidates the only refresh credential (upstream).
+        if let refreshToken = cred.refreshToken,
+           let refreshed = try await Self.refreshGoogleToken(refreshToken: refreshToken) {
+            cachedCredential = refreshed
+            return refreshed.accessToken
         }
         // 갱신 실패했더라도 기존 accessToken 반환 (API에서 401 나면 다시 처리)
         cachedCredential = cred
@@ -172,6 +175,12 @@ private actor AntigravityTokenCache {
         request.httpBody = Data(bodyString.utf8)
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse {
+            if http.statusCode == 429 {
+                throw LimitsError.rateLimited(retryAfter: OAuthLimitsProvider.retryAfterSeconds(http))
+            }
+            if (500...599).contains(http.statusCode) { throw LimitsError.httpStatus(http.statusCode) }
+        }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let newAccessToken = json["access_token"] as? String else {

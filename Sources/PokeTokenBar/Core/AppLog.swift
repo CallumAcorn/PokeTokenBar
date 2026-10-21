@@ -58,6 +58,22 @@ enum AppLog {
         backend.write(formatted(message))
     }
 
+    /// `write` for status lines repeated on every poll: an unchanged state is suppressed (reaffirmed
+    /// once per `repeatAfter`), a changed one is written at once. Not for lines whose values change
+    /// every tick, or for events (upstream a94b3dae).
+    static func writeIfChanged(_ key: String, _ message: String, repeatAfter: TimeInterval = 3600) {
+        guard AppEnv.isBundledApp else { return }
+        suppressorLock.lock()
+        let shouldWrite = suppressor.shouldWrite(key: key, message: message, repeatAfter: repeatAfter)
+        suppressorLock.unlock()
+        guard shouldWrite else { return }
+        backend.write(formatted(message))
+    }
+
+    /// Mutated from several threads, so it needs the lock.
+    nonisolated(unsafe) private static var suppressor = LogRepeatSuppressor()
+    private static let suppressorLock = NSLock()
+
     private static func formatted(_ message: String) -> String {
         "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
     }

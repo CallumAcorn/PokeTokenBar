@@ -141,6 +141,13 @@ Antigravity 2.0 과 IDE 가 추정치가 아닌 실제 할당량을 보고합니
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-battle-info.png" width="300" alt="배틀 정보: 티어, 역할, 추천 빌드, 더 나은 선택지"><br><br><img src="assets/screenshot-move-detail.png" width="300" alt="기술 상세: 위력, 명중, PP, 설명"></td>
 </tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>🏟️ 체육관 관장으로 플레이</h3>
+파티로 팀을 꾸릴 수 있는 체육관 관장·사천왕·챔피언을 고르면 그 팀으로 로스터가 채워집니다. <b>걸린 배지</b>는 이 팀을 이기면 상대가 얻는 배지와, 한 마리 더 고르면 추가되는 배지를 보여줍니다. 파티는 이름이나 타입으로 검색할 수 있어요.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-battle-gym-leader.png" width="340" alt="배틀 로스터 선택: 비상으로 플레이, 윙배지가 걸림"></td>
+</tr>
 </table>
 
 ## 이 밖에도

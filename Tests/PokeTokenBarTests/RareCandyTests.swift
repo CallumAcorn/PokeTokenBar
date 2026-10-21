@@ -374,6 +374,27 @@ final class RareCandyStoreTests: XCTestCase {
                        "리셋 시각이 바뀌었는데 재무장하지 않아 지급이 누락됐다")
     }
 
+    /// Reset times jitter between calls: Anthropic by microseconds, Codex by about a second. Read
+    /// as strings, every jitter looked like a new window and re-granted candy on each poll at 100%.
+    func testResetTimeJitterDoesNotRegrant() {
+        func grants(_ kind: WindowClass, _ stamps: [String]) -> Int {
+            var tier: [String: Int] = [:]
+            var resets: [String: String] = [:]
+            return stamps.reduce(0) { total, stamp in
+                total + CompanionStore.evaluateCandyGrants(
+                    windows: [CandyWindow(key: "k", name: "k", kind: kind, utilization: 100, resetsAt: stamp)],
+                    grantTier: &tier, grantResetAt: &resets).count
+            }
+        }
+        XCTAssertEqual(grants(.session, ["2026-09-08T10:00:00.034464+00:00", "2026-09-08T10:00:00.051230+00:00",
+                                         "2026-09-08T10:00:00.990001+00:00"]), 1, "microsecond jitter")
+        XCTAssertEqual(grants(.session, ["1757325600", "1757325601", "1757325599"]), 1, "Codex ±1s epochs")
+        XCTAssertEqual(grants(.weekly, ["2026-09-08T10:00:00Z", "2026-09-08T15:00:00Z"]), 1,
+                       "a weekly reset moving 5 hours is drift, not a new week")
+        XCTAssertEqual(grants(.weekly, ["2026-09-08T10:00:00Z", "2026-09-15T10:00:00Z"]), 2, "a new week re-grants")
+        XCTAssertEqual(grants(.session, ["2026-09-08T10:00:00Z", "2026-09-08T15:00:00Z"]), 2, "a new five-hour window re-grants")
+    }
+
     /// 리셋 시각을 주지 않는 프로바이더는 종전대로 관측된 하강에만 의존한다 — 없는 증거를 지어내
     /// 재지급하면 안 된다.
     func testWindowWithoutResetTimeDoesNotRegrant() {

@@ -482,14 +482,15 @@ final class CompanionStore {
         if let until = eventUntil, clock() > until {
             justGraduated = nil; justEvolvedTo = nil; eventUntil = nil
         }
-        // 알 상태 프리패칭 — 종 pre-roll + 라인/스프라이트 예열(부화 순간 딜레이 제거).
-        // 성공할 때까지 매 update 틱마다 재시도(성공 후엔 no-op).
-        if state.trainingSlotID == nil, state.installBaselineSet, !isHatching {
-            Task { await ensureEggPrefetch() }
-        }
-        // 알이 부화 임계에 도달하면 부화
-        if state.trainingSlotID == nil, state.eggUsage >= PokemonBalance.eggHatchThreshold, !isHatching {
-            Task { await hatchIfNeeded() }
+        // A ready egg hatches; before that, prefetch (species pre-roll + line/sprite warm-up). Starting
+        // both on the same tick let the hatch see the prefetch mid-roll and back off until the next
+        // tick, so a ready egg could wait a whole refresh interval (upstream 2ecf7d2f).
+        if state.trainingSlotID == nil, !isHatching {
+            if state.eggUsage >= PokemonBalance.eggHatchThreshold {
+                Task { await hatchIfNeeded() }
+            } else if state.installBaselineSet {
+                Task { await ensureEggPrefetch() }
+            }
         }
         // 훈련 중인데 라인 미로딩(앱 재시작) → 로드
         if trainingMon != nil, currentLine == nil, !isHatching {
@@ -1621,7 +1622,9 @@ final class CompanionStore {
             // 필요한데, 그 근거를 추측이 아니라 서버가 준 리셋 시각에서 가져온다. 시각을 모르는
             // 프로바이더(nil)는 종전대로 관측된 하강에만 의존한다 — 없는 증거를 지어내지 않는다.
             let rolledUnobserved: Bool
-            if let stamp, let seen = grantResetAt[w.key] { rolledUnobserved = stamp != seen } else { rolledUnobserved = false }
+            if let stamp, let seen = grantResetAt[w.key] {
+                rolledUnobserved = isNewWindow(previous: seen, current: stamp, kind: w.kind)
+            } else { rolledUnobserved = false }
             guard previous < 1 || rolledUnobserved else { continue }
             grantTier[w.key] = 1
             grantResetAt[w.key] = stamp
@@ -1629,6 +1632,26 @@ final class CompanionStore {
             grants.append(CandyGrant(windowKey: w.key, windowName: w.name, count: count))
         }
         return grants
+    }
+
+    /// Whether a reset time marks a genuinely new window. Reset times jitter between calls
+    /// (Anthropic by microseconds, Codex by about a second), and comparing them as strings made
+    /// every jitter a "new window", re-granting candy on every poll while a window sat at 100%
+    /// (upstream #375). A new window must move the reset forward by a window-sized step: 30 minutes
+    /// for the five-hour window, 24 hours for the weekly. Unparseable stamps keep string comparison.
+    static func isNewWindow(previous: String, current: String, kind: WindowClass) -> Bool {
+        guard previous != current else { return false }
+        guard let before = resetDate(previous), let after = resetDate(current) else { return true }
+        return after.timeIntervalSince(before) >= (kind == .weekly ? 86_400 : 1_800)
+    }
+
+    /// A reset stamp as a date: Unix seconds or milliseconds, or ISO 8601.
+    static func resetDate(_ stamp: String) -> Date? {
+        if let value = Double(stamp) {
+            if value > 1_000_000_000_000 { return Date(timeIntervalSince1970: value / 1000) }
+            if value > 100_000_000 { return Date(timeIntervalSince1970: value) }
+        }
+        return ISO8601Parser.date(from: stamp)
     }
 
     /// 한도 창 상태로부터 사탕 지급(엣지·영속). AppDelegate 가 매 refresh 완료 시(한도 로드 후) 호출.
