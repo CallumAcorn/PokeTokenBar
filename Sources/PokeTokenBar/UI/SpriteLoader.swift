@@ -106,7 +106,7 @@ actor SpriteStore {
     }
 
     /// The retry loop on its own, so its timing is testable without the network.
-    static func retrying<T>(isolation: isolated (any Actor)? = #isolation,
+    static func retrying<T: Sendable>(isolation: isolated (any Actor)? = #isolation,
                             wait: (Duration) async throws -> Void,
                             attempt: () async -> T?) async -> T? {
         var delay = Duration.seconds(2)
