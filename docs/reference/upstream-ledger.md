@@ -146,7 +146,7 @@ declined for the same reason, not re-litigated.
 | `2eec9afa` | #298 | deferred | Pace marker on quota bars |
 | `68deb094` | #349 | deferred | Colour quota bars by pace. Builds on #298 |
 | `b32717fb` | — | deferred | Colour menu-bar limit percentages like the gauges |
-| `2ecf7d2f` | #246 | deferred | Explain delayed egg hatches and harden retry state |
+| `2ecf7d2f` | #246 | **ported** | Ready egg hatches without racing the prefetch. The waiting-for-network hint is left out |
 | `2e8efddf` | #328 | deferred | Bulk Rare Candy use with growth previews. Touches the candy code fixed in #29 |
 | `13e3bf2a` | — | deferred | Local save auto-backup and corruption recovery, 776 lines. Changes the load path; worth doing as its own reviewed change |
 | `ae7bd9d3` | — | deferred | Search, sort and filters for the Pokédex and catch log, 775 lines |
@@ -154,19 +154,19 @@ declined for the same reason, not re-litigated.
 | `279e112d` | #370 | deferred | Larger text and sprites in a 4x4 collection grid |
 | `d44329bb` | — | deferred | Fixed-height Home tab with a reserved scroll area |
 | `746d8384` | #356 | deferred | Korean particles matched to the name |
-| `c9514926` | #291 | deferred | Tell shoppers what a released Pokémon keeps. Build fails here: depends on the release feature this fork lacks |
-| `b4ff5de9` | — | deferred | **Protect legendary companions from accidental egg discard.** The most valuable deferral: it prevents losing a legendary. Changes the egg-purchase flow, so it wants a deliberate port |
+| `c9514926` | #291 | **skipped** | Tell shoppers what a released Pokémon keeps. Needs a release feature the fork does not have |
+| `b4ff5de9` | — | **skipped** | Protect legendaries from egg discard. Not applicable: the fork benches the companion to the PC when an egg is bought, it never discards |
 | `fe51577e` | #351 | deferred | Show real shiny odds in hatch notifications |
-| `184c5f41` | #282 | deferred | Avoid UI stalls opening large catch logs |
+| `184c5f41` | #282 | **ported** | Lazy catch-log rows. The image-cache half is left out |
 | `087fd0f7` | #285 | deferred | Dex sprite animation consistency |
 | `fd008e53` | #286 | deferred | Quota graph fill matches remaining display mode |
 | `bb92bd2a` | #292 | deferred | Align quota percentages |
 | `a8b3ba82` | #293 | deferred | Display costs as plain dollars |
-| `1a8a7252` | #295 | deferred | Avoid English flashes loading Pokémon names |
+| `1a8a7252` | #295 | **skipped** | Avoid English flashes loading names. Changes a view that only exists after deferred #290 (`2fab082c`) |
 | `1c695c7d` | #311 | deferred | Show a skipped release in Settings. Safe for update pinning, but conflicts across four forked UI files |
-| `a94b3dae` | — | deferred | Stop unchanged status lines filling the log |
-| `5f6a4f0a` | — | deferred | Log each unpriced model once |
-| `8b2dd955` | — | deferred | Prefer reported Claude cost-state over the price-table estimate |
+| `a94b3dae` | — | **ported** | Stop unchanged status lines filling the log. Applied to the fork's own status lines (limits, codex, provider status, desktop scan) |
+| `5f6a4f0a` | — | **ported** | Log each unpriced model once, on the fork's $0 fallback (the fork has no Unavailable cost state) |
+| `8b2dd955` | — | **ported** | Prefer Claude Code's reported cost-state over the price table. One measured session: table $6.95, reported $6.13. Added a $100,000-per-model sanity cap and a Claude parser version so old cache blobs re-read |
 | `906bbb97` | #401 | taken | Resume suspended polling when `screensDidWake` is missed. Session-key test stubs (declined `8953ea8f`, claude.ai session key) dropped from the test file |
 | `a8dd8063` | #377 | **ported** | Retain idle-day history. Taken without its monthly-trend series and recap button, which belong to deferred #270/#332; its rendering test dropped for the same reason |
 | `9c9c805d` | #424 | **ported** | Dedupe repeated species in saved chains. Applied in `sanitizedMon` so every PC member is covered, not one `active`; regression test fails with the dedupe removed |
@@ -186,9 +186,9 @@ declined for the same reason, not re-litigated.
 | `abe0b9a0` | #392 | **ported** | Hover for exact growth progress, on the fork's `trainingMon` |
 | `a2ec3649` | #321 | **ported** | Cooldown only after a validated release, plus an in-flight guard. Upstream's tag check rejected `-hardened.N`, which would have silenced every fork update; the fork accepts its own scheme. Upstream also committed a `default.profraw`, removed |
 | `40b506ee` | #403 | deferred | Kimi Code provider. Built on omp/Aside (skipped) and upstream's parser-version cache, 17 conflicts in the cache alone |
-| `26efe4ec` | #394 | deferred | Open a Pokédex entry by clicking a sprite. 14 conflicts across the fork's diverged collection views; needs a visually checked port |
+| `26efe4ec` | #394 | **ported** | Open a Pokédex entry by clicking a sprite, through a popover navigation hook; checked in the running app |
 | `11eebe62` | #402 | deferred | Keep recent providers' tabs across calendar resets. Built on upstream's shared `ProviderEnrichment.local`; the fork still has per-provider copies |
-| `656d603f` | #380 | deferred | Bigger Pokédex pager hit area. The fork's footers differ in size; needs a visual check |
+| `656d603f` | #380 | **ported** | 22pt pager hit area without moving the footer; checked in the running app (7 and 10pt from the glyph page, 12pt do not) |
 | `9be4ea95` | #372 | deferred | Russian UI. Every string gains a column and the fork's own strings need translations |
 | `0269dad7` | #395 | **skipped** | Daily trend by calendar month. Depends on deferred #270 |
 | `5afeb2a5` | #368 | **skipped** | Recap chart tooltips. Depends on deferred #332 |
@@ -209,3 +209,16 @@ declined for the same reason, not re-litigated.
 | `5214b04f` | #374 | **declined** | Always show shiny sprites in the Pokédex grid. Changes the fork's tap-to-reveal behaviour, which the README documents |
 | `3b2e4c09` | #427 | **declined** | Upstream's PR workflow: agent skill folders, `AGENTS.md` edits, PR-format checker. Their contribution process, not this fork's |
 | `498bdbc6` | #400 | **declined** | Universal binary. The fork ships no binaries; everyone builds natively from source |
+| `d8887937` | #375 | **ported** | Rare Candy re-granted on reset-time jitter. The fork had the same bug (string comparison in its reset re-arm); now a window must move 30 min (five-hour) or 24 h (weekly) |
+| `a4d17d58` | #435 | **skipped** | Return to the viewed Pokédex page after Back. Not applicable: the fork's grid keeps its page across Back, and catch-log rows do not open a detail page |
+| `04b12da9` | #376 | deferred | Alternate forms for gen 1-5 species, 1,199 lines. Builds on deferred Unown forms #288 |
+| `fd12f005` | #446 | **skipped** | Collapse backup history in Settings. The fork has no backups |
+| `dc6de418` | — | **ported** | Partial: Sonnet 5.5 cache read $0.10 and Antigravity keeping its refresh credential after transient failures. The backup and form parts do not apply |
+| `594be29c` | — | **declined** | Upstream's release notes since 2.5.5 |
+| `17cf2bfb` | — | **skipped** | Test for form metadata captions. Depends on deferred forms |
+| `2c0212b5` | — | **declined** | Upstream README image labels |
+| `4617c8ab` | — | **declined** | Upstream release images |
+| `b716054e` | — | **skipped** | Session-key settings reveal. The session-key feature was declined (`8953ea8f`) |
+| `77f789d7` | — | **declined** | Upstream's version bump to 2.5.6 |
+| `2f2fb321` | #447 | **ported** | Recover sprite animations after failed downloads. Retry wait capped at 5 minutes instead of 30 seconds, and the menu bar cancels stale loops |
+| `d82867bb` | #448 | **skipped** | Empty Settings windows. Already fixed here by #44 without upstream's private `_EmptyScene` API |
