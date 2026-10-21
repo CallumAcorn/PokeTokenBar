@@ -19,6 +19,7 @@ struct SettingsView: View {
     @AppStorage(ExternalUsageCredit.defaultsKey) private var creditExternalUsage = false
     @State private var reportError: String?
     @State private var advancedExpanded = false
+    @State private var snapshotsExpanded = false
     @State private var isCheckingUpdate = false
     @State private var didCheckUpdate = false
     @State private var selectedScanProviderID = "claude_code"
@@ -73,6 +74,8 @@ struct SettingsView: View {
                 }
                 .padding(16)
             }
+            // Backup history starts collapsed on every visit (upstream #446).
+            .onAppear { snapshotsExpanded = false }
             Divider()
             footer
         }
@@ -229,6 +232,23 @@ struct SettingsView: View {
                 toggleRow(l.todayCost, $store.showCostInMenu)
                 Divider()
                 toggleRow(l.limitPercent, $store.showLimitInMenu)
+                if store.showLimitInMenu {
+                    Divider()
+                    groupRow {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(l.menuLimitColor)
+                            Text(l.menuLimitColorHint).font(.caption2).foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                        Picker(l.menuLimitColor, selection: $store.menuLimitColorMode) {
+                            ForEach(UsageStore.MenuLimitColorMode.allCases, id: \.self) {
+                                Text(l.menuLimitColorMode($0)).tag($0)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                }
             }
             Text(l.allOffHint).font(.caption2).foregroundStyle(.tertiary).padding(.leading, 4)
         }
@@ -416,6 +436,70 @@ struct SettingsView: View {
                 Spacer()
                 Button(l.importSaveButton) { importSave(store) }
             }
+            Divider()
+            snapshotsSection(store)
+        }
+    }
+
+    @ViewBuilder
+    private func snapshotsSection(_ store: UsageStore) -> some View {
+        groupRow {
+            Text(l.createSnapshotHint).font(.caption2).foregroundStyle(.tertiary)
+            Spacer()
+            Button(l.createSnapshotButton) { takeManualSnapshot() }
+        }
+        Divider()
+        SnapshotHistoryButton(isExpanded: $snapshotsExpanded, title: l.snapshotsSectionTitle,
+                              stateDescription: l.snapshotHistoryState(expanded: snapshotsExpanded))
+            .frame(maxWidth: .infinity)
+            .frame(height: 20)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        if snapshotsExpanded {
+            VStack(spacing: 0) {
+                if companion.availableSnapshots.isEmpty {
+                    groupRow {
+                        Text(l.noSnapshotsYet).font(.caption2).foregroundStyle(.tertiary)
+                        Spacer()
+                    }
+                } else {
+                    ForEach(companion.availableSnapshots) { snapshot in
+                        Divider()
+                        snapshotRow(snapshot, store: store)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func snapshotRow(_ snapshot: SaveSnapshot, store: UsageStore) -> some View {
+        groupRow {
+            HStack(spacing: 8) {
+                if let speciesID = snapshot.currentSpeciesID {
+                    SpriteView(speciesID: speciesID, size: 28, shiny: snapshot.currentIsShiny,
+                               form: snapshot.currentForm)
+                        .frame(width: 28, height: 28)
+                } else {
+                    SpriteView(speciesID: nil, size: 28)
+                        .frame(width: 28, height: 28)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Self.exportedAtText(snapshot.date))
+                        .font(.caption)
+                    Text(l.snapshotDexAndTokens(
+                        dex: snapshot.dexCount,
+                        tokens: TokenFormatter.compact(snapshot.lifetimeTokens)
+                    ))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button(l.restoreSnapshotButton) {
+                confirmAndRestoreSnapshot(snapshot, store: store)
+            }
+            .controlSize(.small)
         }
     }
 
@@ -777,6 +861,57 @@ struct SettingsView: View {
                      style: .informational)
     }
 
+    private func takeManualSnapshot() {
+        do {
+            try companion.createManualSnapshot()
+            presentAlert(title: l.createSnapshotButton, message: l.snapshotCreatedToast, style: .informational)
+        } catch {
+            AppLog.write("manual snapshot creation failed: \(error)")
+            presentAlert(title: l.createSnapshotButton, message: error.localizedDescription, style: .warning)
+        }
+    }
+
+    private func confirmAndRestoreSnapshot(_ snapshot: SaveSnapshot, store: UsageStore) {
+        let current = companion.transferSummary
+        let confirm = NSAlert()
+        confirm.alertStyle = .warning
+        confirm.messageText = l.restoreConfirmTitle
+        confirm.informativeText = l.restoreConfirmBody(
+            snapshotDate: Self.exportedAtText(snapshot.date),
+            snapshotDex: snapshot.dexCount,
+            snapshotTokens: TokenFormatter.compact(snapshot.lifetimeTokens),
+            currentDex: current.dexCount,
+            currentTokens: TokenFormatter.compact(current.lifetimeTokens)
+        )
+        confirm.addButton(withTitle: l.restoreSnapshotButton)
+        confirm.addButton(withTitle: l.cancel)
+        for (index, button) in confirm.buttons.enumerated() {
+            button.keyEquivalent = ImportConfirmPolicy.keyEquivalent(forButtonAt: index)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            try companion.restoreSnapshot(
+                snapshot,
+                todayTokensByProvider: store.todayTokensByProvider,
+                todayDate: LocalUsageReader.todayKey(),
+                hasUsageData: store.hasUsageData
+            )
+            presentAlert(
+                title: l.restoreSnapshotButton,
+                message: l.restoreDoneMessage(
+                    dex: snapshot.dexCount,
+                    tokens: TokenFormatter.compact(snapshot.lifetimeTokens)
+                ),
+                style: .informational
+            )
+        } catch {
+            AppLog.write("snapshot restore failed: \(error)")
+            presentAlert(title: l.restoreSnapshotButton, message: l.importErrorMessage(error), style: .warning)
+        }
+    }
+
     /// 확인창에 보일 내보낸 시각 — 사용자 로케일 기준 짧은 표기.
     private static func exportedAtText(_ date: Date) -> String {
         let f = DateFormatter()
@@ -793,5 +928,41 @@ struct SettingsView: View {
         alert.addButton(withTitle: l.close)
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
+    }
+}
+
+/// A native button keeps the full history header keyboard-accessible and clickable.
+@MainActor
+private struct SnapshotHistoryButton: NSViewRepresentable {
+    @Binding var isExpanded: Bool
+    let title: String
+    let stateDescription: String
+
+    func makeCoordinator() -> Coordinator { Coordinator(isExpanded: $isExpanded) }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(title: title, target: context.coordinator, action: #selector(Coordinator.toggle))
+        button.isBordered = false
+        button.alignment = .left
+        button.imagePosition = .imageLeading
+        button.contentTintColor = .secondaryLabelColor
+        button.setAccessibilityIdentifier("snapshotHistory")
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.isExpanded = $isExpanded
+        button.title = title
+        button.image = NSImage(systemSymbolName: isExpanded ? "chevron.down" : "chevron.right",
+                               accessibilityDescription: nil)
+        button.setAccessibilityLabel(title)
+        button.setAccessibilityValue(stateDescription)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var isExpanded: Binding<Bool>
+        init(isExpanded: Binding<Bool>) { self.isExpanded = isExpanded }
+        @objc func toggle() { isExpanded.wrappedValue.toggle() }
     }
 }

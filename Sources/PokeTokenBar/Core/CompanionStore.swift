@@ -43,6 +43,8 @@ final class CompanionStore {
     private let dittoDisguiseRollingEnabled: Bool
     /// 세션 내 활성 개체 교체 감지용. await 뒤 이전 개체의 결과가 새 개체를 덮지 않게 한다.
     private var activeGeneration = 0
+    private var lastAutoSnapshotDate: Date?
+    private(set) var availableSnapshots: [SaveSnapshot] = []
 
     init(provider: any PokeProviding = PokeAPIClient.shared,
          clock: @escaping () -> Date = Date.init,
@@ -55,6 +57,7 @@ final class CompanionStore {
         self.rng = rng
         self.dittoDisguiseRollingEnabled = dittoDisguiseRollingEnabled
         load()
+        refreshSnapshots()
         if state.trainingSlotID != nil { displayState = .idle }
     }
 
@@ -105,7 +108,7 @@ final class CompanionStore {
     var currentIsShiny: Bool {
         // 대표 종이 고정돼 있으면 그 종의 이로치 보유 여부를 따른다 — 개체가 아니라 종 단위 선택이라
         // 훈련 중인 개체의 이로치와는 무관하다.
-        if let rep = state.representativeSpeciesID { return state.ownsShinySpecies(rep) }
+        if let rep = state.representativeSpeciesID { return ownsShinyForm(speciesID: rep, form: state.representativeForm) }
         return trainingIsShiny
     }
     /// Shiny state of the Pokémon actually being trained, ignoring the menu-bar pin. The Home card and
@@ -126,7 +129,43 @@ final class CompanionStore {
 
     var displayName: String {
         guard let a = trainingMon, let line = currentLine else { return "Token Egg" }
-        return line.localizedName(a.currentID, state.language)
+        return formDisplayName(line.localizedName(a.currentID, state.language), speciesID: a.currentID, form: a.form)
+    }
+
+    /// `name` with the form label appended where the form needs naming ("Unown B", "Burmy (Sandy Cloak)").
+    func formDisplayName(_ name: String, speciesID: Int, form: PokemonForm?) -> String {
+        PokemonForm.displayName(name, speciesID: speciesID, form: form, language: state.language)
+    }
+
+    /// Form of the Pokémon being trained, resolved for its current stage.
+    var trainingForm: PokemonForm? {
+        guard let a = trainingMon else { return nil }
+        return PokemonForm.resolved(speciesID: a.currentID, form: a.form)
+    }
+
+    /// Form the menu bar draws: the pinned appearance, otherwise the trained Pokémon's.
+    var currentForm: PokemonForm? {
+        if let rep = state.representativeSpeciesID { return PokemonForm.resolved(speciesID: rep, form: state.representativeForm) }
+        return trainingForm
+    }
+
+    /// Collected forms of a species in catalogue order. Empty for species without forms.
+    func collectedForms(speciesID: Int) -> [PokemonForm] {
+        let owned = state.collectedForms(speciesID: speciesID)
+        return PokemonForm.forms(speciesID: speciesID).filter { owned.contains($0) }
+    }
+
+    /// Whether this exact appearance has been owned shiny (a disguised Ditto's shine stays hidden).
+    func ownsShinyForm(speciesID: Int, form: PokemonForm?) -> Bool {
+        guard PokemonForm.hasForms(speciesID: speciesID) else { return state.ownsShinySpecies(speciesID) }
+        let form = PokemonForm.resolved(speciesID: speciesID, form: form)
+        if state.dex.contains(where: { $0.isShiny && $0.chainOrder.contains(speciesID)
+            && PokemonForm.resolved(speciesID: speciesID, form: $0.form) == form }) { return true }
+        return state.party.contains { mon in
+            mon.isShiny && !(mon.dittoDisguise != nil && !mon.dittoRevealed)
+                && mon.reachedPathIDs.contains(speciesID)
+                && PokemonForm.resolved(speciesID: speciesID, form: mon.form) == form
+        }
     }
     /// 메뉴바가 그릴 종. 대표 종이 고정돼 있으면 그것, 아니면 훈련 중인 개체(없으면 알 → nil).
     /// 메뉴바 스프라이트와 애니메이션이 전부 이 한 지점을 지나므로 고정도 여기 한 곳에서 끝난다.
@@ -138,13 +177,19 @@ final class CompanionStore {
 
     /// 고정된 대표 종(없으면 nil) — UI 가 "고정 중" 상태를 표시·해제할 때 읽는다.
     var representativeSpeciesID: Int? { state.representativeSpeciesID }
+    var representativeForm: PokemonForm? { state.representativeForm }
 
     /// 대표 종 고정. 보유하지 않은 종은 무시한다 — 도감에서만 고르게 되어 있지만, 고정 지점에서
     /// 한 번 더 막아야 손편집 세이브나 향후 호출부가 유령 종을 메뉴바에 남길 수 없다.
     @discardableResult
-    func setRepresentative(_ speciesID: Int) -> Bool {
+    func setRepresentative(_ speciesID: Int, form: PokemonForm? = nil) -> Bool {
         guard state.ownsSpecies(speciesID) else { return false }
+        // Only an appearance this save has collected. Without one named, the first collected form.
+        let collected = collectedForms(speciesID: speciesID)
+        let form = form.flatMap { PokemonForm.resolved(speciesID: speciesID, form: $0) } ?? collected.first
+        if let form, !collected.contains(form) { return false }
         state.representativeSpeciesID = speciesID
+        state.representativeForm = form
         save()
         return true
     }
@@ -153,6 +198,7 @@ final class CompanionStore {
     func clearRepresentative() {
         guard state.representativeSpeciesID != nil else { return }
         state.representativeSpeciesID = nil
+        state.representativeForm = nil
         save()
     }
     var isFinalStage: Bool {
@@ -230,12 +276,209 @@ final class CompanionStore {
 
     /// 포획 로그 표시 순서 — 합류 시각 최신순. caughtAt 이 없는 구버전 항목은 .distantPast 로 묶여
     /// 맨 뒤에 온다(그들끼리의 순서는 미정).
+    /// Resolves the primary localized name of an individual final species for sorting and display.
+    func dexEntryName(_ entry: DexEntry) -> String {
+        let targetID = entry.finalID
+        if let stored = entry.names?[targetID], let localized = state.language.resolveName(stored) {
+            return localized
+        }
+        for id in entry.chainOrder.reversed() {
+            if let stored = entry.names?[id], let localized = state.language.resolveName(stored) {
+                return localized
+            }
+        }
+        return "#\(targetID)"
+    }
+
+    /// The one search rule shared by the Pokédex grid and the Catch Log, so the two screens cannot
+    /// drift apart. A query matches a Pokédex number (`25` or `#25`) or part of any stored name
+    /// in any language, ignoring case and diacritics ("flabebe" finds Flabébé).
+    struct DexSearchMatcher: Sendable {
+        private let query: String
+        private let number: Int?
+
+        /// `nil` for a blank query, which filters nothing out.
+        init?(_ rawQuery: String) {
+            let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            query = trimmed
+            number = Int(trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed)
+        }
+
+        func matches(_ species: DexSpecies) -> Bool {
+            matches(ids: [species.id], names: [species.name] + (species.names.map { Array($0.values) } ?? []))
+        }
+
+        /// An individual matches through any species of its chain, like its evolution line in the log row.
+        func matches(_ entry: DexEntry) -> Bool {
+            matches(ids: [entry.baseID, entry.finalID] + entry.chainOrder,
+                    names: entry.names?.values.flatMap(\.values) ?? [])
+        }
+
+        private func matches(ids: [Int], names: [String]) -> Bool {
+            if let number, ids.contains(number) { return true }
+            // Partial numbers keep working: "25" also finds #125, "#25" finds #25 and #250.
+            if ids.contains(where: { "#\($0)".contains(query) }) { return true }
+            return names.contains { $0.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        }
+    }
+
+    /// Filters and sorts a Pokédex list. Runs over whichever list the grid shows ("Show all" pads
+    /// it with species not met yet), so search and sort work in both views (upstream #329).
+    func filteredDexSpecies(_ species: [DexSpecies], query: String = "", rarity: Rarity? = nil,
+                            shinyOnly: Bool = false, sort: DexSortOption = .numberAsc) -> [DexSpecies] {
+        var result = species
+        if let rarity { result = result.filter { $0.rarity == rarity } }
+        if shinyOnly { result = result.filter { $0.isShiny } }
+        if let matcher = DexSearchMatcher(query) { result = result.filter { matcher.matches($0) } }
+        return sortDexSpecies(result, by: sort)
+    }
+
+    /// Sorts DexSpecies by the given option.
+    func sortDexSpecies(_ species: [DexSpecies], by sort: DexSortOption) -> [DexSpecies] {
+        switch sort {
+        case .numberAsc:
+            return species.sorted { $0.id < $1.id }
+        case .numberDesc:
+            return species.sorted { $0.id > $1.id }
+        case .nameAsc:
+            return species.sorted {
+                let cmp = $0.name.localizedCompare($1.name)
+                return cmp == .orderedAscending ? true : (cmp == .orderedSame ? $0.id < $1.id : false)
+            }
+        case .nameDesc:
+            return species.sorted {
+                let cmp = $0.name.localizedCompare($1.name)
+                return cmp == .orderedDescending ? true : (cmp == .orderedSame ? $0.id < $1.id : false)
+            }
+        case .rarityDesc:
+            return species.sorted {
+                if $0.rarity.sortRank != $1.rarity.sortRank {
+                    return $0.rarity.sortRank > $1.rarity.sortRank
+                }
+                return $0.id < $1.id
+            }
+        }
+    }
+
+    /// Filters and sorts the catch log (upstream #329).
+    func filteredDexEntries(query: String = "", rarity: Rarity? = nil, shinyOnly: Bool = false,
+                            sort: CatchLogSortOption = .recentFirst) -> [DexEntry] {
+        var result = dexEntries
+        if let rarity { result = result.filter { $0.rarity == rarity } }
+        if shinyOnly { result = result.filter { $0.isShiny } }
+        if let matcher = DexSearchMatcher(query) { result = result.filter { matcher.matches($0) } }
+        return sortDexEntries(result, by: sort)
+    }
+
+    /// Sorts DexEntry records by the given option.
+    func sortDexEntries(_ entries: [DexEntry], by sort: CatchLogSortOption) -> [DexEntry] {
+        switch sort {
+        case .recentFirst:
+            let active = entries.first(where: { isTrainingLogEntry($0) })
+            let graduated = entries.filter { !isTrainingLogEntry($0) }.sorted {
+                let d0 = $0.caughtAt ?? .distantPast
+                let d1 = $1.caughtAt ?? .distantPast
+                if d0 != d1 { return d0 > d1 }
+                return $0.id < $1.id
+            }
+            return (active.map { [$0] } ?? []) + graduated
+        case .oldestFirst:
+            let active = entries.first(where: { isTrainingLogEntry($0) })
+            let graduated = entries.filter { !isTrainingLogEntry($0) }.sorted {
+                let d0 = $0.caughtAt ?? .distantPast
+                let d1 = $1.caughtAt ?? .distantPast
+                if d0 != d1 { return d0 < d1 }
+                return $0.id < $1.id
+            }
+            return graduated + (active.map { [$0] } ?? [])
+        case .numberAsc:
+            return entries.sorted {
+                if $0.finalID != $1.finalID {
+                    return $0.finalID < $1.finalID
+                }
+                let d0 = $0.caughtAt ?? .distantPast
+                let d1 = $1.caughtAt ?? .distantPast
+                if d0 != d1 { return d0 > d1 }
+                return $0.id < $1.id
+            }
+        case .numberDesc:
+            return entries.sorted {
+                if $0.finalID != $1.finalID {
+                    return $0.finalID > $1.finalID
+                }
+                let d0 = $0.caughtAt ?? .distantPast
+                let d1 = $1.caughtAt ?? .distantPast
+                if d0 != d1 { return d0 > d1 }
+                return $0.id < $1.id
+            }
+        case .nameAsc:
+            return entries.sorted {
+                let name1 = dexEntryName($0)
+                let name2 = dexEntryName($1)
+                let cmp = name1.localizedCompare(name2)
+                if cmp != .orderedSame {
+                    return cmp == .orderedAscending
+                }
+                let d0 = $0.caughtAt ?? .distantPast
+                let d1 = $1.caughtAt ?? .distantPast
+                if d0 != d1 { return d0 > d1 }
+                return $0.id < $1.id
+            }
+        case .nameDesc:
+            return entries.sorted {
+                let name1 = dexEntryName($0)
+                let name2 = dexEntryName($1)
+                let cmp = name1.localizedCompare(name2)
+                if cmp != .orderedSame {
+                    return cmp == .orderedDescending
+                }
+                let d0 = $0.caughtAt ?? .distantPast
+                let d1 = $1.caughtAt ?? .distantPast
+                if d0 != d1 { return d0 > d1 }
+                return $0.id < $1.id
+            }
+        case .rarityDesc:
+            return entries.sorted {
+                if $0.rarity.sortRank != $1.rarity.sortRank {
+                    return $0.rarity.sortRank > $1.rarity.sortRank
+                }
+                let d0 = $0.caughtAt ?? .distantPast
+                let d1 = $1.caughtAt ?? .distantPast
+                if d0 != d1 { return d0 > d1 }
+                return $0.id < $1.id
+            }
+        }
+    }
+
     var dexEntriesSorted: [DexEntry] {
         state.dex.sorted { ($0.caughtAt ?? .distantPast) > ($1.caughtAt ?? .distantPast) }
     }
 
     /// 희귀도별 포획 로그 개수(요약 헤더용) — 개체 수 기준. 도감(종 단위)은 dexSpecies 를 쓴다.
     func dexCount(_ rarity: Rarity) -> Int { dexEntries.lazy.filter { $0.rarity == rarity }.count }
+
+    enum DexSortOption: String, CaseIterable, Identifiable, Sendable {
+        case numberAsc
+        case numberDesc
+        case nameAsc
+        case nameDesc
+        case rarityDesc
+
+        var id: String { rawValue }
+    }
+
+    enum CatchLogSortOption: String, CaseIterable, Identifiable, Sendable {
+        case recentFirst
+        case oldestFirst
+        case numberAsc
+        case numberDesc
+        case nameAsc
+        case nameDesc
+        case rarityDesc
+
+        var id: String { rawValue }
+    }
 
     /// 도감 한 칸 — 종 1개로 접힌 영구 수집 기록. 같은 라인을 여러 번 키워도 종은 한 칸이다.
     /// **종 정보만 담는다** — 성격·획득 횟수처럼 개체에 딸린 것은 포획 로그가 개체 단위로 보여준다.
@@ -247,6 +490,8 @@ final class CompanionStore {
         let baseID: Int                 // 이 종이 속한 진화라인의 시작점 — 도감 개요의 진화 라인 조회용
         /// False only for a "Show all" placeholder — a species the player has never met.
         var isSeen = true
+        /// Every stored localized name, so search matches any language.
+        var names: [String: String]? = nil
     }
 
     /// The dex list, optionally padded out to every species in the bundled catalog ("Show all").
@@ -269,7 +514,7 @@ final class CompanionStore {
     var dexSpecies: [DexSpecies] {
         state.dexUnlocked.sorted { $0.key < $1.key }.map { id, u in
             DexSpecies(id: id, name: u.names.flatMap { state.language.resolveName($0) } ?? "#\(id)",
-                       rarity: u.rarity, isShiny: u.isShiny, baseID: u.baseID)
+                       rarity: u.rarity, isShiny: u.isShiny, baseID: u.baseID, names: u.names)
         }
     }
 
@@ -509,6 +754,7 @@ final class CompanionStore {
         displayState = computeState(burnTier: burnTier, limitWarning: limitWarning,
                                     hasUsageData: hasUsageData, today: todayTokens)
         save()
+        autoSnapshotIfNeeded()
     }
 
     /// 토큰 증분을 현재 포켓몬에 적용 — 임계 도달 시 진화/졸업.
@@ -542,7 +788,7 @@ final class CompanionStore {
                 state.collectedFinals.insert("\(a.baseID):\(a.currentID)")
                 unlockSpecies(a.currentID, baseID: a.baseID, rarity: a.rarity, isShiny: trainingIsShiny, line: line)
                 syncTrainingDexEntry(monID: a.id, line: line)
-                let name = line.localizedName(a.currentID, state.language)
+                let name = formDisplayName(line.localizedName(a.currentID, state.language), speciesID: a.currentID, form: a.form)
                 justGraduated = name
                 notifyCompanionEvent(l.notifGraduateTitle, l.notifGraduateBody(name))
                 eventUntil = clock().addingTimeInterval(6)
@@ -568,7 +814,8 @@ final class CompanionStore {
                 state.party[idx].usedAtStage = a.usedAtStage - thr   // 초과분 이월
                 unlockSpecies(next.speciesID, baseID: a.baseID, rarity: a.rarity, isShiny: trainingIsShiny, line: line)
                 syncTrainingDexEntry(monID: a.id, line: line)
-                let newName = line.localizedName(next.speciesID, state.language)
+                let newName = formDisplayName(line.localizedName(next.speciesID, state.language),
+                                              speciesID: next.speciesID, form: a.form)
                 justEvolvedTo = newName
                 fireCelebration(.evolve)
                 // 짧은 levelUp 창 — 진화 순간 "…(으)로 진화했어요" 문구 노출(hatch/graduate 와 동일 패턴).
@@ -599,6 +846,7 @@ final class CompanionStore {
         guard let mon = state.party.first(where: { $0.id == monID }) else { return }
         state.dex[idx].chainOrder = mon.pathIDs
         state.dex[idx].finalID = mon.currentID
+        state.dex[idx].form = mon.form
         state.dex[idx].names = Dictionary(uniqueKeysWithValues:
             mon.pathIDs.compactMap { id in line.names[id].map { (id, $0) } })
         if trainingIsShiny { state.dex[idx].isShiny = true }
@@ -679,6 +927,7 @@ final class CompanionStore {
         state.eggUsage = 0   // 새 알은 처음부터 인큐베이션
         state.eggTier = tier
         state.pendingHatchID = nil
+        state.pendingForm = nil
         state.pendingDayCareEgg = nil   // "Hatch this egg" sets it again right after, for a Day Care egg
         prefetchedLineID = nil
         // "알을 받는 순간" 즉시 프리패칭 시작 — 다음 부화의 종·라인·스프라이트 예열.
@@ -991,6 +1240,7 @@ final class CompanionStore {
         if state.trainingSlotID == nil, state.pendingDayCareEgg == nil {
             activeGeneration += 1
             state.pendingHatchID = nil
+            state.pendingForm = nil
             prefetchedLineID = nil
             Task { await self.ensureEggPrefetch() }
         }
@@ -1580,7 +1830,7 @@ final class CompanionStore {
         state.dex.append(DexEntry(baseID: incoming.baseID, finalID: incoming.currentID, chainOrder: [incoming.currentID],
                                   rarity: incoming.rarity, caughtAt: clock(), isShiny: effectiveShiny,
                                   nature: incoming.nature, names: nil, monID: incoming.id,
-                                  source: .trade(from: displayName)))
+                                  source: .trade(from: displayName), form: incoming.form))
         save()
         return true
     }
@@ -1739,8 +1989,10 @@ final class CompanionStore {
             kickLineLoadIfNeeded()
             return
         }
+        let pendingForm = state.pendingHatchID == base ? state.pendingForm : nil
         state.pendingHatchID = nil
-        await hatchCore(baseID: base)
+        state.pendingForm = nil
+        await hatchCore(baseID: base, form: pendingForm)
     }
 
     /// 부화가 폐기된 뒤 남은 개체(대개 방금 불러온 개체)의 진화 라인을 다시 로드한다.
@@ -1768,6 +2020,7 @@ final class CompanionStore {
 
         if state.pendingHatchID == nil, let dayCareEgg = state.pendingDayCareEgg {
             state.pendingHatchID = dayCareEgg.babySpeciesID
+            state.pendingForm = rollLineForm(baseID: dayCareEgg.babySpeciesID)
         }
         if state.pendingHatchID == nil {
             guard let id = await chooseBase() else { return }   // 오프라인 → 다음 틱 재시도
@@ -1775,6 +2028,7 @@ final class CompanionStore {
             // 이 롤을 버린다 — 안 그러면 불러온 알의 pre-roll 을 남의 롤로 덮어쓴다.
             guard state.trainingSlotID == nil, activeGeneration == generation else { return }
             state.pendingHatchID = id
+            state.pendingForm = rollLineForm(baseID: id)
             save()
         }
         guard let id = state.pendingHatchID, prefetchedLineID != id else { return }
@@ -1782,18 +2036,30 @@ final class CompanionStore {
         // 스프라이트 예열 — 부화 직후 보일 것들: base 정적+애니메이션, shiny 롤(1/64) 대비 shiny 애니메이션.
         // .app 번들에서만(단위 테스트가 실네트워크에 닿지 않도록 — 알림과 동일한 게이트).
         if AppEnv.isBundledApp {
-            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: false, shiny: false)
-            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: true, shiny: false)
-            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: true, shiny: true)
+            let form = state.pendingForm
+            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: false, shiny: false, form: form)
+            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: true, shiny: false, form: form)
+            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: true, shiny: true, form: form)
+            if PokemonForm.hasForms(speciesID: line.baseID) {
+                _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: false, shiny: true, form: form)
+            }
+            if form != nil { await loadFormNames(baseID: line.baseID) }
         }
         prefetchedLineID = id
     }
 
-    func hatch(baseID: Int) async {
+    /// Draws only for lines with forms, so other species keep their random sequence.
+    private func rollLineForm(baseID: Int) -> PokemonForm? {
+        let forms = PokemonForm.lineForms(baseID: baseID)
+        guard !forms.isEmpty else { return nil }
+        return PokemonForm.roll(rng.next(), among: forms, collected: state.collectedLineForms(baseID: baseID))
+    }
+
+    func hatch(baseID: Int, form: PokemonForm? = nil) async {
         guard !isHatching else { return }
         isHatching = true
         defer { isHatching = false }
-        await hatchCore(baseID: baseID)
+        await hatchCore(baseID: baseID, form: form)
     }
 
     // MARK: 메타몽 위장/리빌
@@ -1836,7 +2102,7 @@ final class CompanionStore {
     }
 
     /// 실제 부화 로직 — isHatching 락은 호출자(hatch / hatchIfNeeded)가 소유·해제한다.
-    private func hatchCore(baseID: Int) async {
+    private func hatchCore(baseID: Int, form pendingForm: PokemonForm? = nil) async {
         let generation = activeGeneration
         guard let line = try? await provider.line(baseSpeciesID: baseID) else {
             AppLog.write("hatch: line fetch failed for base \(baseID) — egg kept, retry next tick")
@@ -1866,6 +2132,7 @@ final class CompanionStore {
         if let tier = state.eggTier, line.rarity.sortRank < tier.sortRank {
             AppLog.write("hatch: rolled \(line.rarity) below guaranteed \(tier) — discarded, re-roll next tick")
             state.pendingHatchID = nil
+            state.pendingForm = nil
             prefetchedLineID = nil
             save()
             return
@@ -1909,13 +2176,16 @@ final class CompanionStore {
                                                hiddenAbilityParent: dayCareEgg.hiddenAbilityParent, draw: { rng.next() })
         }
         let gender = genderRate.map { Gender.roll(genderRate: $0, roll: rng.next()) }
+        // Last draw, and only for lines with forms, so seeded sequences of every other roll hold.
+        // `resolved` maps nil to the default form, so only a prepared form goes through it.
+        let form = pendingForm.flatMap { PokemonForm.resolved(baseID: line.baseID, form: $0) } ?? rollLineForm(baseID: line.baseID)
         // 위장 중엔 이로치를 숨긴다 — 부화 알림·연출도 일반체로(정체는 리빌 때 공개).
         let showShiny = isShiny && dittoDisguise == nil
         activeGeneration += 1
         let newMon = MonState(baseID: line.baseID, pathIDs: [line.baseID], plannedPathIDs: evolutionPlan,
                               stageIndex: 0, usedAtStage: 0, rarity: line.rarity, totalForms: evolutionPlan.count,
                               isShiny: isShiny, nature: nature, ability: ability, ivs: ivs, dittoDisguise: dittoDisguise,
-                              acquiredAt: clock(), acquiredVia: .egg, knownMoves: inheritedMoves, gender: gender)
+                              acquiredAt: clock(), acquiredVia: .egg, knownMoves: inheritedMoves, gender: gender, form: form)
         state.pendingDayCareEgg = nil
         state.party.append(newMon)
         carryFloatingToNewTraining(from: state.trainingSlotID, to: newMon.id)
@@ -1924,9 +2194,9 @@ final class CompanionStore {
         state.dex.append(DexEntry(baseID: line.baseID, finalID: line.baseID, chainOrder: [line.baseID],
                                   rarity: line.rarity, caughtAt: clock(), isShiny: showShiny, nature: nature,
                                   names: line.names[line.baseID].map { [line.baseID: $0] },
-                                  monID: newMon.id, source: .egg))
+                                  monID: newMon.id, source: .egg, form: newMon.form))
         AppLog.write("hatch: base=\(line.baseID) rarity=\(line.rarity) shiny=\(isShiny) forms=\(evolutionPlan.count) ditto=\(dittoDisguise != nil) dayCare=\(dayCareEgg != nil)")
-        let name = line.localizedName(line.baseID, state.language)
+        let name = formDisplayName(line.localizedName(line.baseID, state.language), speciesID: line.baseID, form: newMon.form)
         notifyCompanionEvent(showShiny ? l.notifShinyHatchTitle : l.notifHatchTitle,
                              showShiny ? l.notifShinyHatchBody(name) : l.notifHatchBody(name))
         justEvolvedTo = nil        // 새 부화는 "성장" 문구(진화 아님) — 직전 진화명이 남아 표시되지 않게
@@ -1969,6 +2239,7 @@ final class CompanionStore {
         m.totalForms = evolutionPlan.count
         m.usedAtStage = carryOver
         m.dittoRevealed = true
+        m.form = PokemonForm.resolved(baseID: dittoLine.baseID, form: m.form)
         let shiny = m.isShiny
         let monID = m.id
         mutateTraining { $0 = m }
@@ -2013,7 +2284,15 @@ final class CompanionStore {
             currentLine = line
             save()   // 마이그레이션 선택을 사용량 재평가 전에 영속화해 재시작마다 다시 롤리지 않는다.
             if catchUp { applyUsage(0) }   // 라인 미로딩 동안 적립된 사용량이 임계를 넘었으면 지금 진화 판정
+            if latest.form != nil { await loadFormNames(baseID: line.baseID) }
         }
+    }
+
+    /// Warms the localized form names the title, evolution and graduation messages of a line show.
+    /// App bundle only, like sprite prefetch, so unit tests never reach the network.
+    func loadFormNames(baseID: Int) async {
+        guard AppEnv.isBundledApp else { return }
+        for speciesID in PokemonForm.formSpecies(baseID: baseID) { await FormNameStore.shared.load(speciesID: speciesID) }
     }
 
     /// 부화 종 선정 — 하드코딩 풀 없이 PokéAPI 1~5세대 base 전체(329종)에서 가중 선택.
@@ -2166,16 +2445,87 @@ final class CompanionStore {
         }
     }
 
+    // MARK: 스냅샷 (로컬 자동 백업 & 복원)
+
+    func refreshSnapshots() {
+        availableSnapshots = SaveSnapshotManager.listSnapshots(for: fileURL)
+    }
+
+    @discardableResult
+    func createManualSnapshot(now: Date? = nil) throws -> SaveSnapshot {
+        let timestamp = now ?? clock()
+        let snapshot = try SaveSnapshotManager.createSnapshot(
+            state: state,
+            for: fileURL,
+            date: timestamp,
+            appVersion: SaveSnapshotManager.defaultAppVersion,
+            deviceName: SaveSnapshotManager.defaultDeviceName
+        )
+        lastAutoSnapshotDate = timestamp
+        refreshSnapshots()
+        return snapshot
+    }
+
+    private var automaticSnapshotInterval: TimeInterval {
+        SaveSnapshotManager.minAutoSnapshotInterval
+    }
+
+    func autoSnapshotIfNeeded(now: Date? = nil) {
+        let timestamp = now ?? clock()
+        let newest = availableSnapshots.first
+
+        guard newest == nil ||
+              timestamp.timeIntervalSince(newest!.date) >= automaticSnapshotInterval
+        else {
+            return
+        }
+
+        guard state.usedSinceInstall > 0 || !state.dex.isEmpty || !state.party.isEmpty else { return }
+
+        _ = try? createManualSnapshot(now: timestamp)
+    }
+
+    func restoreSnapshot(
+        _ snapshot: SaveSnapshot,
+        todayTokensByProvider: [String: Int] = [:],
+        todayDate: String = "",
+        hasUsageData: Bool = false
+    ) throws {
+        // Read and validate the selected snapshot before taking the safety snapshot: at the retention
+        // limit, that extra file prunes the oldest one, which may be the snapshot being restored.
+        // A snapshot that no longer decodes also fails here, before anything is written or pruned.
+        let envelope = try SaveSnapshotManager.loadEnvelope(from: snapshot.fileURL)
+        _ = try? createManualSnapshot()
+        try applySave(envelope,
+                      todayTokensByProvider: todayTokensByProvider,
+                      todayDate: todayDate,
+                      hasUsageData: hasUsageData)
+        refreshSnapshots()
+        AppLog.write("snapshot restored: \(snapshot.id)")
+    }
+
     // MARK: 영속
     private func load() {
         guard let data = try? Data(contentsOf: fileURL) else { return }   // 파일 없음 = 신규 설치
         guard let s = try? JSONDecoder().decode(CompanionState.self, from: data) else {
-            // 디코드 실패(전면 손상/미래 스키마) → fresh 로 시작하되, 다음 save() 가 원본을 덮어써 영구
-            // 유실되기 전에 .corrupt 로 보존해 수동 복구 여지를 남긴다(도감 per-entry 격리로 못 살린 경우 대비).
+            // 디코드 실패(전면 손상/미래 스키마) → 원본을 .corrupt 로 백업 후 유효한 스냅샷으로 복구 시도.
             let backup = fileURL.appendingPathExtension("corrupt")
             try? FileManager.default.removeItem(at: backup)
-            try? FileManager.default.moveItem(at: fileURL, to: backup)
-            AppLog.write("companion state decode failed — original backed up to \(backup.lastPathComponent), starting fresh")
+            do {
+                try FileManager.default.moveItem(at: fileURL, to: backup)
+                AppLog.write("companion state decode failed — original backed up to \(backup.lastPathComponent)")
+            } catch {
+                AppLog.write("failed to move corrupt state file to \(backup.lastPathComponent): \(error)")
+            }
+
+            if let recovered = SaveSnapshotManager.loadLatestValidSnapshot(for: fileURL) {
+                state = SaveTransfer.sanitized(recovered)
+                AppLog.write("automatically recovered companion state from snapshot")
+                save()
+            } else {
+                state = CompanionState()
+                AppLog.write("no snapshot available, starting fresh")
+            }
             return
         }
         // 불러오기 경계와 같은 정규화를 디스크에서 읽을 때도 건다. 불러오기만 막으면 **이미 저장된**

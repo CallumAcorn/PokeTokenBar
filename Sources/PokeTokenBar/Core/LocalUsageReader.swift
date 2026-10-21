@@ -16,6 +16,9 @@ enum LocalUsageReader {
 
     /// 활성 블록(번 레이트)과 enrichment 스캔 하한이 공유하는 5시간 롤링 윈도우 길이.
     static let blockWindow: TimeInterval = 5 * 3600
+    /// A provider used within this window keeps its tab on idle days, the weekly quota window: if that
+    /// bar's remaining amount means anything, the tool was used inside it (#336).
+    static let recentUseWindow: TimeInterval = 7 * 86_400
     /// Fork replay는 수 ms 간격으로 기록된다. 이보다 긴 첫 공백부터는 실제 child turn으로 본다.
     private static let forkReplayMaximumGap: TimeInterval = 1
 
@@ -1494,6 +1497,69 @@ enum LocalUsageReader {
         return PeriodUsage(period: periodKey, totalTokens: b.total, totalCost: b.cost)
     }
 
+    /// Day-by-day totals for the **current month**, month start through `now`, in date order.
+    ///
+    /// This is a group-by over entries the enrichment scan has already loaded, the same set
+    /// `period()` folds into a single scalar. No extra read, no new parsing, no `Entry` field.
+    ///
+    /// Two things are deliberate here.
+    ///
+    /// 1. **Cross-month sessions are truncated.** The scan window is an mtime filter, so a
+    ///    session that started last month and continued into this one is read in full and drags
+    ///    last month's entries along with it. Grouping the entries by `localDay` and emitting
+    ///    whatever comes out would paint a partially-filled, jagged previous month, a picture
+    ///    that is not true, because the *other* files from last month were never scanned. So the
+    ///    date axis is built **from the month range** and totals are folded onto it: an entry
+    ///    outside the range has no slot to land in. The `localDay` window matches `period()`'s
+    ///    exactly, which makes `sum(monthDailySeries) == monthTotal.totalTokens` an invariant
+    ///    (`testEnrichmentSeriesAndMonthTotalStayInAgreement` holds the two together).
+    /// 2. **Days with no usage are explicit zeros, not omissions.** Bar position *is* the date in
+    ///    the popover; dropping empty days would slide every later bar onto the wrong day.
+    ///
+    /// Scope is baked in rather than parameterised, a caller cannot widen this to a rolling
+    /// window or last month, which is where this area has had month-boundary regressions before
+    /// (see `enrichmentScanStart`).
+    /// - Parameter timeZone: 테스트 주입 구멍. 기본값은 `Entry.localDay` 를 만든 것과 같은 현지 시간대다
+    ///  , 다른 값을 주면 축의 날짜 문자열이 엔트리의 `localDay` 와 어긋나므로 프로덕션에선 기본값만 쓴다.
+    ///   DST 가 없는 시간대(예: Asia/Seoul)에서만 테스트하면 하루 전진 결함이 통과하기 때문에 뚫었다.
+    static func monthDailySeries(entries: [Entry], now: Date,
+                                 timeZone: TimeZone = .current) -> [DailyUsage]
+    {
+        var calendar = Calendar.current
+        calendar.timeZone = timeZone
+        let fmt = localDayFormatter(timeZone: timeZone)
+
+        var days: [String] = []
+        var cursor = calendar.startOfDay(for: startOfMonth(now, calendar: calendar))
+        let lastDay = calendar.startOfDay(for: now)
+        while cursor <= lastDay {
+            days.append(fmt.string(from: cursor))
+            // `date(byAdding:)` rather than +86400, a DST day is 23 or 25 hours long and a fixed
+            // stride would drift the axis off the calendar for the rest of the month
+            // (`testAxisLengthMatchesTheDayOfMonthInEveryMonthAndAcrossDSTTimeZones`).
+            // The `else` is an API-forced unwrap with no reachable trigger on a Gregorian date,
+            // like the `?? date` in `startOfMonth`/`startOfWeek`, not a guard worth a test.
+            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+
+        // `days` 는 여기서 항상 비어 있지 않다, `startOfMonth(now) <= now` 라 위 루프가 최소 한 번
+        // 돈다. 그래서 empty 가드를 두지 않는다(도달 불가한 분기는 커버리지에 ^0 으로 남고, 읽는 사람
+        // 에게 "빌 수 있다"는 잘못된 신호를 준다). 아래 `Set`·`map` 은 빈 배열에서도 안전하다.
+        let inMonth = Set(days)
+        var buckets: [String: Bucket] = [:]
+        for e in entries where inMonth.contains(e.localDay) {
+            buckets[e.localDay, default: Bucket()].add(e)
+        }
+
+        return days.map { day in
+            let b = buckets[day] ?? Bucket()
+            return DailyUsage(date: day, inputTokens: b.input, outputTokens: b.output,
+                              cacheCreationTokens: b.cacheWrite, cacheReadTokens: b.cacheRead,
+                              totalTokens: b.total, totalCost: b.cost)
+        }
+    }
+
     /// 최근 5시간 롤링 윈도우 기반 활성 블록(번 레이트 추정용).
     static func activeBlock(entries: [Entry], now: Date) -> BlockUsage? {
         let windowStart = now.addingTimeInterval(-blockWindow)
@@ -1517,9 +1583,9 @@ enum LocalUsageReader {
 
     // MARK: 유틸
 
-    static func startOfMonth(_ date: Date) -> Date {
-        let c = Calendar.current
-        return c.date(from: c.dateComponents([.year, .month], from: date)) ?? date
+    /// `calendar` 는 테스트가 시간대를 주입하기 위한 구멍이다, 기본값은 프로덕션과 동일한 현지 달력.
+    static func startOfMonth(_ date: Date, calendar: Calendar = .current) -> Date {
+        calendar.date(from: calendar.dateComponents([.year, .month], from: date)) ?? date
     }
 
     static func startOfWeek(_ date: Date) -> Date {
@@ -1536,7 +1602,8 @@ enum LocalUsageReader {
     /// (OpenCode/Hermes 경로엔 이미 `now-7일` 하한이 있었으나 Claude/Codex/Gemini 경로엔 없어
     /// 드리프트했다 — 네 프로바이더가 이 단일 소스를 공유하게 통일.)
     static func enrichmentScanStart(now: Date) -> Date {
-        min(startOfMonth(now), startOfWeek(now), now.addingTimeInterval(-blockWindow))
+        min(startOfMonth(now), startOfWeek(now), now.addingTimeInterval(-blockWindow),
+            now.addingTimeInterval(-LocalUsageReader.recentUseWindow))
     }
 
     static func monthKey(_ date: Date) -> String {
@@ -1547,10 +1614,10 @@ enum LocalUsageReader {
 
     static func todayKey() -> String { localDayFormatter().string(from: Date()) }
 
-    static func localDayFormatter() -> DateFormatter {
+    static func localDayFormatter(timeZone: TimeZone = .current) -> DateFormatter {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = .current
+        f.timeZone = timeZone
         f.locale = Locale(identifier: "en_US_POSIX")
         return f
     }

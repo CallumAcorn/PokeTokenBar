@@ -27,6 +27,18 @@ read_when:
   remains intentionally scoped to current activity. Preserve carriers during phase 1 to avoid
   hiding the chart between refresh phases. Removing the history predicates makes the historical
   carrier regression fail; restoring them passes all three history regression tests.
+- **Calendar totals are not a "recently used" signal.** Week and month totals reset at their
+  boundaries, so a provider used Friday had week = month = 0 on Monday (or after the 1st) and lost
+  its tab — and with it the official limits, which the popover can only reach through a snapshot,
+  although the limits had been fetched successfully (#336). Why it was missed: every carrier test
+  used positive week/month fixtures, so none crossed a boundary. Snapshots now also stay when the
+  newest positive-token entry (`lastUsage`, from the shared `ProviderEnrichment.local`) is within
+  `LocalUsageReader.recentUseWindow` (7 days, the weekly quota window); zero-token synthetic
+  records do not count (#56 boundary). `enrichmentScanStart` covers that window, and snapshots
+  keep provider registration order because carriers arrive in task-completion order. Guards:
+  `testCarrierForProviderUsedWithinRecentWindowAcrossCalendarBoundaries`,
+  `testNoCarrierForProviderIdleBeyondRecentWindow`, `testSnapshotOrderFollowsProviderRegistrationOrder`,
+  `testEnrichmentLastUsageIgnoresZeroTokenEntries`, extended `testEnrichmentScanStartCoversAllWindows`.
 
 - **Species ownership is not an individual's appearance.** A species-level shiny flag means
   at least one shiny was collected; using it for the selected individual's badge mislabeled
@@ -209,6 +221,8 @@ read_when:
   미리 채우므로, 그대로 두면 `moveDetail(id:)` 가 설명 없는 요약을 영구히 돌려준다. `Move.descriptions` 는
   `nil` = 요약만 로드, `[:]` = 전체를 받았지만 설명 없음으로 구분하고, 캐시는 `nil` 일 때만 다시 받는다
   (`moveDescriptions` 가 nil 이 아니라 `[:]` 를 돌려주는 것을 `MoveDescriptionTests` 가 고정).
+
+## 외부 로그·사용량 소스
 
 ## 외부 로그·사용량 소스
 
@@ -396,6 +410,33 @@ read_when:
   부류이긴 하다(실기기 Claude jsonl 863개, 최대 90MB). 회귀 가드: `CodexLargeRolloutPerformanceTests` —
   **opt-in(`POKETOKENBAR_RUN_LARGE_PERF=1` / `scripts/perf-codex-large-rollout.sh`)이라 CI 는 돌리지 않는다.**
   자동으로 막히지 않으므로 이 부류를 건드리면 직접 돌린다. (#184)
+
+- **2단계 갱신에서 파생 상태는 그 값을 *채우는* 단계 뒤에 기록한다.** 사용량 요약의 일별 원장을
+  `snapshots = newSnapshots`(phase 1) 직후에 저장했더니, `monthDaily` 는 `fetchEnrichment`(phase 2)
+  에서만 채워져 **설치 후 첫 갱신이 통째로 빈 요약**을 만들었다. 두 번째 갱신부터는 phase 1 이 이전
+  스냅샷의 `prevMonthDaily` 를 이어받아 우연히 채워지므로, 단위 테스트도 손으로 앱을 열어보는 확인도
+  통과한다 — 틀리는 건 첫 갱신 한 번뿐이라 눈에 띄지 않는다(개발 앱 defaults 에 키가 안 생긴 걸 보고
+  발견). refresh 파이프라인에 새 파생 상태를 붙일 땐 그 입력이 phase 1/2 중 어디서 채워지는지 먼저
+  확인하고, 회귀 가드는 **첫 refresh 한 번**으로 검증한다(`testTheFirstRefreshAlreadyFillsTheLedger`).
+
+## 빌드·도구체인
+
+- **새 SDK에서 통과해도 CI의 AppKit Sendable 선언을 가정하지 마라.** 동시 캐시 로드 테스트가
+  `Task { await SpriteLoader.image(...) }` 로 `NSImage?` 를 반환해 로컬 Swift 6.3.3에서는 통과했지만,
+  CI의 Xcode 16.4/Swift 6.1.2에서는 `NSImage: Sendable` 이 unavailable이라 테스트 컴파일이 실패했다.
+  **왜 못 걸렀나:** 로컬 최신 도구체인으로 전체 테스트와 경고 검증을 해도 CI SDK 호환성을 검증한 것은 아니다.
+  → 포켓몬·아이템 두 동시 로드 테스트 모두 `Task<Void, Never>` 를 사용하고 이미지 결과는 `@MainActor`
+  안에 보관한다. 객체 동일성 검증과 동시 요청은 유지하며, Sendable 우회 선언을 추가하지 않는다.
+  회귀 가드: `SpriteImageCacheTests` 의 두 동시 로드 테스트와 `macos-15` CI의 테스트 컴파일.
+  (CI 실패: 2026-09-10.)
+- **SwiftUI `View`/`App` 경계는 `@MainActor` 를 명시한다.** Swift 6.3 은 `body` 밖의 `@ViewBuilder` helper·
+  동기 클로저를 nonisolated 로 검사해, `@MainActor` `@Observable` store 접근이 수십 개의 오류로 연쇄된다.
+  개별 프로퍼티에 `MainActor.assumeIsolated` 를 흩뿌리지 말고 UI 타입 선언 한 곳에 격리를 둔다.
+  `SwiftUIIsolationTests.testEverySwiftUIViewAndAppIsMainActorIsolated` 가 새 View/App 선언 누락을 소스 스캔으로 막는다.
+- **coverage profile producer와 consumer는 같은 LLVM toolchain이어야 한다.** Homebrew Swift 6.3 이 만든
+  `default.profdata` 를 구형 Xcode의 `xcrun llvm-cov` 로 읽으면 `unsupported instrumentation profile format
+  version` 으로 테스트 성공 뒤 게이트만 실패한다. `test-gate.sh` 는 현재 `swift` 실경로 옆의 `llvm-cov` 를
+  우선하고, sibling이 없는 Apple toolchain에서만 `xcrun --find llvm-cov` 로 폴백한다.
 
 ## 자격증명·Keychain
 
@@ -711,6 +752,12 @@ read_when:
   (`-side*`/`-field*`)이라고 한 케이스에 묶기 전에, **각각의 실제 인자 개수를 독립적으로 확인**한다 —
   "제 소스가 아니면 증거가 아니다"(외부 로그 포맷 규칙, 위 §외부 로그·사용량 소스)와 같은 교훈을
   wire 프로토콜에도 적용한 사례.
+- **`localizedCaseInsensitiveContains` ignores case, not diacritics.** Pokédex and Catch Log search
+  promised accent-insensitive names but each screen had its own matcher built on it, so "flabebe"
+  missed Flabébé; the tests only searched ASCII names. Name search goes through the one shared
+  `CompanionStore.DexSearchMatcher` (`.caseInsensitive` + `.diacriticInsensitive`), and any new
+  searchable list reuses it instead of adding a matcher. Guard:
+  `testNameSearchIgnoresCaseAndDiacriticsInPokedexAndCatchLog` queries both screens.
 
 - **숫자 표기 구간은 원값이 아니라 반올림된 문자열로 판정한다.**
   `TokenFormatter.percent` 는 `value == value.rounded()` 로 정수 여부를 보고 아니면 `%.1f` 를 찍었다 —
@@ -1032,3 +1079,10 @@ read_when:
   슬롯을 막은 채 매 틱 PokéAPI 404 를 재시도한다. `eggTier` 의 만족 불가능한 보증과 같은 부류다. 규칙:
   종·기술 id 처럼 외부 조회 키가 되는 값은 세이브 경계에서 지원 범위(`PokemonAssets.animatedSpeciesIDs`)로
   검증하고, 벗어나면 일반 플레이에서 나올 수 없는 상태로 보고 취소한다(아이템 환불). (2026-10-21, #50 리뷰.)
+
+- **"기본값으로 정규화"는 "값 없음"을 지운다.** 폼 이식(04b12da9) 중 `PokemonForm.resolved` 는 nil 을
+  그 라인의 기본 폼으로 바꾸는데, 부화가 사전 롤된 폼을 이 함수에 그대로 넘겨 pre-roll 이 없을 때도
+  항상 기본 폼(Plant Cloak)이 나왔다. 같은 패턴이 디코드와 `SaveTransfer.sanitized` 의 `pendingForm` 에도
+  있어, 폼 도입 전에 미리 뽑힌 알은 영영 기본 폼으로 부화할 뻔했다. 시드 24개로 폼 분포를 보는 테스트가
+  잡았다(단일 시드 테스트는 기본 폼이 우연히 맞으면 통과한다). 규칙: 정규화 함수가 nil 에 기본값을 준다면
+  **"없음이 의미 있는" 자리**(다음 롤이 채울 값)에서는 `flatMap` 으로 nil 을 보존한다. (2026-10-21, 폼 이식.)

@@ -182,6 +182,8 @@ enum SaveTransfer {
         // membership and an enum can't overflow), and this app's trust model — same as `ivs`/`nature`
         // already being taken as-is — only guards against overflow traps, not "did you earn this."
         m.hyperTrainProgress = clampToken(m.hyperTrainProgress)
+        // A form the line doesn't have would request a sprite and name that don't exist.
+        m.form = PokemonForm.resolved(baseID: m.baseID, form: m.form)
         return m
     }
 
@@ -307,6 +309,14 @@ enum SaveTransfer {
         // 이 주석이 그 자리를 지킨다.
         for index in s.dex.indices {
             s.dex[index].chainOrder = dedupedSpecies(s.dex[index].chainOrder)
+            s.dex[index].form = PokemonForm.resolved(baseID: s.dex[index].baseID, form: s.dex[index].form)
+        }
+        // The pre-rolled form belongs to the pre-rolled species; without one there is nothing to hatch into.
+        // Nil stays nil (the hatch rolls); `resolved` would turn it into the default form.
+        if let id = s.pendingHatchID, let form = s.pendingForm {
+            s.pendingForm = PokemonForm.resolved(baseID: id, form: form)
+        } else {
+            s.pendingForm = nil
         }
         s.reconcileRepresentativeSelection()
         return s

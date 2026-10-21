@@ -158,6 +158,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func observeStore() {
         withObservationTracking {
             _ = store.menuTitle
+            // The mode and thresholds can change the colors while the text stays the same.
+            _ = store.menuLimitColorRuns()
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -180,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         withObservationTracking {
             _ = companion.currentSpeciesID
             _ = companion.currentIsShiny
+            _ = companion.currentForm
             _ = store.animationQuality
         } onChange: { [weak self] in
             Task { @MainActor in
@@ -208,7 +211,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func applyState() {
         guard let button = statusItem.button else { return }
-        Self.applyMenuText(store.menuLines, to: button)
+        // Recomputed on every refresh, so a tier that moves with the clock redraws even when the text doesn't.
+        Self.applyMenuText(store.menuLines, to: button, colors: store.menuLimitColorRuns())
         needsSpriteLayout = true   // 텍스트 길이가 바뀌면 버튼 폭이 변해 이미지 자리도 움직인다
         // stale 시각 dim 제거 — 슬립/런치 직후 refresh 완료 전 몇 초간 회색으로 보여 '고장/비활성'
         // 으로 오인되던 것 방지(사용자 반복 지적). 데이터가 오래됐다는 신호가 필요하면 팝오버
@@ -223,9 +227,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     /// 메뉴바 버튼 텍스트 반영 — 1줄이면 기본 title(13pt), 2줄 이상이면 세로 스택.
-    /// 줄 수에 맞춰 폰트를 자동 축소해 N줄이 메뉴바 높이에 클리핑 없이 들어오게 한다. 색을 지정하지
-    /// 않아 메뉴바 명암(라이트/다크)·비활성(appearsDisabled) 상태에 자동 적응한다.
-    private static func applyMenuText(_ lines: [String], to button: NSStatusBarButton) {
+    /// 줄 수에 맞춰 폰트를 자동 축소해 N줄이 메뉴바 높이에 클리핑 없이 들어오게 한다. 한도 항목 색
+    /// (`colors`) 외에는 색을 지정하지 않아 메뉴바 명암(라이트/다크)·비활성(appearsDisabled) 상태에 자동 적응한다.
+    private static func applyMenuText(_ lines: [String], to button: NSStatusBarButton,
+                                      colors: [UsageStore.MenuLimitColorRun]) {
         if lines.count >= 2 {
             // NSStatusBarButton 은 멀티라인 title 을 세로 중앙에 두지 않고 위로 치우쳐 그린다(측정:
             // titleRect.y 가 음수 → 상단 클리핑 + 하단 여백, 사용자 지적). 그래서 baselineOffset 을
@@ -242,9 +247,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 para.alignment = .center
                 para.minimumLineHeight = effLH
                 para.maximumLineHeight = effLH
-                return NSAttributedString(
+                let title = NSMutableAttributedString(
                     string: lines.joined(separator: "\n"),
                     attributes: [.font: font, .paragraphStyle: para, .baselineOffset: offset])
+                MenuLimitColoring.apply(colors, to: title)
+                return title
             }
             let bounds = button.bounds
             if bounds.height > 1 {
@@ -260,7 +267,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // 1줄로 되돌릴 때 이전 attributedTitle 이 남지 않게 먼저 비운다.
             button.attributedTitle = NSAttributedString(string: "")
             let title = lines.first ?? ""
-            button.title = title.isEmpty ? "" : " " + title
+            if !colors.isEmpty, !title.isEmpty {
+                let colored = NSMutableAttributedString(
+                    string: " " + title,
+                    attributes: [.font: button.font ?? NSFont.menuBarFont(ofSize: 0)])
+                MenuLimitColoring.apply(colors, to: colored)
+                button.attributedTitle = colored
+            } else {
+                button.title = title.isEmpty ? "" : " " + title
+            }
         }
     }
 
@@ -326,7 +341,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func ensureMenuAnimation() {
         let id = companion.currentSpeciesID
         let shiny = companion.currentIsShiny
-        let key = id.map { Self.menuSpriteKey(id: $0, shiny: shiny, floor: menuFrameFloor) }
+        let form = companion.currentForm
+        let key = id.map { Self.menuSpriteKey(id: $0, shiny: shiny, floor: menuFrameFloor, form: form) }
         if key == menuSpriteKey, !menuFrames.isEmpty { return }   // 이미 이 개체로 애니메이션 중
         menuSpriteKey = key
         menuLoadGen += 1
@@ -337,13 +353,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
         // 정적 스프라이트 bob 을 먼저(없으면 받아와서). GIF 가 받아지면 아래에서 교체.
-        if let cached = SpriteLoader.cachedImage(speciesID: id, shiny: shiny) {
+        if let cached = SpriteLoader.cachedImage(speciesID: id, shiny: shiny, form: form) {
             setMenuFrames(Self.bobFrames(from: cached))
         } else {
             setMenuFrames(Self.eggFrames())
             Task { @MainActor [weak self] in
                 guard let self, gen == self.menuLoadGen,
-                      let sprite = await SpriteLoader.image(speciesID: id, shiny: shiny) else { return }
+                      let sprite = await SpriteLoader.image(speciesID: id, shiny: shiny, form: form) else { return }
                 guard gen == self.menuLoadGen else { return }
                 self.setMenuFrames(Self.bobFrames(from: sprite))
             }
@@ -355,7 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         menuAnimationTask = Task { @MainActor [weak self] in
             guard let self, gen == self.menuLoadGen else { return }
             // shiny GIF 미제공 종이면 일반 GIF 폴백
-            guard let data = await SpriteStore.shared.recoveringAnimatedData(speciesID: id, shiny: shiny),
+            guard let data = await SpriteStore.shared.recoveringAnimatedData(speciesID: id, shiny: shiny, form: form),
                   gen == self.menuLoadGen else { return }
             let raw = GIFDecoder.frames(from: data)
             guard raw.count > 1, gen == self.menuLoadGen else { return }
@@ -507,8 +523,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// **하한(fps 설정)이 반드시 들어가야 한다.** 프레임은 하한에 맞춰 솎아낸 결과물이라, 키가
     /// 종·이로치만 담으면 설정을 바꿔도 다음 진화까지 옛 fps 로 계속 돈다(설계 시 확인된 함정).
     /// 순수·테스트용: `testIdentityKeysIncludeTheFrameFloor`.
-    static func menuSpriteKey(id: Int, shiny: Bool, floor: TimeInterval) -> String {
-        "\(id)-\(shiny)-\(floor)"
+    /// The form is part of it too: pinning another Unown letter keeps the species and shine.
+    static func menuSpriteKey(id: Int, shiny: Bool, floor: TimeInterval, form: PokemonForm? = nil) -> String {
+        "\(PokemonForm.assetName(speciesID: id, form: form))-\(shiny)-\(floor)"
     }
 
     // MARK: 프레임 합성 (22px)

@@ -286,29 +286,91 @@ final class UsageStore {
     /// %는 limitDisplayMode 를 따르되 접미사 없음 — 좁은 표면이고 방향은 사용자가 고른 설정이 말해 준다
     /// (배터리 메뉴바 % 관례). 자기설명 접미사("남음")는 팝오버 행에서만.
     private var menuLimitLine: String? {
-        guard showLimitInMenu else { return nil }
+        let parts = menuLimitParts()
+        return parts.isEmpty ? nil : parts.map(\.text).joined(separator: " · ")
+    }
+
+    /// One menu bar limit item: its text plus what its color is judged from.
+    struct MenuLimitPart: Equatable {
+        var text: String
+        var utilization: Double
+        /// Elapsed fraction of the window; nil when its reset time or length is unknown.
+        var pace: Double?
+    }
+
+    func menuLimitParts(now: Date = Date()) -> [MenuLimitPart] {
+        guard showLimitInMenu else { return [] }
         let usedToday = Set(snapshots.filter { $0.todayTotalTokens > 0 }.map(\.providerID))
-        var parts: [String] = []
-        if usedToday.contains("claude_code"), let utilization = limits?.fiveHour?.utilization {
-            parts.append("Claude \(TokenFormatter.percent(limitDisplayPercent(utilization)))")
+        var parts: [MenuLimitPart] = []
+        func add(_ label: String, _ utilization: Double, reset: Date? = nil, span: TimeInterval? = nil) {
+            let pace = reset.flatMap { reset in span.flatMap { Self.paceFraction(resetsAt: reset, span: $0, now: now) } }
+            parts.append(MenuLimitPart(text: "\(label) \(TokenFormatter.percent(limitDisplayPercent(utilization)))",
+                                       utilization: utilization, pace: pace))
+        }
+        if usedToday.contains("claude_code"), let window = limits?.fiveHour, let utilization = window.utilization {
+            add("Claude", utilization, reset: window.resetDate, span: LimitWindowSpan.fiveHour)
         }
         if usedToday.contains("codex"), let usedPercent = codexLimits?.maxPrimaryUsedPercent {
-            parts.append("Codex \(TokenFormatter.percent(limitDisplayPercent(Double(usedPercent))))")
+            // The window the percentage came from, so the pace belongs to the same bucket.
+            let window = codexLimits?.visibleSnapshots.compactMap(\.primary).first { $0.usedPercent == usedPercent }
+            add("Codex", Double(usedPercent), reset: window?.resetDate, span: window?.windowSpan)
         }
         if usedToday.contains("antigravity"), let usedPercent = antigravityLimits?.maxPrimaryUsedPercent {
-            parts.append("AGY \(TokenFormatter.percent(limitDisplayPercent(usedPercent)))")
+            add("AGY", usedPercent)
         }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        return parts
+    }
+
+    /// Which menu bar limit items are drawn in their gauge color.
+    enum MenuLimitColorMode: String, CaseIterable {
+        /// Every item, in all six tiers (the default).
+        case gauge
+        /// Only items running faster than pace; calm items keep the system text color.
+        case attention
+        /// None, the system text color, as before.
+        case off
+    }
+    var menuLimitColorMode: MenuLimitColorMode {
+        didSet { defaults.set(menuLimitColorMode.rawValue, forKey: "menuLimitColorMode") }
+    }
+
+    /// A menu bar limit item and the tier its whole text is colored in.
+    struct MenuLimitColorRun: Equatable {
+        var text: String
+        var tier: PaceTier
+    }
+
+    /// The colored items, left to right. Separators and the token/cost line are never included.
+    func menuLimitColorRuns(now: Date = Date()) -> [MenuLimitColorRun] {
+        guard menuLimitColorMode != .off else { return [] }
+        return menuLimitParts(now: now).compactMap { part in
+            let tier = PaceTier.gauge(utilization: part.utilization, pace: part.pace,
+                                      warnThreshold: warnThreshold, critThreshold: critThreshold)
+            if menuLimitColorMode == .attention && tier.isCalm { return nil }
+            return MenuLimitColorRun(text: part.text, tier: tier)
+        }
     }
 
     /// 표시용 한도 % 변환 — remaining 모드면 100−사용률(0 하한: 사용률이 100 을 넘어도 음수 금지).
-    /// 순수 판정을 분리해 테스트한다. 숫자 *표시* 전용 — 색·게이지·알림 판정에는 쓰지 않는다.
+    /// 숫자와 게이지 채움에 함께 사용한다. 경고색·알림 판정은 원래 사용률을 유지한다.
     nonisolated static func displayPercent(_ utilization: Double, mode: LimitDisplayMode) -> Double {
         mode == .remaining ? max(0, 100 - utilization) : utilization
     }
 
     func limitDisplayPercent(_ utilization: Double) -> Double {
         Self.displayPercent(utilization, mode: limitDisplayMode)
+    }
+
+    /// 페이스(균등 소진) 기준선 — 창이 얼마나 지났는지(0…1). 시간 기반이라 burn 데이터가 없어도,
+    /// 어느 프로바이더든 리셋 시각과 창 길이만 있으면 나온다(`fiveHourForecast` 의 burn 외삽과 보완 관계).
+    /// 0…1 밖이면 **clamp 하지 않고 nil** — 5시간 창은 첫 요청 때 시작하므로 유휴 상태에 낡은
+    /// resets_at 이 남을 수 있고, 그걸 양 끝으로 붙여 그리면 "막 시작/끝났다"는 거짓말이 된다.
+    /// 잘못된 위치의 선은 선이 없는 것보다 나쁘다.
+    nonisolated static func paceFraction(resetsAt: Date, span: TimeInterval, now: Date) -> Double? {
+        guard span > 0 else { return nil }
+        let fraction = (span - resetsAt.timeIntervalSince(now)) / span
+        guard fraction.isFinite, (0...1).contains(fraction) else { return nil }
+        return fraction
     }
 
     /// 단일 줄 표현 — 관찰(observeStore)·접근성·1줄 렌더 폴백용. 세로 렌더는 menuLines 사용.
@@ -335,6 +397,56 @@ final class UsageStore {
     var weekCostTotal: Double { costingSnapshots.reduce(0) { $0 + ($1.weekTotal?.totalCost ?? 0) } }
     var monthTotalTokens: Int { snapshots.reduce(0) { $0 + ($1.monthTotal?.totalTokens ?? 0) } }
     var monthCostTotal: Double { costingSnapshots.reduce(0) { $0 + ($1.monthTotal?.totalCost ?? 0) } }
+
+    /// This month's day-by-day totals summed across providers, in date order.
+    ///
+    /// A provider that reports no series is simply absent from the sum, the remaining providers
+    /// still add up, which is how a `nil` degrades. Cost follows `monthCostTotal`: tokens from
+    /// every provider, money only from the ones that report real spend, so a flat-rate provider
+    /// cannot push an invented charge into the chart.
+    ///
+    /// The date axis is the union of the providers' own axes. In practice they agree (all built
+    /// from the same `startOfMonth(now)`), but taking the union rather than one provider's array
+    /// means a provider whose scan straddled midnight cannot truncate everyone else's last day.
+    var monthDailyTotals: [DailyUsage] {
+        var byDay: [String: DailyUsage] = [:]
+        for snapshot in snapshots {
+            guard let series = snapshot.monthDaily else { continue }
+            let countsCost = snapshot.reportsCost
+            for day in series {
+                var merged = byDay[day.date] ?? DailyUsage(
+                    date: day.date, inputTokens: 0, outputTokens: 0,
+                    cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, totalCost: 0)
+                merged.inputTokens += day.inputTokens
+                merged.outputTokens += day.outputTokens
+                merged.cacheCreationTokens += day.cacheCreationTokens
+                merged.cacheReadTokens += day.cacheReadTokens
+                merged.totalTokens += day.totalTokens
+                if countsCost { merged.totalCost += day.totalCost }
+                byDay[day.date] = merged
+            }
+        }
+        // "yyyy-MM-dd" sorts lexicographically the same way it sorts chronologically.
+        return byDay.values.sorted { $0.date < $1.date }
+    }
+
+    /// Day-by-day history behind the usage recap. Providers only report the current month, so the
+    /// numbers are copied into a rolling ledger at every refresh, see `UsageLedger`.
+    private(set) var dailyLedger = UsageLedger()
+
+    private func recordDailyLedger() {
+        var ledger = dailyLedger
+        ledger.merge(monthDailyTotals)
+        // This year and the one before it: the year view compares against last year, and nothing
+        // reaches further back.
+        let calendar = RecapPeriod.calendar()
+        let lastYear = RecapPeriod(scope: .year, containing: Date(), calendar: calendar)
+            .shifted(by: -1, calendar: calendar)
+        ledger.prune(before: LocalUsageReader.localDayFormatter().string(from: lastYear.start))
+        guard ledger != dailyLedger else { return }
+        dailyLedger = ledger
+        ledger.save(to: defaults)
+    }
 
     /// Claude 의 활성 5h 블록 — 5h forecast·"현재 블록" 행은 Claude 공식 한도와 짝이므로
     /// providerID 로 명시 조회한다 (전 프로바이더가 블록을 갖게 된 후 first-with-block 은 오매칭).
@@ -559,6 +671,7 @@ final class UsageStore {
         showCostInMenu = d.object(forKey: "showCostInMenu") as? Bool ?? false
         showLimitInMenu = d.object(forKey: "showLimitInMenu") as? Bool ?? false
         limitDisplayMode = LimitDisplayMode(rawValue: d.string(forKey: "limitDisplayMode") ?? "") ?? .used
+        menuLimitColorMode = MenuLimitColorMode(rawValue: d.string(forKey: "menuLimitColorMode") ?? "") ?? .gauge
         limitNotifications = d.object(forKey: "limitNotifications") as? Bool ?? true
         companionNotifications = d.object(forKey: "companionNotifications") as? Bool ?? true
         updateNotificationsEnabled = d.object(forKey: "updateNotificationsEnabled") as? Bool ?? true
@@ -583,6 +696,7 @@ final class UsageStore {
         // until a silent read has been proven to work, so no background poll can ever raise a
         // prompt on a machine that has not granted access.
         disableKeychainAccess = d.object(forKey: "disableKeychainAccess") as? Bool ?? false
+        dailyLedger = UsageLedger.load(from: d)
 
         reschedule()
 
@@ -755,13 +869,17 @@ final class UsageStore {
             var prevBlock: BlockUsage?
             var prevWeek: PeriodUsage?
             var prevMonth: PeriodUsage?
+            var prevMonthDaily: [DailyUsage]?
+            var prevLastUsage: Date?
             if let previous = snapshots.first(where: { $0.providerID == provider.id }) {
+                prevLastUsage = previous.lastUsage
                 if previous.today?.date == todayKey { prevToday = previous.today }
                 prevBlock = previous.activeBlock
                 // 주/월 누적도 이어받는다 — phase 2 가 다시 채우기 전까지 nil 로 비면
                 // 팝오버의 "이번 주/이번 달" 행이 사라졌다 나타나 깜빡인다.
                 prevWeek = previous.weekTotal
                 prevMonth = previous.monthTotal
+                prevMonthDaily = previous.monthDaily
             }
 
             let today: DailyUsage?
@@ -783,8 +901,10 @@ final class UsageStore {
                 activeBlock: prevBlock,
                 weekTotal: prevWeek,
                 monthTotal: prevMonth,
+                monthDaily: prevMonthDaily,
                 fetchedAt: Date(),
-                reportsCost: provider.reportsCost)
+                reportsCost: provider.reportsCost,
+                lastUsage: prevLastUsage)
             // Keep history visible while phase 2 refreshes it, including on idle days.
             if snapshot.hasDisplayableUsage { newSnapshots.append(snapshot) }
         }
@@ -816,8 +936,10 @@ final class UsageStore {
                             activeBlock: enrichment.blocksOK ? enrichment.activeBlock : nil,
                             weekTotal: enrichment.periodsOK ? enrichment.weekTotal : nil,
                             monthTotal: enrichment.periodsOK ? enrichment.monthTotal : nil,
+                            monthDaily: enrichment.periodsOK ? enrichment.monthDaily : nil,
                             fetchedAt: Date(),
-                            reportsCost: provider.reportsCost)
+                            reportsCost: provider.reportsCost,
+                            lastUsage: enrichment.periodsOK ? enrichment.lastUsage : nil)
                         if snapshot.hasDisplayableUsage { snapshots.append(snapshot) }
                     }
                     continue
@@ -826,11 +948,19 @@ final class UsageStore {
                 if enrichment.periodsOK {
                     snapshots[index].weekTotal = enrichment.weekTotal
                     snapshots[index].monthTotal = enrichment.monthTotal
+                    snapshots[index].monthDaily = enrichment.monthDaily
+                    snapshots[index].lastUsage = enrichment.lastUsage
                 }
             }
         }
         // Successful empty enrichment removes obsolete carriers; failed reads retain history.
         snapshots.removeAll { !$0.hasDisplayableUsage }
+        // Carriers arrive in task-completion order; keep tabs in provider registration order.
+        let order = Dictionary(providers.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        snapshots.sort { (order[$0.providerID] ?? .max) < (order[$1.providerID] ?? .max) }
+        // 일별 원장은 여기서 갱신한다, monthDaily 는 phase 2 에서만 채워지므로, phase 1 직후에
+        // 기록하면 설치 후 첫 갱신에서 사용량 요약이 통째로 빈다.
+        recordDailyLedger()
 
         // ── 한도 조회 (Keychain 프롬프트로 블로킹될 수 있어 마지막)
         if disableKeychainAccess {
@@ -1315,5 +1445,7 @@ private extension ProviderSnapshot {
             || (activeBlock?.totalTokens ?? 0) > 0
             || (weekTotal?.totalTokens ?? 0) > 0
             || (monthTotal?.totalTokens ?? 0) > 0
+            || monthDaily?.contains(where: { $0.totalTokens > 0 }) == true
+            || lastUsage.map { Date().timeIntervalSince($0) <= LocalUsageReader.recentUseWindow } == true
     }
 }

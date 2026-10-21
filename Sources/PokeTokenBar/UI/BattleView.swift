@@ -1226,7 +1226,7 @@ struct BattleView: View {
             if !battle.myRoster.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(battle.myRoster) { mon in
-                        SpriteView(speciesID: mon.currentID, size: 34, shiny: mon.isShiny)
+                        SpriteView(speciesID: mon.currentID, size: 34, shiny: mon.isShiny, form: mon.form)
                     }
                 }
             }

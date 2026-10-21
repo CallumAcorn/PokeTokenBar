@@ -668,7 +668,7 @@ struct TradeView: View {
 
     private func offerTile(_ mon: MonState) -> some View {
         VStack(spacing: 1) {
-            SpriteView(speciesID: mon.currentID, size: 28, shiny: mon.isShiny)
+            SpriteView(speciesID: mon.currentID, size: 28, shiny: mon.isShiny, form: mon.form)
             // Instant fallback (own mon, or a species already seen elsewhere) until/unless
             // `ensureNamesResolved` fills in a real name for a counterpart's unseen species.
             Text(resolvedNames[mon.id] ?? companion.speciesName(mon.currentID))

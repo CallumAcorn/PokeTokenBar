@@ -36,6 +36,13 @@ struct L {
     var todayTokens: String { t("오늘 사용한 토큰", "Today's tokens", "本日のトークン", "Tokens de hoy", "Tokens du jour", "Tokens de hoje") }
     var thisWeek: String { t("이번 주", "This week", "今週", "Esta semana", "Cette semaine", "Esta semana") }
     var thisMonth: String { t("이번 달", "This month", "今月", "Este mes", "Ce mois-ci", "Este mês") }
+    /// 일별 추이 막대 행의 제목. 범위가 "이번 달"임을 문구에 담는다, 롤링 30일로 읽히면 안 된다.
+    /// de 는 "Täglich diesen Monat" 이 캡션 폭을 넘겨 줄바꿈된다(실측 79.5pt vs 66.5pt) →
+    /// `weekly` 의 fr "Hebdo" 와 같은 이유로 줄인다. 바로 위 줄이 "Dieser Monat" 이라 문맥은 남는다.
+    var dailyTrend: String { t("이번 달 일별", "Daily this month", "今月の日別",
+                               "Diario de este mes", "Par jour ce mois-ci", "Diário deste mês") }
+    /// 추이의 최댓값 라벨, 막대 높이가 상대값이라 절대 스케일을 한 군데는 적어줘야 한다.
+    var peakDay: String { t("최다", "Peak", "最多", "Máx.", "Max.", "Máx.") }
 
     // MARK: 한도 섹션
     var limitsOfficial: String { t("한도 (공식)", "Limits (official)", "上限（公式）", "Límites (oficial)", "Limites (officiel)", "Limites (oficiais)") }
@@ -45,11 +52,50 @@ struct L {
     var weeklySonnet: String { t("주간 Sonnet", "Weekly Sonnet", "週間 Sonnet", "Sonnet semanal", "Sonnet hebdo", "Sonnet semanal") }
     var claudeCurrentBlock: String { t("Claude 현재 5h 블록", "Claude current 5h block", "Claude 現在の5hブロック", "Bloque actual de 5h de Claude", "Bloc 5 h actuel de Claude", "Bloco atual de 5h do Claude") }
     var reset: String { t("리셋", "Reset", "リセット", "Reinicio", "Réinit.", "Renovação") }
+    /// 페이스 눈금 툴팁. "적정 사용량"으로 부르지 않는다. 덜 쓰라는 권고가 아니라 "이 속도면 리셋
+    /// 전에 소진된다"는 기준선이고, 창을 다 채워 쓸 이유가 없는 날에 규범으로 읽히면 안 된다.
+    func paceHint(_ percent: String) -> String {
+        t("페이스: 창 시간만큼 균등하게 썼다면 지금 \(percent)입니다.",
+          "Pace: an even burn across this window would sit at \(percent) now.",
+          "ペース：この枠を均等に使っていれば今は \(percent) です。",
+          "Ritmo: un consumo uniforme en esta ventana estaría en \(percent) ahora.",
+          "Rythme : une consommation régulière sur cette fenêtre serait à \(percent).",
+          "Ritmo: um consumo uniforme nesta janela estaria em \(percent) agora.")
+    }
     var limitReached: String { t("한도 도달", "Limit reached", "上限到達", "Límite alcanzado", "Limite atteinte", "Limite atingido") }
     var personalSpendLimit: String { t("개인 사용 한도", "Personal spend limit", "個人利用上限", "Límite de gasto personal", "Limite de dépense personnelle", "Limite de gasto pessoal") }
     var staleLimits: String { t("갱신 지연", "Stale", "更新遅延", "Desactualizado", "Périmé", "Desatualizado") }
     var refresh: String { t("갱신", "Refresh", "更新", "Actualizar", "Actualiser", "Atualizar") }
     var limitsTapToLoad: String { t("공식 한도 불러오기", "Load official limits", "公式上限を読み込む", "Cargar límites oficiales", "Charger les limites officielles", "Carregar limites oficiais") }
+    /// 페이스 대비 단계 이름. paceHint 와 같은 이유로 "적정"처럼 규범적인 말은 피하고
+    /// 소진 속도만 묘사한다.
+    func paceTier(_ tier: PaceTier) -> String {
+        switch tier {
+        case .wayUnder: return t("여유 많음", "Well under pace", "かなり余裕", "Muy por debajo del ritmo", "Bien sous le rythme", "Bem abaixo do ritmo")
+        case .under: return t("여유", "Under pace", "余裕あり", "Por debajo del ritmo", "Sous le rythme", "Abaixo do ritmo")
+        case .onPace: return t("페이스대로", "On pace", "ペース通り", "Al ritmo", "Dans le rythme", "No ritmo")
+        case .slightlyOver: return t("조금 빠름", "Slightly fast", "やや速い", "Algo rápido", "Un peu rapide", "Um pouco rápido")
+        case .over: return t("빠름", "Fast", "速い", "Rápido", "Rapide", "Rápido")
+        case .wayOver: return t("매우 빠름", "Very fast", "とても速い", "Muy rápido", "Très rapide", "Muito rápido")
+        }
+    }
+    /// 페이스 대비 차이(%p). **쓴 양**으로 말한다, "앞섬/위" 같은 위치 표현은 잔량 모드에서
+    /// 채움이 마커보다 짧게 그려질 때 방향이 반대로 읽힌다(#286 부류). 0 이면 문구 없음.
+    /// 유럽어는 단계 이름("Under pace")이 이미 "페이스"를 말하므로 여기선 반복하지 않는다.
+    func paceDelta(_ points: Int) -> String? {
+        if points > 0 {
+            return t("페이스보다 \(points)%p 더 씀", "\(points) pts more used", "ペースより\(points)pt多く使用",
+                     "\(points) pts más de uso", "\(points) pts de plus utilisés",
+                     "\(points) p.p. a mais de uso")
+        }
+        if points < 0 {
+            let n = -points
+            return t("페이스보다 \(n)%p 덜 씀", "\(n) pts less used", "ペースより\(n)pt少なく使用",
+                     "\(n) pts menos de uso", "\(n) pts de moins utilisés",
+                     "\(n) p.p. a menos de uso")
+        }
+        return nil
+    }
 
     /// 프로바이더 상태 페이지 인시던트 지표 → 현지화 라벨(표시 전용).
     func providerStatusLabel(_ indicator: ProviderStatusIndicator) -> String {
@@ -123,6 +169,68 @@ struct L {
     var advancedDisclosureLabel: String { t("고급 설정 · 진단", "Advanced · diagnostics", "詳細設定・診断", "Avanzado · diagnóstico", "Avancé · diagnostics", "Avançado · diagnóstico") }
     var aboutSupportSectionTitle: String { t("정보 & 지원", "About & Support", "情報とサポート", "Acerca de y soporte", "À propos et assistance", "Sobre e suporte") }
     var quit: String { t("종료", "Quit", "終了", "Salir", "Quitter", "Encerrar") }
+    var tokenInput: String { t("입력", "Input", "入力", "Entrada", "Entrée", "Entrada") }
+    var tokenOutput: String { t("출력", "Output", "出力", "Salida", "Sortie", "Saída") }
+    var tokenCacheWrite: String { t("캐시 쓰기", "Cache write", "キャッシュ書込", "Escritura caché", "Écriture cache", "Gravação cache") }
+    var tokenCacheRead: String { t("캐시 읽기", "Cache read", "キャッシュ読込", "Lectura caché", "Lecture cache", "Leitura cache") }
+    var website: String { t("웹사이트", "Website", "ウェブサイト", "Sitio web", "Site web", "Site") }
+    var sponsor: String { t("후원", "Sponsor", "支援", "Apoyar", "Soutenir", "Apoiar") }
+    var evolutionScrollPrevious: String { t("이전 진화 보기", "Show previous evolutions", "前の進化を見る", "Ver evoluciones anteriores", "Voir les évolutions précédentes", "Ver evoluções anteriores") }
+    var evolutionScrollNext: String { t("다음 진화 보기", "Show next evolutions", "次の進化を見る", "Ver evoluciones siguientes", "Voir les évolutions suivantes", "Ver próximas evoluções") }
+    // MARK: Usage recap
+    var recapOpen: String { t("사용량 돌아보기", "Usage recap", "使用量のふりかえり", "Resumen de uso", "Récap d'utilisation", "Resumo de uso") }
+    var recapTokensUnit: String { t("토큰", "tokens", "トークン", "tokens", "tokens", "tokens") }
+    func recapScopeName(_ scope: RecapScope) -> String {
+        switch scope {
+        case .week: t("주간", "Week", "週", "Semana", "Semaine", "Semana")
+        case .month: t("월간", "Month", "月", "Mes", "Mois", "Mês")
+        case .year: t("연간", "Year", "年", "Año", "Année", "Ano")
+        }
+    }
+    /// Shown under a running period, whose chip compares the same number of days.
+    func recapCompareSoFar(_ scope: RecapScope) -> String {
+        switch scope {
+        case .week: t("지난주 같은 기간과 비교", "Compared with the same days last week", "先週の同じ期間と比較",
+                      "Comparado con los mismos días de la semana pasada", "Comparé aux mêmes jours de la semaine dernière",
+                      "Comparado com os mesmos dias da semana passada")
+        case .month: t("지난달 같은 기간과 비교", "Compared with the same days last month", "先月の同じ期間と比較",
+                       "Comparado con los mismos días del mes pasado", "Comparé aux mêmes jours du mois dernier",
+                       "Comparado com os mesmos dias do mês passado")
+        case .year: t("작년 같은 기간과 비교", "Compared with the same days last year", "昨年の同じ期間と比較",
+                      "Comparado con los mismos días del año pasado", "Comparé aux mêmes jours de l'an dernier",
+                      "Comparado com os mesmos dias do ano passado")
+        }
+    }
+    var recapPrevious: String { t("이전", "Previous", "前へ", "Anterior", "Précédent", "Anterior") }
+    var recapNext: String { t("다음", "Next", "次へ", "Siguiente", "Suivant", "Próximo") }
+    var recapBestDay: String { t("최고의 날", "Best day", "最高の日", "Mejor día", "Meilleur jour", "Melhor dia") }
+    var recapActiveDays: String { t("활동한 날", "Active days", "稼働日", "Días activos", "Jours actifs", "Dias ativos") }
+    var recapBestStreak: String { t("최장 연속", "Best streak", "最長連続", "Mejor racha", "Meilleure série", "Melhor sequência") }
+    var recapGraduates: String { t("졸업", "Graduated", "卒業", "Graduados", "Diplômés", "Formados") }
+    var recapNoData: String { t("기록 없음", "no data", "記録なし", "sin datos", "pas de données", "sem dados") }
+    func recapCurrentPeriod(_ scope: RecapScope) -> String {
+        switch scope {
+        case .week: thisWeek
+        case .month: thisMonth
+        case .year: t("올해", "This year", "今年", "Este año", "Cette année", "Este ano")
+        }
+    }
+    func recapDays(_ count: Int) -> String {
+        t("\(count)일", "\(count)d", "\(count)日", "\(count) d", "\(count) j", "\(count) d")
+    }
+    func recapBestDayLine(_ day: String, _ tokens: String) -> String {
+        t("최고의 날은 \(day) — \(tokens) 토큰.",
+          "Your best day was \(day) — \(tokens) tokens.",
+          "最高の日は \(day)、\(tokens) トークン。",
+          "Tu mejor día fue el \(day): \(tokens) tokens.",
+          "Ton meilleur jour, c'était \(day) : \(tokens) tokens.",
+          "Seu melhor dia foi \(day): \(tokens) tokens.")
+    }
+    var recapNoGraduates: String {
+        t("이 기간에 졸업한 포켓몬이 없어요.", "No graduation in this period.", "この期間の卒業はありません。",
+          "Ninguna graduación en este periodo.", "Aucun diplômé sur cette période.",
+          "Nenhuma formatura neste período.")
+    }
 
     // MARK: 설정
     var refreshInterval: String { t("새로고침 간격", "Refresh interval", "更新間隔", "Intervalo de actualización", "Intervalle d'actualisation", "Intervalo de atualização") }
@@ -132,6 +240,27 @@ struct L {
     var todayCost: String { t("오늘 비용 ($)", "Today's cost ($)", "本日のコスト ($)", "Coste de hoy ($)", "Coût du jour ($)", "Custo de hoje ($)") }
     var limitPercent: String { t("한도 %", "Limit %", "上限 %", "Límite %", "Limite %", "Limite %") }
     var animationQualityLabel: String { t("애니메이션", "Animation", "アニメーション", "Animación", "Animation", "Animação") }
+    var menuLimitColor: String {
+        t("퍼센트 색상", "Percent color", "パーセントの色", "Color del porcentaje", "Couleur du pourcentage",
+          "Cor da porcentagem")
+    }
+    var menuLimitColorHint: String {
+        t("팝오버 한도 게이지와 같은 색", "Same colors as the popover limit gauges",
+          "ポップオーバーの上限ゲージと同じ色", "Los mismos colores que los medidores de límite",
+          "Les mêmes couleurs que les jauges de limite", "As mesmas cores dos medidores de limite")
+    }
+    func menuLimitColorMode(_ mode: UsageStore.MenuLimitColorMode) -> String {
+        switch mode {
+        case .gauge:
+            return t("게이지와 같게", "Match gauges", "ゲージと同じ", "Como los medidores",
+                     "Comme les jauges", "Como os medidores")
+        case .attention:
+            return t("주의 단계만", "Only when fast", "速いときだけ", "Solo si va rápido",
+                     "Seulement si rapide", "Só quando rápido")
+        case .off:
+            return t("끔", "Off", "オフ", "Desactivado", "Désactivé", "Desligado")
+        }
+    }
     var animationQualityHint: String {
         t("부드러울수록 배터리를 더 씁니다", "Smoother uses more battery",
           "滑らかにするとバッテリー消費が増えます", "Más fluido consume más batería",
@@ -328,6 +457,130 @@ struct L {
           "Importé — Pokédex \(dex) · \(tokens) cumulés",
           "Importado — Pokédex \(dex) · \(tokens) acumulados")
     }
+
+    // MARK: 스냅샷 백업 (설정 → 자동 백업)
+    var snapshotsSectionTitle: String {
+        t("자동 백업 (스냅샷)",
+          "Automatic Backups (Snapshots)",
+          "自動バックアップ（スナップショット）",
+          "Copias automáticas (Instantáneas)",
+          "Sauvegardes automatiques (Instantanés)",
+          "Backups automáticos (Instantâneos)")
+    }
+    var createSnapshotButton: String {
+        t("스냅샷 만들기",
+          "Create snapshot",
+          "スナップショットを作成",
+          "Crear instantánea",
+          "Créer un instantané",
+          "Criar instantâneo")
+    }
+    func snapshotHistoryState(expanded: Bool) -> String {
+        expanded
+            ? t("펼쳐짐", "Expanded", "展開", "Expandido", "Développé", "Expandido")
+            : t("접힘", "Collapsed", "折りたたみ", "Contraído", "Réduit", "Recolhido")
+    }
+    var createSnapshotHint: String {
+        t("진행 상태의 로컬 복원 지점을 즉시 저장해요 (최근 10개 보존)",
+          "Saves an instant local restore point of your progress (keeps up to 10)",
+          "現在の進行状況の復元ポイントを即座に保存します（最新10件を保持）",
+          "Guarda un punto de restauración local de tu progreso (mantiene hasta 10)",
+          "Enregistre un point de restauration local de ta progression (jusqu'à 10 conservés)",
+          "Salva um ponto de restauração local do seu progresso (mantém até 10)")
+    }
+    var snapshotCreatedToast: String {
+        t("스냅샷이 생성되었습니다",
+          "Snapshot created",
+          "スナップショットを作成しました",
+          "Instantánea creada",
+          "Instantané créé",
+          "Instantâneo criado")
+    }
+    var restoreSnapshotButton: String {
+        t("복원",
+          "Restore",
+          "復元",
+          "Restaurar",
+          "Restaurer",
+          "Restaurar")
+    }
+    var restoreConfirmTitle: String {
+        t("이 스냅샷으로 복원할까요?",
+          "Restore this snapshot?",
+          "このスナップショットに復元しますか？",
+          "¿Restaurar esta instantánea?",
+          "Restaurer cet instantané ?",
+          "Restaurar este instantâneo?")
+    }
+    func restoreConfirmBody(snapshotDate: String, snapshotDex: Int, snapshotTokens: String,
+                            currentDex: Int, currentTokens: String) -> String {
+        t("""
+          복원할 스냅샷: 도감 \(snapshotDex)마리 · 누적 \(snapshotTokens)
+          저장 시각: \(snapshotDate)
+          현재 상태: 도감 \(currentDex)마리 · 누적 \(currentTokens)
+
+          현재 상태는 새 스냅샷으로 자동 백업된 뒤 복원됩니다.
+          """,
+          """
+          Target snapshot: \(snapshotDex) in Pokédex · \(snapshotTokens) lifetime
+          Created: \(snapshotDate)
+          Current state: \(currentDex) in Pokédex · \(currentTokens) lifetime
+
+          Your current state will be backed up as a new snapshot before restoring.
+          """,
+          """
+          復元するスナップショット: 図鑑 \(snapshotDex)匹 · 累計 \(snapshotTokens)
+          作成日時: \(snapshotDate)
+          現在の状態: 図鑑 \(currentDex)匹 · 累計 \(currentTokens)
+
+          現在の状態は復元前に新しいスナップショットとしてバックアップされます。
+          """,
+          """
+          Instantánea a restaurar: Pokédex \(snapshotDex) · \(snapshotTokens) acumulados
+          Creada: \(snapshotDate)
+          Estado actual: Pokédex \(currentDex) · \(currentTokens) acumulados
+
+          Tu estado actual se guardará como una nueva instantánea antes de restaurar.
+          """,
+          """
+          Instantané à restaurer : Pokédex \(snapshotDex) · \(snapshotTokens) cumulés
+          Créé le : \(snapshotDate)
+          État actuel : Pokédex \(currentDex) · \(currentTokens) cumulés
+
+          Ton état actuel sera sauvegardé dans un nouvel instantané avant la restauration.
+          """,
+          """
+          Instantâneo a restaurar: Pokédex \(snapshotDex) · \(snapshotTokens) acumulados
+          Criado: \(snapshotDate)
+          Estado atual: Pokédex \(currentDex) · \(currentTokens) acumulados
+
+          Seu estado atual será salvo como um novo instantâneo antes de restaurar.
+          """)
+    }
+    func restoreDoneMessage(dex: Int, tokens: String) -> String {
+        t("복원되었습니다 — 도감 \(dex)마리 · 누적 \(tokens)",
+          "Restored — \(dex) in Pokédex · \(tokens) lifetime",
+          "復元しました — 図鑑 \(dex)匹 · 累計 \(tokens)",
+          "Restaurado — Pokédex \(dex) · \(tokens) acumulados",
+          "Restauré — Pokédex \(dex) · \(tokens) cumulés",
+          "Restaurado — Pokédex \(dex) · \(tokens) acumulados")
+    }
+    var noSnapshotsYet: String {
+        t("아직 저장된 스냅샷이 없습니다",
+          "No snapshots saved yet",
+          "保存されたスナップショットはまだありません",
+          "Aún no hay instantáneas guardadas",
+          "Aucun instantané enregistré pour l'instant",
+          "Nenhum instantâneo salvo ainda")
+    }
+    func snapshotDexAndTokens(dex: Int, tokens: String) -> String {
+        t("도감 \(dex)마리 · 누적 \(tokens)",
+          "Pokédex \(dex) · \(tokens) lifetime",
+          "図鑑 \(dex)匹 · 累計 \(tokens)",
+          "Pokédex \(dex) · \(tokens) acumulados",
+          "Pokédex \(dex) · \(tokens) cumulés",
+          "Pokédex \(dex) · \(tokens) acumulados")
+    }
     var importErrorNotSaveFile: String {
         t("PokeTokenBar 세이브 파일이 아니에요.",
           "That isn't a PokeTokenBar save file.",
@@ -501,6 +754,18 @@ struct L {
 
     // MARK: 도감 요약 헤더
     var openInPokedex: String { t("도감에서 보기", "Open in Pokédex", "図鑑で見る", "Ver en la Pokédex", "Voir dans le Pokédex", "Ver na Pokédex") }
+    /// The usual look of Castform, Rotom, Kyurem and Genesect, which have no official form name.
+    var normalForm: String { t("일반 폼", "Normal Form", "ノーマルフォルム", "Forma normal", "Forme normale", "Forma normal") }
+    func formsCollected(_ count: Int, of total: Int) -> String {
+        t("폼 \(count)/\(total)", "Forms \(count)/\(total)", "フォルム \(count)/\(total)",
+          "Formas \(count)/\(total)", "Formes \(count)/\(total)", "Formas \(count)/\(total)")
+    }
+    /// Stats, types and moves come from the species' default form; only the look changes.
+    var defaultFormDataNote: String {
+        t("정보는 기본 폼 기준", "Data uses the default form", "データは基本フォルムに基づきます",
+          "Datos de la forma predeterminada", "Données de la forme par défaut", "Dados da forma padrão")
+    }
+    var chooseForm: String { t("폼 선택", "Choose form", "フォルムを選択", "Elegir forma", "Choisir une forme", "Escolher forma") }
     var dexTitle: String { t("도감", "Pokédex", "図鑑", "Pokédex", "Pokédex", "Pokédex") }
     func dexTotal(_ n: Int) -> String { t("총 \(n)마리", "\(n) total", "全\(n)匹", "\(n) en total", "\(n) au total", "\(n) no total") }
     /// 포획 로그 = 개체 단위 기록(같은 라인 중복이 정상). 도감 = 종 단위 집계.
@@ -984,6 +1249,60 @@ struct L {
         case .trade(let from):
             guard let from, !from.isEmpty else { return t("거래", "Traded", "交換", "Intercambio") }
             return t("\(from)에게서 거래", "Traded from \(from)", "\(from)から交換", "Intercambiado de \(from)")
+    var dexAppearance: String { t("모습", "Appearance", "姿", "Aspecto", "Apparence", "Aparência") }
+    var dexAppearancePreview: String { t("수집한 모습 · 종 정보", "Collected appearance · species reference", "収集した姿・種情報", "Aspecto coleccionado · datos de especie", "Apparence collectionnée · données de l’espèce", "Aparência coletada · dados da espécie") }
+    // MARK: Pokémon 상세
+    var loadingPokemonDetails: String { t("포켓몬 정보를 불러오는 중…", "Loading Pokémon details…", "ポケモン情報を読み込み中…", "Cargando detalles del Pokémon…", "Chargement des détails du Pokémon…", "Carregando detalhes do Pokémon…") }
+    var pokemonDetailsUnavailable: String { t("포켓몬 정보를 불러오지 못했어요.", "Pokémon details could not be loaded.", "ポケモン情報を読み込めませんでした。", "No se pudieron cargar los detalles.", "Impossible de charger les détails.", "Não foi possível carregar os detalhes.") }
+    var pokemonIndividual: String { t("개체", "Individual", "個体", "Ejemplar", "Individu", "Indivíduo") }
+    var level: String { t("레벨", "Level", "レベル", "Nivel", "Niveau", "Nível") }
+    var gender: String { t("성별", "Gender", "性別", "Sexo", "Sexe", "Gênero") }
+    var nature: String { t("성격", "Nature", "性格", "Naturaleza", "Nature", "Natureza") }
+    var ability: String { t("특성", "Ability", "特性", "Habilidad", "Talent", "Habilidade") }
+    var hiddenAbility: String { t("숨겨진 특성", "Hidden Ability", "隠れ特性", "Habilidad oculta", "Talent caché", "Habilidade oculta") }
+    var hidden: String { t("숨김", "Hidden", "隠れ", "Oculta", "Caché", "Oculta") }
+    var activeMoves: String { t("배운 기술", "Known moves", "覚えている技", "Movimientos conocidos", "Capacités connues", "Golpes conhecidos") }
+    var noLevelMoves: String { t("현재 레벨에서 배운 기술이 없어요.", "No level-up moves learned at this level.", "現在のレベルで覚えた技はありません。", "No hay movimientos aprendidos a este nivel.", "Aucune capacité apprise à ce niveau.", "Nenhum golpe aprendido neste nível.") }
+    var actualStats: String { t("실제 능력치", "Actual stats", "実能力値", "Estadísticas reales", "Stats réelles", "Atributos reais") }
+    var baseStats: String { t("기본 능력치", "Base stats", "種族値", "Estadísticas base", "Stats de base", "Atributos base") }
+    var speciesData: String { t("종 정보", "Species data", "種情報", "Datos de especie", "Données de l’espèce", "Dados da espécie") }
+    var height: String { t("키", "Height", "高さ", "Altura", "Taille", "Altura") }
+    var weight: String { t("몸무게", "Weight", "重さ", "Peso", "Poids", "Peso") }
+    var baseStatTotal: String { t("합계", "Base total", "合計", "Total base", "Total de base", "Total base") }
+    var possibleAbilities: String { t("가능한 특성", "Possible abilities", "可能な特性", "Habilidades posibles", "Talents possibles", "Habilidades possíveis") }
+    func completeMoveList(_ count: Int) -> String { t("전체 기술 목록 \(count)개", "Complete move list · \(count)", "全技リスト・\(count)", "Lista completa · \(count)", "Liste complète · \(count)", "Lista completa · \(count)") }
+        }
+    }
+    var dexSearchPlaceholder: String { t("이름 또는 #번호 검색…", "Search name or #…", "名前または#番号で検索…", "Buscar por nombre o #…", "Rechercher par nom ou #…", "Buscar por nome ou #…") }
+    var sortTitle: String { t("정렬", "Sort", "並び替え", "Ordenar", "Trier", "Ordenar") }
+    var sortDexNumberAsc: String { t("도감 번호 (낮은 순)", "Number (Low to High)", "図鑑番号（昇順）", "Nº de Pokédex (asc.)", "N° de Pokédex (croissant)", "Nº da Pokédex (crescente)") }
+    var sortDexNumberDesc: String { t("도감 번호 (높은 순)", "Number (High to Low)", "図鑑番号（降順）", "Nº de Pokédex (desc.)", "N° de Pokédex (décroissant)", "Nº da Pokédex (decrescente)") }
+    var sortNameAsc: String { t("이름 (가나다·A-Z)", "Name (A–Z)", "名前（五十音・A-Z）", "Nombre (A–Z)", "Nom (A–Z)", "Nome (A–Z)") }
+    var sortNameDesc: String { t("이름 (역순)", "Name (Z–A)", "名前（逆順）", "Nombre (Z–A)", "Nom (Z–A)", "Nome (Z–A)") }
+    var sortRarity: String { t("희귀도 순", "Rarity (High to Low)", "希少度順", "Rareza (mayor a menor)", "Rareté (décroissante)", "Raridade (maior a menor)") }
+    var sortDateDesc: String { t("최근 잡은 순", "Most Recent", "最近捕獲", "Más recientes", "Plus récents", "Mais recentes") }
+    var sortDateAsc: String { t("오래된 순", "Oldest First", "古い順", "Más antiguos", "Plus anciens", "Mais antigos") }
+    var filterShinyOnly: String { t("이로치만", "Shiny only", "色違いのみ", "Solo variocolor", "Chromatique uniquement", "Apenas Shiny") }
+    var noSearchResults: String { t("검색 결과가 없어요", "No Pokémon found", "見つかりませんでした", "No se encontraron Pokémon", "Aucun Pokémon trouvé", "Nenhum Pokémon encontrado") }
+    var clearFilters: String { t("필터 초기화", "Reset filters", "フィルターを解除", "Restablecer filtros", "Réinitialiser les filtres", "Redefinir filtros") }
+    func label(for option: CompanionStore.DexSortOption) -> String {
+        switch option {
+        case .numberAsc: return sortDexNumberAsc
+        case .numberDesc: return sortDexNumberDesc
+        case .nameAsc: return sortNameAsc
+        case .nameDesc: return sortNameDesc
+        case .rarityDesc: return sortRarity
+        }
+    }
+    func label(for option: CompanionStore.CatchLogSortOption) -> String {
+        switch option {
+        case .recentFirst: return sortDateDesc
+        case .oldestFirst: return sortDateAsc
+        case .numberAsc: return sortDexNumberAsc
+        case .numberDesc: return sortDexNumberDesc
+        case .nameAsc: return sortNameAsc
+        case .nameDesc: return sortNameDesc
+        case .rarityDesc: return sortRarity
         }
     }
     var dexNormalLabel: String { t("일반", "Normal", "通常色", "Normal") }
