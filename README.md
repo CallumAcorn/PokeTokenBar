@@ -162,6 +162,11 @@ Pick any gym leader, Elite Four member or Champion your party can field a team f
 - **Burn-rate forecast** — projects when the current 5h window hits 100%.
 - **In-app updates** — one-click update check; current version shown in Settings.
 - **Usage recap** — a Pokédex-style recap of any week, month or year you step back to (total, meters, comparison with the previous period, day for day while it is still running, best day, best streak, graduations). History is kept locally for this year and the last.
+- **Daily trend**: this month's usage day by day, stacked by service, with today highlighted.
+- **Pace colours**: limit bars and menu-bar percentages turn orange or red when you are using a window faster than it resets, with a marker for where an even pace would be.
+- **Automatic backups**: local save snapshots every 12 hours (up to 10), restorable from Settings, with automatic recovery if the save file is damaged.
+- **Pokédex search**: search the Pokédex and catch log by name in any language, sort them, and show shinies only.
+- **Alternate forms**: Unown letters, Burmy cloaks, Rotom appliances, Arceus types and the other Gen 1 to 5 forms hatch at random and are collected one by one. Pick any collected form on the species page and pin it to the menu bar.
 
 ## Works with
 
