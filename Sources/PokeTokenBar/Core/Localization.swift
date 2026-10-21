@@ -208,6 +208,13 @@ struct L {
     var recapBestStreak: String { t("최장 연속", "Best streak", "最長連続", "Mejor racha", "Meilleure série", "Melhor sequência") }
     var recapGraduates: String { t("졸업", "Graduated", "卒業", "Graduados", "Diplômés", "Formados") }
     var recapNoData: String { t("기록 없음", "no data", "記録なし", "sin datos", "pas de données", "sem dados") }
+    func recapCurrentPeriod(_ scope: RecapScope) -> String {
+        switch scope {
+        case .week: thisWeek
+        case .month: thisMonth
+        case .year: t("올해", "This year", "今年", "Este año", "Cette année", "Este ano")
+        }
+    }
     func recapDays(_ count: Int) -> String {
         t("\(count)일", "\(count)d", "\(count)日", "\(count) d", "\(count) j", "\(count) d")
     }
