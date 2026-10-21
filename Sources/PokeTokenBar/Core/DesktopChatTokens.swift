@@ -251,6 +251,12 @@ struct LocalDesktopChatProvider: UsageProvider {
         result.weekTotal = PeriodUsage(period: weekStart, totalTokens: ledger.total(from: weekStart, through: today), totalCost: 0)
         result.monthTotal = PeriodUsage(period: LocalUsageReader.monthKey(now),
                                         totalTokens: ledger.total(from: monthStart, through: today), totalCost: 0)
+        // The same calendar axis the log-based providers get, filled from the ledger, so chat shows in
+        // the monthly trend on the right days.
+        result.monthDaily = LocalUsageReader.monthDailySeries(entries: [], now: now).map { day in
+            DailyUsage(date: day.date, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0,
+                       totalTokens: ledger.total(from: day.date, through: day.date), totalCost: 0)
+        }
         result.periodsOK = true
         return result
     }
