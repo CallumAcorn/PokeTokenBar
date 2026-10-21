@@ -6,13 +6,22 @@ import SwiftUI
 struct DayCareView: View {
     let store: CompanionStore
     var onClose: () -> Void
+    /// False only for offscreen renders (`ScreenshotGenTests`): `ImageRenderer` draws a ScrollView blank.
+    var scrolls = true
     @State private var pickingSlot: Int?
 
     var body: some View {
         if let slot = pickingSlot {
             DayCarePickerView(store: store, slot: slot) { pickingSlot = nil }
+        } else if scrolls {
+            ScrollView { slots }
+                .scrollIndicators(.never)
         } else {
-            ScrollView {
+            slots
+        }
+    }
+
+    private var slots: some View {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         Button(action: onClose) { Image(systemName: "chevron.left") }
@@ -28,9 +37,6 @@ struct DayCareView: View {
                         DayCareSlotCard(store: store, index: index) { pickingSlot = index }
                     }
                 }
-            }
-            .scrollIndicators(.never)
-        }
     }
 }
 
