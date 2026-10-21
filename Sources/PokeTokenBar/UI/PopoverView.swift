@@ -31,9 +31,20 @@ final class PopoverNavigation {
     /// moved out of the popover for the same reason battling did (trading-overhaul.md).
     var onOpenTradeWindow: (() -> Void)?
 
+    /// A species to open in the Pokédex, set by a sprite link and consumed by the Pokédex grid.
+    var dexSpeciesLink: Int?
+
+    /// Opens a species' Pokédex page from anywhere in the popover (upstream #394).
+    func openDex(_ speciesID: Int) {
+        showSettings = false
+        tab = .collection
+        dexSpeciesLink = speciesID
+    }
+
     func reset() {
         showSettings = false
         tab = .home
+        dexSpeciesLink = nil
     }
 }
 

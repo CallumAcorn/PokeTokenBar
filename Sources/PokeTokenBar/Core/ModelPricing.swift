@@ -34,7 +34,8 @@ enum ModelPricing {
         "claude-sonnet-5":            .perMillion(2, 10, 2.5, 0.2),
         // Upstream #384. Without these rows the family fallbacks price Sonnet 5.5 at Sonnet 4 rates
         // and every GPT-6 model at the generic $5/$30.
-        "claude-sonnet-5-5":          .perMillion(2, 10, 2.5, 0.2),
+        // Cache reads are $0.10/MTok, not Sonnet 5's $0.20 (upstream, checked 2026-10-16).
+        "claude-sonnet-5-5":          .perMillion(2, 10, 2.5, 0.1),
         "claude-fable-5":            .perMillion(10, 50, 12.5, 1.0), // LiteLLM 스냅샷 가격 등재됨(2026-08) — 기존 미가격 $0 플레이스홀더 대체
         // Fable 5.1: Fable 5 와 기본 단가는 같지만 cache read 만 $0.25/MTok(입력의 0.025배)로 내려갔다.
         // 이 줄이 없으면 `fable` 패밀리 폴백이 Fable 5 의 $1.00 을 적용해 **비용을 4배 부풀린다**(상류 #277).
@@ -74,8 +75,25 @@ enum ModelPricing {
             if m.contains("pro")   { return .perMillion(1.25, 10, 0, 0.3125) }
             if m.contains("flash") { return .perMillion(0.30, 2.5, 0, 0.075) }
         }
+        noteUnpriced(model)
         return .zero
     }
+
+    /// A model nothing prices costs $0 with no other trace; Opus 5.5 went unnoticed until a
+    /// screenshot. Log each unpriced model once per launch so a new one shows up the first time a
+    /// provider reports it (upstream 5f6a4f0a).
+    static func noteUnpriced(_ model: String) {
+        guard firstUnpricedSighting(model) else { return }
+        AppLog.write("Unpriced model: \(model), its cost shows as $0 until ModelPricing.table has a row")
+    }
+
+    static func firstUnpricedSighting(_ model: String) -> Bool {
+        unpricedLock.lock(); defer { unpricedLock.unlock() }
+        return unpricedSeen.insert(model.lowercased()).inserted
+    }
+
+    nonisolated(unsafe) private static var unpricedSeen: Set<String> = []
+    private static let unpricedLock = NSLock()
 
     static func cost(model: String, input: Int, output: Int, cacheWrite: Int, cacheRead: Int) -> Double {
         let r = rate(for: model)

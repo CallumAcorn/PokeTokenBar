@@ -105,7 +105,8 @@ final class GeminiUsageTests: XCTestCase {
                        accuracy: 0.0001, "폴백으로 새면 0.5 가 된다")
         XCTAssertEqual(ModelPricing.rate(for: "claude-sonnet-5"), .perMillion(2, 10, 2.5, 0.2),
                        "폴백은 Sonnet 4 단가(3,15)로 1.5배 과대")
-        XCTAssertEqual(ModelPricing.rate(for: "claude-sonnet-5-5"), .perMillion(2, 10, 2.5, 0.2))
+        XCTAssertEqual(ModelPricing.rate(for: "claude-sonnet-5-5"), .perMillion(2, 10, 2.5, 0.1),
+                       "Sonnet 5.5 cache reads are half Sonnet 5's")
         XCTAssertEqual(ModelPricing.rate(for: "gpt-6-sol"), .perMillion(2, 10, 2.5, 0.2))
         XCTAssertEqual(ModelPricing.rate(for: "gpt-6.1-sol"), .perMillion(2, 10, 2.5, 0.1))
         XCTAssertEqual(ModelPricing.rate(for: "gpt-6-luna"), .perMillion(0.1, 0.5, 0.125, 0.01),
@@ -120,5 +121,13 @@ final class GeminiUsageTests: XCTestCase {
         // 실제 비용 산술 (m2 케이스): 420 in + 80 out + 600 cacheR @2.5-pro
         let c = ModelPricing.cost(model: "gemini-2.5-pro", input: 420, output: 80, cacheWrite: 0, cacheRead: 600)
         XCTAssertEqual(c, 420 * 1.25e-6 + 80 * 10e-6 + 600 * 0.3125e-6, accuracy: 1e-12)
+    }
+
+    /// Each unknown model is reported once per launch, case-insensitively.
+    func testUnpricedModelIsNotedOnce() {
+        let model = "mystery-model-\(UUID().uuidString)"
+        XCTAssertTrue(ModelPricing.firstUnpricedSighting(model))
+        XCTAssertFalse(ModelPricing.firstUnpricedSighting(model))
+        XCTAssertFalse(ModelPricing.firstUnpricedSighting(model.uppercased()))
     }
 }

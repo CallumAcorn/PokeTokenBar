@@ -35,11 +35,13 @@ actor LocalUsageCache {
         var codexSessionIndexVersion: Int
         var grokParserVersion: Int
         var piParserVersion: Int
+        var claudeParserVersion: Int
 
         init(claude: [String: Blob], codex: [String: CodexBlob],
              codexSessionIDs: [String: CodexSessionProbe], gemini: [String: Blob],
              grok: [String: Blob], pi: [String: Blob], codexParserVersion: Int,
-             codexSessionIndexVersion: Int, grokParserVersion: Int, piParserVersion: Int) {
+             codexSessionIndexVersion: Int, grokParserVersion: Int, piParserVersion: Int,
+             claudeParserVersion: Int) {
             self.claude = claude
             self.codex = codex
             self.codexSessionIDs = codexSessionIDs
@@ -50,6 +52,7 @@ actor LocalUsageCache {
             self.codexSessionIndexVersion = codexSessionIndexVersion
             self.grokParserVersion = grokParserVersion
             self.piParserVersion = piParserVersion
+            self.claudeParserVersion = claudeParserVersion
         }
 
         // 하위호환: gemini/grok/codexSessionIDs 키가 없는 구버전 스냅샷도 로드(콜드 스타트 재발 방지).
@@ -67,6 +70,7 @@ actor LocalUsageCache {
             codexSessionIndexVersion = try c.decodeIfPresent(Int.self, forKey: .codexSessionIndexVersion) ?? 0
             grokParserVersion = try c.decodeIfPresent(Int.self, forKey: .grokParserVersion) ?? 0
             piParserVersion = try c.decodeIfPresent(Int.self, forKey: .piParserVersion) ?? 0
+            claudeParserVersion = try c.decodeIfPresent(Int.self, forKey: .claudeParserVersion) ?? 0
         }
     }
 
@@ -81,6 +85,9 @@ actor LocalUsageCache {
     private static let grokParserVersion = 1
     /// Pi usage mapping/dedup semantics. Bump when the direct usage paths or bucket mapping changes.
     private static let piParserVersion = 2
+    /// Claude entry-to-cost mapping. v1: Claude Code's reported `cost-state` ledger is preferred over
+    /// table estimates, so blobs parsed before it are re-read.
+    private static let claudeParserVersion = 1
 
     private var claudeCache: [String: Blob] = [:]
     private var codexCache: [String: CodexBlob] = [:]
@@ -394,6 +401,10 @@ actor LocalUsageCache {
             piCache = [:]
             dirty = true
         }
+        if snap.claudeParserVersion != Self.claudeParserVersion {
+            claudeCache = [:]
+            dirty = true
+        }
     }
 
     /// 어떤 조회 윈도우(오늘/주/월)에도 들지 않는 오래된 파일 blob 을 제거해 캐시 무한 증가를 막는다.
@@ -423,7 +434,8 @@ actor LocalUsageCache {
             codexParserVersion: Self.codexParserVersion,
             codexSessionIndexVersion: Self.codexSessionIndexVersion,
             grokParserVersion: Self.grokParserVersion,
-            piParserVersion: Self.piParserVersion)
+            piParserVersion: Self.piParserVersion,
+            claudeParserVersion: Self.claudeParserVersion)
         if let data = try? JSONEncoder().encode(snap) {
             // JSON 은 zlib 로 크게 압축됨(수 MB → 수백 KB). 실패 시 평문 저장(로드가 양쪽 다 처리).
             let out = (try? (data as NSData).compressed(using: .zlib) as Data) ?? data

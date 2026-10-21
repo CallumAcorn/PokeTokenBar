@@ -53,6 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var menuIndex = 0
     private var menuTimer: Timer?
     private var menuLoadGen = 0     // async 로드 경합 방지
+    /// The menu bar's GIF load. It retries until the download works, so a newer load cancels it.
+    private var menuAnimationTask: Task<Void, Never>?
     private var displayAwake = true     // 디스플레이 켜짐 여부 (꺼지면 메뉴 애니메이션 정지 — 배터리)
     private var powerObserver: NSObjectProtocol?   // 저전력 토글 → 유효 fps 하한 재평가
 
@@ -349,14 +351,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 풀 GIF 애니메이션. delay 하한 `menuFrameFloor` 로 redraw 통제 — 저전력 모드에선 이 하한이
         // powerSaver 로 캡되므로(GIF 생략 대신) 실제 애니메이션을 유지한 채 절전한다.
-        Task { @MainActor [weak self] in
+        menuAnimationTask?.cancel()
+        menuAnimationTask = Task { @MainActor [weak self] in
             guard let self, gen == self.menuLoadGen else { return }
             // shiny GIF 미제공 종이면 일반 GIF 폴백
-            var data = await SpriteStore.shared.data(speciesID: id, animated: true, shiny: shiny)
-            if data == nil, shiny {
-                data = await SpriteStore.shared.data(speciesID: id, animated: true, shiny: false)
-            }
-            guard let data else { return }
+            guard let data = await SpriteStore.shared.recoveringAnimatedData(speciesID: id, shiny: shiny),
+                  gen == self.menuLoadGen else { return }
             let raw = GIFDecoder.frames(from: data)
             guard raw.count > 1, gen == self.menuLoadGen else { return }
             // fps 캡 = `menuFrameFloor`. 프레임마다 상태바 재합성(CA 커밋 → 디스플레이 사이클
