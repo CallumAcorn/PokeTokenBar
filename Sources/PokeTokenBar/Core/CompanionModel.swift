@@ -941,6 +941,8 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     /// Rolled at hatch from the species' `gender_rate`. nil for mons hatched before the Day Care existed —
     /// `effectiveGender(genderRate:)` fills those in from the id, the same way `effectiveIVs` does.
     var gender: Gender?
+    /// Chosen at hatch for the whole line and resolved per species (`PokemonForm.resolved`).
+    var form: PokemonForm?
     // pathIDs 가 비면(손상된 상태 파일) baseID 로 폴백 — 렌더마다 읽히므로 out-of-bounds 크래시 방지.
     var currentID: Int { pathIDs.isEmpty ? baseID : pathIDs[min(stageIndex, pathIDs.count - 1)] }
     /// The stages this mon has actually been, first stage first, ending at `currentID` — not the
@@ -978,7 +980,7 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
          acquiredAt: Date = Date(), acquiredVia: AcquisitionSource = .egg, evolutionLocked: Bool = false,
          isFloating: Bool = false, isBackFacing: Bool = false, isMirrored: Bool = false, knownMoves: [Int] = [],
          hyperTrainedStats: Set<StatKind> = [], hyperTrainTarget: HyperTrainTarget? = nil, hyperTrainProgress: Int = 0,
-         gender: Gender? = nil) {
+         gender: Gender? = nil, form: PokemonForm? = nil) {
         self.id = id
         self.baseID = baseID
         self.pathIDs = pathIDs
@@ -1009,6 +1011,7 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         self.hyperTrainTarget = hyperTrainTarget
         self.hyperTrainProgress = hyperTrainProgress
         self.gender = gender
+        self.form = PokemonForm.resolved(baseID: baseID, form: form)
     }
 
     // 하위호환 디코딩: shiny/nature/id/acquiredAt/acquiredVia 는 구버전 저장에 없음 → 기본값.
@@ -1050,6 +1053,7 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         hyperTrainTarget = (try? c.decodeIfPresent(HyperTrainTarget.self, forKey: .hyperTrainTarget)) ?? nil
         hyperTrainProgress = (try? c.decodeIfPresent(Int.self, forKey: .hyperTrainProgress)) ?? 0
         gender = (try? c.decodeIfPresent(Gender.self, forKey: .gender)) ?? nil
+        form = PokemonForm.resolved(baseID: baseID, form: PokemonForm.decoded(from: decoder, keys: "form", "unownForm"))
     }
 }
 
@@ -1072,11 +1076,13 @@ struct DexEntry: Codable, Sendable, Identifiable {
     var monID: String?
     /// 이 개체가 세이브에 합류한 경로(알/거래) — 포획 로그 행에 "알로/거래로" 표시용.
     var source: AcquisitionSource = .egg
+    var form: PokemonForm?
 
     init(id: String = UUID().uuidString,
          baseID: Int, finalID: Int, chainOrder: [Int], rarity: Rarity,
          caughtAt: Date?, isShiny: Bool = false, nature: PokemonNature? = nil,
-         names: [Int: [String: String]]? = nil, monID: String? = nil, source: AcquisitionSource = .egg) {
+         names: [Int: [String: String]]? = nil, monID: String? = nil, source: AcquisitionSource = .egg,
+         form: PokemonForm? = nil) {
         self.id = id
         self.baseID = baseID
         self.finalID = finalID
@@ -1088,6 +1094,7 @@ struct DexEntry: Codable, Sendable, Identifiable {
         self.names = names
         self.monID = monID
         self.source = source
+        self.form = PokemonForm.resolved(baseID: baseID, form: form)
     }
 
     // 하위호환 디코딩 (MonState 와 동일 이유).
@@ -1106,6 +1113,7 @@ struct DexEntry: Codable, Sendable, Identifiable {
         names = (try? c.decodeIfPresent([Int: [String: String]].self, forKey: .names)) ?? nil
         monID = (try? c.decodeIfPresent(String.self, forKey: .monID)) ?? nil
         source = (try? c.decodeIfPresent(AcquisitionSource.self, forKey: .source)) ?? .egg
+        form = PokemonForm.resolved(baseID: baseID, form: PokemonForm.decoded(from: decoder, keys: "form", "unownForm"))
     }
 }
 
@@ -1161,6 +1169,8 @@ struct CompanionState: Codable, Sendable {
     var eggRegion: Region?
     // 알 상태에서 미리 롤해둔 부화 종(프리패칭) — 부화 순간 네트워크 딜레이 제거. 재시작에도 유지.
     var pendingHatchID: Int?
+    /// The form is chosen with the species so prefetch warms the exact sprite that will hatch.
+    var pendingForm: PokemonForm?
     /// 오늘 사용량 적립 기준값 — 프로바이더별로 독립 관리한다.
     ///
     /// `nil`은 aggregate `claimedTodayTokens`만 가지고 있던 구버전 세이브가 아직 첫 유효
@@ -1182,6 +1192,8 @@ struct CompanionState: Codable, Sendable {
     /// 적용한다 — 이 포크의 플로팅 펫은 파티 개체별 `isFloating` 토글이라 "어떤 개체를 띄울지"를
     /// 사용자가 이미 개체 단위로 고르고 있고, 거기에 종 단위 고정을 겹치면 두 선택이 서로를 덮는다.
     var representativeSpeciesID: Int?
+    /// The appearance pinned with `representativeSpeciesID`; nil = the species' default form.
+    var representativeForm: PokemonForm?
     // 포획 로그 — 개체가 파티에 합류한 시점(알/거래) 1행. dexEntriesSorted 가 시각순으로 보여준다.
     var dex: [DexEntry] = []
     // 도감(종 단위) 영구 언락 — 한 번 도달한 종은 그 개체를 나중에 잃어도(거래) 지워지지 않는다.
@@ -1233,6 +1245,9 @@ struct CompanionState: Codable, Sendable {
         // 모르는 rawValue 는 nil(제한 없음)로 강등 — eggTier 와 같은 안전한 방향.
         eggRegion          = c.lenientOptional(Region.self, forKey: .eggRegion)
         pendingHatchID     = c.lenientOptional(Int.self, forKey: .pendingHatchID)
+        // No stored form leaves nil so the hatch rolls one; `resolved` would force the default.
+        pendingForm        = PokemonForm.decoded(from: decoder, keys: "pendingForm", "pendingUnownForm")
+            .flatMap { PokemonForm.resolved(baseID: pendingHatchID ?? 0, form: $0) }
         if c.contains(.claimedTodayTokensByProvider) {
             claimedTodayTokensByProvider = c.lenient([String: Int].self,
                                                       forKey: .claimedTodayTokensByProvider,
@@ -1252,6 +1267,8 @@ struct CompanionState: Codable, Sendable {
             trainingSlotID = c.lenientOptional(String.self, forKey: .trainingSlotID)
             dexUnlocked    = c.lenient([Int: DexUnlock].self, forKey: .dexUnlocked, default: [:])
             representativeSpeciesID = c.lenientOptional(Int.self, forKey: .representativeSpeciesID)
+            representativeForm = PokemonForm.resolved(speciesID: representativeSpeciesID ?? 0,
+                form: PokemonForm.decoded(from: decoder, keys: "representativeForm", "representativeUnownForm"))
         } else {
             // 구버전 세이브 — 단일 active 를 party 의 첫 원소로 승격하고, 기존 dex(졸업 기록) +
             // active 의 도달분을 접어 dexUnlocked 를 1회성으로 재구성한다(최선 근사 — 실제 합류
@@ -1320,11 +1337,39 @@ struct CompanionState: Codable, Sendable {
     /// 않으므로 여기서 따로 가릴 필요가 없다.
     func ownsShinySpecies(_ speciesID: Int) -> Bool { dexUnlocked[speciesID]?.isShiny == true }
 
+    /// Forms of `speciesID` this save has collected: catch log rows plus party members that reached
+    /// it. Normal and shiny individuals of the same form contribute once. Empty for species without forms.
+    func collectedForms(speciesID: Int) -> Set<PokemonForm> {
+        guard PokemonForm.hasForms(speciesID: speciesID) else { return [] }
+        var forms = Set(dex.filter { $0.chainOrder.contains(speciesID) }.compactMap {
+            PokemonForm.resolved(speciesID: speciesID, form: $0.form)
+        })
+        for mon in party where mon.reachedPathIDs.contains(speciesID) {
+            if let form = PokemonForm.resolved(speciesID: speciesID, form: mon.form) { forms.insert(form) }
+        }
+        return forms
+    }
+
+    /// Hatch roll weights: a form counts as collected once every species of the line that shows it
+    /// has been collected in that form.
+    func collectedLineForms(baseID: Int) -> Set<PokemonForm> {
+        let owned = PokemonForm.formSpecies(baseID: baseID).map { ($0, collectedForms(speciesID: $0)) }
+        return Set(PokemonForm.lineForms(baseID: baseID).filter { form in
+            owned.allSatisfy { speciesID, forms in
+                !PokemonForm.forms(speciesID: speciesID).contains(form) || forms.contains(form)
+            }
+        })
+    }
+
     /// 대표 종은 실제로 보유한 종만 가리킨다. 손편집 세이브·거래로 빠져나간 종이 메뉴바에
-    /// 유령으로 남지 않게 로드/불러오기마다 정리한다.
+    /// 유령으로 남지 않게 로드/불러오기마다 정리한다. A pinned form must also be one the save has collected.
     mutating func reconcileRepresentativeSelection() {
-        guard let selected = representativeSpeciesID else { return }
-        if !ownsSpecies(selected) { representativeSpeciesID = nil }
+        guard let selected = representativeSpeciesID else { representativeForm = nil; return }
+        if !ownsSpecies(selected) { representativeSpeciesID = nil; representativeForm = nil; return }
+        guard PokemonForm.hasForms(speciesID: selected) else { representativeForm = nil; return }
+        let collected = collectedForms(speciesID: selected)
+        if let form = representativeForm, collected.contains(form) { return }
+        representativeForm = PokemonForm.forms(speciesID: selected).first { collected.contains($0) }
     }
 
     /// 구버전에서 **졸업하며 폐기된** 개체를 포획 로그로부터 PC 에 되살린다.
@@ -1361,7 +1406,8 @@ struct CompanionState: Codable, Sendable {
                 isShiny: entry.isShiny,
                 nature: entry.nature,
                 acquiredAt: entry.caughtAt ?? Date(),
-                acquiredVia: entry.source)
+                acquiredVia: entry.source,
+                form: entry.form)
             out.append(restored)
             // 이 되쓰기가 멱등성을 만든다. 다음 로드는 위 `liveIDs` 가드에서 이 행을 걸러낸다.
             rows[i].monID = restored.id

@@ -183,7 +183,7 @@ private struct ParentBadge: View {
     var body: some View {
         VStack(spacing: 0) {
             // Gen 5 sprites sit in a mostly empty canvas — draw large and let the frame trim the margin.
-            SpriteView(speciesID: mon.currentID, size: 56, shiny: mon.isShiny).frame(width: 64, height: 48)
+            SpriteView(speciesID: mon.currentID, size: 56, shiny: mon.isShiny, form: mon.form).frame(width: 64, height: 48)
             HStack(spacing: 2) {
                 SpeciesName(store: store, speciesID: mon.currentID).font(.system(size: 10, weight: .semibold)).lineLimit(1)
                 GenderMark(gender: gender, l: store.l, reservesSpace: false)
@@ -478,7 +478,7 @@ private struct PickerRow: View {
         let l = store.l
         Button(action: onTap) {
             HStack(spacing: 8) {
-                SpriteView(speciesID: mon.currentID, size: 48, shiny: mon.isShiny).frame(width: 44, height: 38)
+                SpriteView(speciesID: mon.currentID, size: 48, shiny: mon.isShiny, form: mon.form).frame(width: 44, height: 38)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         SpeciesName(store: store, speciesID: mon.currentID).font(.system(size: 12, weight: .bold)).lineLimit(1)

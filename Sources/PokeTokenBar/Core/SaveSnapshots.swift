@@ -9,6 +9,7 @@ struct SaveSnapshot: Identifiable, Sendable, Equatable {
     let lifetimeTokens: Int
     let currentSpeciesID: Int?
     let currentIsShiny: Bool
+    var currentForm: PokemonForm? = nil
 }
 
 enum SaveSnapshotManager {
@@ -77,7 +78,8 @@ enum SaveSnapshotManager {
                     dexCount: st.dex.count,
                     lifetimeTokens: st.usedSinceInstall,
                     currentSpeciesID: trainingMon(st)?.currentID,
-                    currentIsShiny: trainingMon(st).map(displaysShiny) ?? false
+                    currentIsShiny: trainingMon(st).map(displaysShiny) ?? false,
+                    currentForm: trainingMon(st).flatMap { PokemonForm.resolved(speciesID: $0.currentID, form: $0.form) }
                 ))
             } else if let st = try? JSONDecoder().decode(CompanionState.self, from: data) {
                 let date = parseStamp(file) ?? (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date()
@@ -88,7 +90,8 @@ enum SaveSnapshotManager {
                     dexCount: st.dex.count,
                     lifetimeTokens: st.usedSinceInstall,
                     currentSpeciesID: trainingMon(st)?.currentID,
-                    currentIsShiny: trainingMon(st).map(displaysShiny) ?? false
+                    currentIsShiny: trainingMon(st).map(displaysShiny) ?? false,
+                    currentForm: trainingMon(st).flatMap { PokemonForm.resolved(speciesID: $0.currentID, form: $0.form) }
                 ))
             }
         }
@@ -156,7 +159,8 @@ enum SaveSnapshotManager {
             dexCount: state.dex.count,
             lifetimeTokens: state.usedSinceInstall,
             currentSpeciesID: trainingMon(state)?.currentID,
-            currentIsShiny: trainingMon(state).map(displaysShiny) ?? false
+            currentIsShiny: trainingMon(state).map(displaysShiny) ?? false,
+            currentForm: trainingMon(state).flatMap { PokemonForm.resolved(speciesID: $0.currentID, form: $0.form) }
         )
     }
 

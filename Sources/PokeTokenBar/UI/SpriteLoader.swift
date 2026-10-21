@@ -9,7 +9,7 @@ enum SpriteFacing: Equatable {
 /// 포켓몬 스프라이트를 런타임에 받아 로컬(Application Support)에 캐시. 레포/번들에 미포함.
 actor SpriteStore {
     static let shared = SpriteStore()
-    private let base = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon"
+    private let base = SpriteStore.spriteBase
     private let itemBase = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items"
     private let badgeBase = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/badges"
     private var mem: [String: Data] = [:]
@@ -27,8 +27,11 @@ actor SpriteStore {
 
     /// 캐시 파일명 키 — 기존 "\(id)-a"/"\(id)-s" 유지, shiny 는 "sh" 접두(구캐시 그대로 유효).
     /// facing=.back 은 "bk" 접두 — 기존(.front) 캐시 파일명과 절대 겹치지 않아야 앞뒤가 안 섞인다.
-    static func cacheKey(speciesID: Int, animated: Bool, shiny: Bool, facing: SpriteFacing = .front) -> String {
-        "\(speciesID)-\(facing == .back ? "bk" : "")\(shiny ? "sh" : "")\(animated ? "a" : "s")"
+    /// A non-default form uses `<id>-<form>` (`PokemonForm.assetName`); the default keeps the plain id,
+    /// so caches written before forms existed stay valid.
+    static func cacheKey(speciesID: Int, animated: Bool, shiny: Bool, facing: SpriteFacing = .front,
+                         form: PokemonForm? = nil) -> String {
+        "\(PokemonForm.assetName(speciesID: speciesID, form: form))-\(facing == .back ? "bk" : "")\(shiny ? "sh" : "")\(animated ? "a" : "s")"
     }
 
     /// Sprites are the one remote payload the app writes to disk, so the response is checked
@@ -65,27 +68,39 @@ actor SpriteStore {
         return data
     }
 
-    func data(speciesID: Int, animated: Bool, shiny: Bool = false, facing: SpriteFacing = .front) async -> Data? {
+    func data(speciesID: Int, animated: Bool, shiny: Bool = false, facing: SpriteFacing = .front,
+              form: PokemonForm? = nil) async -> Data? {
         if animated, !PokemonAssets.hasAnimatedSprite(speciesID: speciesID) { return nil }
-        let key = Self.cacheKey(speciesID: speciesID, animated: animated, shiny: shiny, facing: facing)
+        let key = Self.cacheKey(speciesID: speciesID, animated: animated, shiny: shiny, facing: facing, form: form)
         if let d = mem[key] { touch(key); return d }
         let ext = animated ? "gif" : "png"
         let file = dir.appendingPathComponent("\(key).\(ext)")
         if let d = try? Data(contentsOf: file) { remember(key, d); return d }
         // "back/" is a path *prefix*, ahead of "shiny/" when both apply — matches the sprites repo's
         // own directory layout (sprites/pokemon/back/shiny/{id}.png, not shiny/back/{id}.png).
-        let backSegment = facing == .back ? "back/" : ""
-        let urlStr: String
-        switch (animated, shiny) {
-        case (true, false):  urlStr = "\(base)/versions/generation-v/black-white/animated/\(backSegment)\(speciesID).gif"
-        case (true, true):   urlStr = "\(base)/versions/generation-v/black-white/animated/\(backSegment)shiny/\(speciesID).gif"
-        case (false, false): urlStr = "\(base)/\(backSegment)\(speciesID).png"
-        case (false, true):  urlStr = "\(base)/\(backSegment)shiny/\(speciesID).png"
-        }
-        guard let url = URL(string: urlStr), let d = await Self.fetchImageData(url) else { return nil }
-        try? d.write(to: file, options: .atomic)   // torn write 방지 — 크래시/강제종료 시 손상 캐시가 남지 않게
+        guard let url = Self.spriteURL(speciesID: speciesID, animated: animated, shiny: shiny, facing: facing, form: form),
+              let d = await Self.fetchImageData(url) else { return nil }
+        try? d.write(to: file, options: .atomic)   // torn write 방지: 크래시/강제종료 시 손상 캐시가 남지 않게
         remember(key, d)
         return d
+    }
+
+    static let spriteBase = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon"
+
+    /// PokeAPI names form GIFs `201-b`/`492-sky`; static PNGs of separate varieties use the variety id.
+    static func spriteURL(speciesID: Int, animated: Bool, shiny: Bool, facing: SpriteFacing = .front,
+                          form: PokemonForm? = nil) -> URL? {
+        let backSegment = facing == .back ? "back/" : ""
+        let name = animated ? PokemonForm.assetName(speciesID: speciesID, form: form)
+                            : PokemonForm.staticAssetName(speciesID: speciesID, form: form)
+        let urlStr: String
+        switch (animated, shiny) {
+        case (true, false):  urlStr = "\(spriteBase)/versions/generation-v/black-white/animated/\(backSegment)\(name).gif"
+        case (true, true):   urlStr = "\(spriteBase)/versions/generation-v/black-white/animated/\(backSegment)shiny/\(name).gif"
+        case (false, false): urlStr = "\(spriteBase)/\(backSegment)\(name).png"
+        case (false, true):  urlStr = "\(spriteBase)/\(backSegment)shiny/\(name).png"
+        }
+        return URL(string: urlStr)
     }
 
     /// Animated GIF data that keeps retrying while the download fails (offline, a dropped
@@ -95,13 +110,13 @@ actor SpriteStore {
     /// its own loop, so a long outage would cost 120 requests an hour each. Returns nil when the
     /// caller's task is cancelled or the species has no animated sprite.
     func recoveringAnimatedData(
-        speciesID: Int, shiny: Bool, facing: SpriteFacing = .front,
+        speciesID: Int, shiny: Bool, facing: SpriteFacing = .front, form: PokemonForm? = nil,
         wait: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) async -> Data? {
         guard PokemonAssets.hasAnimatedSprite(speciesID: speciesID) else { return nil }
         return await Self.retrying(wait: wait) {
-            if let gif = await data(speciesID: speciesID, animated: true, shiny: shiny, facing: facing) { return gif }
-            return shiny ? await data(speciesID: speciesID, animated: true, shiny: false, facing: facing) : nil
+            if let gif = await data(speciesID: speciesID, animated: true, shiny: shiny, facing: facing, form: form) { return gif }
+            return shiny ? await data(speciesID: speciesID, animated: true, shiny: false, facing: facing, form: form) : nil
         }
     }
 
@@ -187,29 +202,33 @@ enum SpriteLoader {
 
     /// 디스크 캐시에 이미 있으면 동기 반환(네트워크 없음). 없으면 nil.
     /// shiny 캐시 미스는 일반 캐시로 폴백 — 오프라인에서 live mon 이 알 글리프로 보이는 것 방지.
-    static func cachedImage(speciesID: Int, animated: Bool = false, shiny: Bool = false, facing: SpriteFacing = .front) -> NSImage? {
+    static func cachedImage(speciesID: Int, animated: Bool = false, shiny: Bool = false, facing: SpriteFacing = .front,
+                            form: PokemonForm? = nil) -> NSImage? {
         let ext = animated ? "gif" : "png"
-        let key = SpriteStore.cacheKey(speciesID: speciesID, animated: animated, shiny: shiny, facing: facing)
+        let key = SpriteStore.cacheKey(speciesID: speciesID, animated: animated, shiny: shiny, facing: facing, form: form)
         let f = cacheDir.appendingPathComponent("\(key).\(ext)")
         if let d = try? Data(contentsOf: f), let img = NSImage(data: d) { return img }
         guard shiny else { return nil }
-        return cachedImage(speciesID: speciesID, animated: animated, shiny: false, facing: facing)
+        return cachedImage(speciesID: speciesID, animated: animated, shiny: false, facing: facing, form: form)
     }
 
     /// 정적 스프라이트. animated=true 면 Gen-V 움직이는 스프라이트(없으면 정적으로 폴백).
     /// shiny=true 는 색이 다른 스프라이트 — 미제공 종이면 일반으로 폴백.
-    static func image(speciesID: Int, animated: Bool = false, shiny: Bool = false, facing: SpriteFacing = .front) async -> NSImage? {
-        if animated, let d = await SpriteStore.shared.data(speciesID: speciesID, animated: true, shiny: shiny, facing: facing),
+    static func image(speciesID: Int, animated: Bool = false, shiny: Bool = false, facing: SpriteFacing = .front,
+                      form: PokemonForm? = nil) async -> NSImage? {
+        if animated, let d = await SpriteStore.shared.data(speciesID: speciesID, animated: true, shiny: shiny, facing: facing, form: form),
            let img = NSImage(data: d) {
             return img
         }
-        if let d = await SpriteStore.shared.data(speciesID: speciesID, animated: false, shiny: shiny, facing: facing),
+        if let d = await SpriteStore.shared.data(speciesID: speciesID, animated: false, shiny: shiny, facing: facing, form: form),
            let img = NSImage(data: d) {
             return img
         }
         // shiny 미제공 → 일반 폴백
-        guard shiny else { return nil }
-        return await image(speciesID: speciesID, animated: animated, shiny: false, facing: facing)
+        if shiny { return await image(speciesID: speciesID, animated: animated, shiny: false, facing: facing, form: form) }
+        // A form missing from the sprite set (some back sprites) shows the species' default look.
+        guard !PokemonForm.isDefault(PokemonForm.resolved(speciesID: speciesID, form: form), speciesID: speciesID) else { return nil }
+        return await image(speciesID: speciesID, animated: animated, facing: facing)
     }
 
     /// 아이템 스프라이트 — 디스크 캐시 동기 조회(없으면 nil). 아이콘 즉시 표시용(재렌더 플래시 방지).

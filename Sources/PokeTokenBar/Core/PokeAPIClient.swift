@@ -145,6 +145,17 @@ actor PokeAPIClient: PokeProviding {
         return byLang
     }
 
+    /// Localized form names (`pokemon-form/{id}` `form_names`), langCode → name. Nil on failure.
+    private var formNamesCache: [Int: [String: String]] = [:]
+    func formNames(formID id: Int) async -> [String: String]? {
+        if let cached = formNamesCache[id] { return cached }
+        guard let dto: FormDTO = try? await get(base.appendingPathComponent("pokemon-form/\(id)")) else { return nil }
+        var byLang: [String: String] = [:]
+        for n in dto.form_names where langCodes.contains(n.language.name) { byLang[n.language.name] = n.name }
+        formNamesCache[id] = byLang
+        return byLang
+    }
+
     /// Same `pokemon-species` response as genus/flavorText, so a cache hit costs no network.
     func speciesNames(speciesID id: Int) async throws -> [String: String] {
         let sp = try await species(id)
@@ -723,6 +734,7 @@ struct MoveDTO: Decodable, Sendable {
 }
 struct FlavorTextDTO: Decodable, Sendable { let flavor_text: String; let language: NamedRef; let version_group: NamedRef }
 struct NameDTO: Decodable, Sendable { let name: String; let language: NamedRef }
+struct FormDTO: Decodable, Sendable { let form_names: [NameDTO] }
 struct NamedRef: Decodable, Sendable { let name: String; let url: String? }
 struct URLRef: Decodable, Sendable { let url: String }
 struct ChainDTO: Decodable, Sendable { let chain: ChainLink }

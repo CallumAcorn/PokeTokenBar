@@ -95,7 +95,7 @@ struct RosterPickerGrid: View {
     private func tile(_ mon: MonState, selected: Bool, size: CGFloat) -> some View {
         Button { toggle(mon.id) } label: {
             VStack(spacing: 1) {
-                SpriteView(speciesID: mon.currentID, size: size, shiny: mon.isShiny)
+                SpriteView(speciesID: mon.currentID, size: size, shiny: mon.isShiny, form: mon.form)
                 // Always a real name, never async — every mon here is owned by this trainer, so
                 // it's already dex-unlocked (unlike TradeView's counterpart column, which needs
                 // CompanionStore.resolvedSpeciesName's network fallback for an unseen species).

@@ -659,7 +659,7 @@ private struct CompatiblePCMonBadge: View {
 
     var body: some View {
         VStack(spacing: 1) {
-            SpriteView(speciesID: mon.currentID, size: 32, shiny: mon.isShiny)
+            SpriteView(speciesID: mon.currentID, size: 32, shiny: mon.isShiny, form: mon.form)
                 .frame(width: 32, height: 32)
             Text(name ?? "#\(mon.currentID)")
                 .font(.system(size: 8))

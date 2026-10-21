@@ -410,4 +410,29 @@ final class UsageRecapRenderingTests: XCTestCase {
             }
         }
     }
+
+    func testTheGraduateStripCarriesTheUnownLetterAndOnlyTheSpriteOfOtherForms() throws {
+        let unown = DexEntry(id: "unown-q", baseID: PokemonForm.unownSpeciesID, finalID: PokemonForm.unownSpeciesID,
+                             chainOrder: [PokemonForm.unownSpeciesID], rarity: .rare, caughtAt: date(2026, 9, 17),
+                             names: [PokemonForm.unownSpeciesID: ["en": "Unown"]], form: PokemonForm("q"))
+        let wormadam = DexEntry(id: "wormadam-sandy", baseID: 412, finalID: 413, chainOrder: [412, 413],
+                                rarity: .common, caughtAt: date(2026, 9, 16),
+                                names: [413: ["en": "Wormadam"]], form: PokemonForm("sandy"))
+        let dexJSON = String(decoding: try JSONEncoder().encode([unown, wormadam]), as: UTF8.self)
+        try Data(#"{"installBaselineSet":true,"usedSinceInstall":1000,"lastDate":"d","language":"en","dex":\#(dexJSON)}"#.utf8)
+            .write(to: url)
+        let suite = "recap-forms-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let content = RecapContent(store: UsageStore(providers: [], autoRefresh: false, defaults: defaults),
+                                   companion: CompanionStore(fileURL: url),
+                                   scope: .week, offset: 0, now: now, calendar: calendar())
+
+        let graduate = try XCTUnwrap(content.graduates.first { $0.entry.id == "unown-q" })
+        XCTAssertEqual(graduate.entry.form, PokemonForm("q"), "the strip would otherwise draw the default A sprite")
+        XCTAssertEqual(graduate.name, "Unown [Q]")
+        let cloaked = try XCTUnwrap(content.graduates.first { $0.entry.id == "wormadam-sandy" })
+        XCTAssertEqual(cloaked.entry.form, PokemonForm("sandy"))
+        XCTAssertEqual(cloaked.name, "Wormadam", "a form name does not fit a quarter-row chip")
+    }
 }

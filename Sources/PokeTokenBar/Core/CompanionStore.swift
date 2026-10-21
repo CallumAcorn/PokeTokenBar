@@ -108,7 +108,7 @@ final class CompanionStore {
     var currentIsShiny: Bool {
         // 대표 종이 고정돼 있으면 그 종의 이로치 보유 여부를 따른다 — 개체가 아니라 종 단위 선택이라
         // 훈련 중인 개체의 이로치와는 무관하다.
-        if let rep = state.representativeSpeciesID { return state.ownsShinySpecies(rep) }
+        if let rep = state.representativeSpeciesID { return ownsShinyForm(speciesID: rep, form: state.representativeForm) }
         return trainingIsShiny
     }
     /// Shiny state of the Pokémon actually being trained, ignoring the menu-bar pin. The Home card and
@@ -129,7 +129,43 @@ final class CompanionStore {
 
     var displayName: String {
         guard let a = trainingMon, let line = currentLine else { return "Token Egg" }
-        return line.localizedName(a.currentID, state.language)
+        return formDisplayName(line.localizedName(a.currentID, state.language), speciesID: a.currentID, form: a.form)
+    }
+
+    /// `name` with the form label appended where the form needs naming ("Unown B", "Burmy (Sandy Cloak)").
+    func formDisplayName(_ name: String, speciesID: Int, form: PokemonForm?) -> String {
+        PokemonForm.displayName(name, speciesID: speciesID, form: form, language: state.language)
+    }
+
+    /// Form of the Pokémon being trained, resolved for its current stage.
+    var trainingForm: PokemonForm? {
+        guard let a = trainingMon else { return nil }
+        return PokemonForm.resolved(speciesID: a.currentID, form: a.form)
+    }
+
+    /// Form the menu bar draws: the pinned appearance, otherwise the trained Pokémon's.
+    var currentForm: PokemonForm? {
+        if let rep = state.representativeSpeciesID { return PokemonForm.resolved(speciesID: rep, form: state.representativeForm) }
+        return trainingForm
+    }
+
+    /// Collected forms of a species in catalogue order. Empty for species without forms.
+    func collectedForms(speciesID: Int) -> [PokemonForm] {
+        let owned = state.collectedForms(speciesID: speciesID)
+        return PokemonForm.forms(speciesID: speciesID).filter { owned.contains($0) }
+    }
+
+    /// Whether this exact appearance has been owned shiny (a disguised Ditto's shine stays hidden).
+    func ownsShinyForm(speciesID: Int, form: PokemonForm?) -> Bool {
+        guard PokemonForm.hasForms(speciesID: speciesID) else { return state.ownsShinySpecies(speciesID) }
+        let form = PokemonForm.resolved(speciesID: speciesID, form: form)
+        if state.dex.contains(where: { $0.isShiny && $0.chainOrder.contains(speciesID)
+            && PokemonForm.resolved(speciesID: speciesID, form: $0.form) == form }) { return true }
+        return state.party.contains { mon in
+            mon.isShiny && !(mon.dittoDisguise != nil && !mon.dittoRevealed)
+                && mon.reachedPathIDs.contains(speciesID)
+                && PokemonForm.resolved(speciesID: speciesID, form: mon.form) == form
+        }
     }
     /// 메뉴바가 그릴 종. 대표 종이 고정돼 있으면 그것, 아니면 훈련 중인 개체(없으면 알 → nil).
     /// 메뉴바 스프라이트와 애니메이션이 전부 이 한 지점을 지나므로 고정도 여기 한 곳에서 끝난다.
@@ -141,13 +177,19 @@ final class CompanionStore {
 
     /// 고정된 대표 종(없으면 nil) — UI 가 "고정 중" 상태를 표시·해제할 때 읽는다.
     var representativeSpeciesID: Int? { state.representativeSpeciesID }
+    var representativeForm: PokemonForm? { state.representativeForm }
 
     /// 대표 종 고정. 보유하지 않은 종은 무시한다 — 도감에서만 고르게 되어 있지만, 고정 지점에서
     /// 한 번 더 막아야 손편집 세이브나 향후 호출부가 유령 종을 메뉴바에 남길 수 없다.
     @discardableResult
-    func setRepresentative(_ speciesID: Int) -> Bool {
+    func setRepresentative(_ speciesID: Int, form: PokemonForm? = nil) -> Bool {
         guard state.ownsSpecies(speciesID) else { return false }
+        // Only an appearance this save has collected. Without one named, the first collected form.
+        let collected = collectedForms(speciesID: speciesID)
+        let form = form.flatMap { PokemonForm.resolved(speciesID: speciesID, form: $0) } ?? collected.first
+        if let form, !collected.contains(form) { return false }
         state.representativeSpeciesID = speciesID
+        state.representativeForm = form
         save()
         return true
     }
@@ -156,6 +198,7 @@ final class CompanionStore {
     func clearRepresentative() {
         guard state.representativeSpeciesID != nil else { return }
         state.representativeSpeciesID = nil
+        state.representativeForm = nil
         save()
     }
     var isFinalStage: Bool {
@@ -745,7 +788,7 @@ final class CompanionStore {
                 state.collectedFinals.insert("\(a.baseID):\(a.currentID)")
                 unlockSpecies(a.currentID, baseID: a.baseID, rarity: a.rarity, isShiny: trainingIsShiny, line: line)
                 syncTrainingDexEntry(monID: a.id, line: line)
-                let name = line.localizedName(a.currentID, state.language)
+                let name = formDisplayName(line.localizedName(a.currentID, state.language), speciesID: a.currentID, form: a.form)
                 justGraduated = name
                 notifyCompanionEvent(l.notifGraduateTitle, l.notifGraduateBody(name))
                 eventUntil = clock().addingTimeInterval(6)
@@ -771,7 +814,8 @@ final class CompanionStore {
                 state.party[idx].usedAtStage = a.usedAtStage - thr   // 초과분 이월
                 unlockSpecies(next.speciesID, baseID: a.baseID, rarity: a.rarity, isShiny: trainingIsShiny, line: line)
                 syncTrainingDexEntry(monID: a.id, line: line)
-                let newName = line.localizedName(next.speciesID, state.language)
+                let newName = formDisplayName(line.localizedName(next.speciesID, state.language),
+                                              speciesID: next.speciesID, form: a.form)
                 justEvolvedTo = newName
                 fireCelebration(.evolve)
                 // 짧은 levelUp 창 — 진화 순간 "…(으)로 진화했어요" 문구 노출(hatch/graduate 와 동일 패턴).
@@ -802,6 +846,7 @@ final class CompanionStore {
         guard let mon = state.party.first(where: { $0.id == monID }) else { return }
         state.dex[idx].chainOrder = mon.pathIDs
         state.dex[idx].finalID = mon.currentID
+        state.dex[idx].form = mon.form
         state.dex[idx].names = Dictionary(uniqueKeysWithValues:
             mon.pathIDs.compactMap { id in line.names[id].map { (id, $0) } })
         if trainingIsShiny { state.dex[idx].isShiny = true }
@@ -882,6 +927,7 @@ final class CompanionStore {
         state.eggUsage = 0   // 새 알은 처음부터 인큐베이션
         state.eggTier = tier
         state.pendingHatchID = nil
+        state.pendingForm = nil
         state.pendingDayCareEgg = nil   // "Hatch this egg" sets it again right after, for a Day Care egg
         prefetchedLineID = nil
         // "알을 받는 순간" 즉시 프리패칭 시작 — 다음 부화의 종·라인·스프라이트 예열.
@@ -1194,6 +1240,7 @@ final class CompanionStore {
         if state.trainingSlotID == nil, state.pendingDayCareEgg == nil {
             activeGeneration += 1
             state.pendingHatchID = nil
+            state.pendingForm = nil
             prefetchedLineID = nil
             Task { await self.ensureEggPrefetch() }
         }
@@ -1783,7 +1830,7 @@ final class CompanionStore {
         state.dex.append(DexEntry(baseID: incoming.baseID, finalID: incoming.currentID, chainOrder: [incoming.currentID],
                                   rarity: incoming.rarity, caughtAt: clock(), isShiny: effectiveShiny,
                                   nature: incoming.nature, names: nil, monID: incoming.id,
-                                  source: .trade(from: displayName)))
+                                  source: .trade(from: displayName), form: incoming.form))
         save()
         return true
     }
@@ -1942,8 +1989,10 @@ final class CompanionStore {
             kickLineLoadIfNeeded()
             return
         }
+        let pendingForm = state.pendingHatchID == base ? state.pendingForm : nil
         state.pendingHatchID = nil
-        await hatchCore(baseID: base)
+        state.pendingForm = nil
+        await hatchCore(baseID: base, form: pendingForm)
     }
 
     /// 부화가 폐기된 뒤 남은 개체(대개 방금 불러온 개체)의 진화 라인을 다시 로드한다.
@@ -1971,6 +2020,7 @@ final class CompanionStore {
 
         if state.pendingHatchID == nil, let dayCareEgg = state.pendingDayCareEgg {
             state.pendingHatchID = dayCareEgg.babySpeciesID
+            state.pendingForm = rollLineForm(baseID: dayCareEgg.babySpeciesID)
         }
         if state.pendingHatchID == nil {
             guard let id = await chooseBase() else { return }   // 오프라인 → 다음 틱 재시도
@@ -1978,6 +2028,7 @@ final class CompanionStore {
             // 이 롤을 버린다 — 안 그러면 불러온 알의 pre-roll 을 남의 롤로 덮어쓴다.
             guard state.trainingSlotID == nil, activeGeneration == generation else { return }
             state.pendingHatchID = id
+            state.pendingForm = rollLineForm(baseID: id)
             save()
         }
         guard let id = state.pendingHatchID, prefetchedLineID != id else { return }
@@ -1985,18 +2036,30 @@ final class CompanionStore {
         // 스프라이트 예열 — 부화 직후 보일 것들: base 정적+애니메이션, shiny 롤(1/64) 대비 shiny 애니메이션.
         // .app 번들에서만(단위 테스트가 실네트워크에 닿지 않도록 — 알림과 동일한 게이트).
         if AppEnv.isBundledApp {
-            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: false, shiny: false)
-            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: true, shiny: false)
-            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: true, shiny: true)
+            let form = state.pendingForm
+            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: false, shiny: false, form: form)
+            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: true, shiny: false, form: form)
+            _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: true, shiny: true, form: form)
+            if PokemonForm.hasForms(speciesID: line.baseID) {
+                _ = await SpriteStore.shared.data(speciesID: line.baseID, animated: false, shiny: true, form: form)
+            }
+            if form != nil { await loadFormNames(baseID: line.baseID) }
         }
         prefetchedLineID = id
     }
 
-    func hatch(baseID: Int) async {
+    /// Draws only for lines with forms, so other species keep their random sequence.
+    private func rollLineForm(baseID: Int) -> PokemonForm? {
+        let forms = PokemonForm.lineForms(baseID: baseID)
+        guard !forms.isEmpty else { return nil }
+        return PokemonForm.roll(rng.next(), among: forms, collected: state.collectedLineForms(baseID: baseID))
+    }
+
+    func hatch(baseID: Int, form: PokemonForm? = nil) async {
         guard !isHatching else { return }
         isHatching = true
         defer { isHatching = false }
-        await hatchCore(baseID: baseID)
+        await hatchCore(baseID: baseID, form: form)
     }
 
     // MARK: 메타몽 위장/리빌
@@ -2039,7 +2102,7 @@ final class CompanionStore {
     }
 
     /// 실제 부화 로직 — isHatching 락은 호출자(hatch / hatchIfNeeded)가 소유·해제한다.
-    private func hatchCore(baseID: Int) async {
+    private func hatchCore(baseID: Int, form pendingForm: PokemonForm? = nil) async {
         let generation = activeGeneration
         guard let line = try? await provider.line(baseSpeciesID: baseID) else {
             AppLog.write("hatch: line fetch failed for base \(baseID) — egg kept, retry next tick")
@@ -2069,6 +2132,7 @@ final class CompanionStore {
         if let tier = state.eggTier, line.rarity.sortRank < tier.sortRank {
             AppLog.write("hatch: rolled \(line.rarity) below guaranteed \(tier) — discarded, re-roll next tick")
             state.pendingHatchID = nil
+            state.pendingForm = nil
             prefetchedLineID = nil
             save()
             return
@@ -2112,13 +2176,16 @@ final class CompanionStore {
                                                hiddenAbilityParent: dayCareEgg.hiddenAbilityParent, draw: { rng.next() })
         }
         let gender = genderRate.map { Gender.roll(genderRate: $0, roll: rng.next()) }
+        // Last draw, and only for lines with forms, so seeded sequences of every other roll hold.
+        // `resolved` maps nil to the default form, so only a prepared form goes through it.
+        let form = pendingForm.flatMap { PokemonForm.resolved(baseID: line.baseID, form: $0) } ?? rollLineForm(baseID: line.baseID)
         // 위장 중엔 이로치를 숨긴다 — 부화 알림·연출도 일반체로(정체는 리빌 때 공개).
         let showShiny = isShiny && dittoDisguise == nil
         activeGeneration += 1
         let newMon = MonState(baseID: line.baseID, pathIDs: [line.baseID], plannedPathIDs: evolutionPlan,
                               stageIndex: 0, usedAtStage: 0, rarity: line.rarity, totalForms: evolutionPlan.count,
                               isShiny: isShiny, nature: nature, ability: ability, ivs: ivs, dittoDisguise: dittoDisguise,
-                              acquiredAt: clock(), acquiredVia: .egg, knownMoves: inheritedMoves, gender: gender)
+                              acquiredAt: clock(), acquiredVia: .egg, knownMoves: inheritedMoves, gender: gender, form: form)
         state.pendingDayCareEgg = nil
         state.party.append(newMon)
         carryFloatingToNewTraining(from: state.trainingSlotID, to: newMon.id)
@@ -2127,9 +2194,9 @@ final class CompanionStore {
         state.dex.append(DexEntry(baseID: line.baseID, finalID: line.baseID, chainOrder: [line.baseID],
                                   rarity: line.rarity, caughtAt: clock(), isShiny: showShiny, nature: nature,
                                   names: line.names[line.baseID].map { [line.baseID: $0] },
-                                  monID: newMon.id, source: .egg))
+                                  monID: newMon.id, source: .egg, form: newMon.form))
         AppLog.write("hatch: base=\(line.baseID) rarity=\(line.rarity) shiny=\(isShiny) forms=\(evolutionPlan.count) ditto=\(dittoDisguise != nil) dayCare=\(dayCareEgg != nil)")
-        let name = line.localizedName(line.baseID, state.language)
+        let name = formDisplayName(line.localizedName(line.baseID, state.language), speciesID: line.baseID, form: newMon.form)
         notifyCompanionEvent(showShiny ? l.notifShinyHatchTitle : l.notifHatchTitle,
                              showShiny ? l.notifShinyHatchBody(name) : l.notifHatchBody(name))
         justEvolvedTo = nil        // 새 부화는 "성장" 문구(진화 아님) — 직전 진화명이 남아 표시되지 않게
@@ -2172,6 +2239,7 @@ final class CompanionStore {
         m.totalForms = evolutionPlan.count
         m.usedAtStage = carryOver
         m.dittoRevealed = true
+        m.form = PokemonForm.resolved(baseID: dittoLine.baseID, form: m.form)
         let shiny = m.isShiny
         let monID = m.id
         mutateTraining { $0 = m }
@@ -2216,7 +2284,15 @@ final class CompanionStore {
             currentLine = line
             save()   // 마이그레이션 선택을 사용량 재평가 전에 영속화해 재시작마다 다시 롤리지 않는다.
             if catchUp { applyUsage(0) }   // 라인 미로딩 동안 적립된 사용량이 임계를 넘었으면 지금 진화 판정
+            if latest.form != nil { await loadFormNames(baseID: line.baseID) }
         }
+    }
+
+    /// Warms the localized form names the title, evolution and graduation messages of a line show.
+    /// App bundle only, like sprite prefetch, so unit tests never reach the network.
+    func loadFormNames(baseID: Int) async {
+        guard AppEnv.isBundledApp else { return }
+        for speciesID in PokemonForm.formSpecies(baseID: baseID) { await FormNameStore.shared.load(speciesID: speciesID) }
     }
 
     /// 부화 종 선정 — 하드코딩 풀 없이 PokéAPI 1~5세대 base 전체(329종)에서 가중 선택.

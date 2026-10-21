@@ -549,7 +549,8 @@ struct FloatingPetView: View {
             SpriteView(speciesID: mon?.currentID, size: size, animated: animated,
                        shiny: mon?.isShiny ?? false,
                        facing: (mon?.isBackFacing ?? false) ? .back : .front,
-                       minFrameDelay: store.animationQuality.frameFloor)
+                       minFrameDelay: store.animationQuality.frameFloor,
+                       form: mon?.form)
                 .frame(width: size, height: size)
                 .scaleEffect(x: (mon?.isMirrored ?? false) ? -1 : 1, y: 1)
                 .zIndex(0)

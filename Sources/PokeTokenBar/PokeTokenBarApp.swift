@@ -182,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         withObservationTracking {
             _ = companion.currentSpeciesID
             _ = companion.currentIsShiny
+            _ = companion.currentForm
             _ = store.animationQuality
         } onChange: { [weak self] in
             Task { @MainActor in
@@ -340,7 +341,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func ensureMenuAnimation() {
         let id = companion.currentSpeciesID
         let shiny = companion.currentIsShiny
-        let key = id.map { Self.menuSpriteKey(id: $0, shiny: shiny, floor: menuFrameFloor) }
+        let form = companion.currentForm
+        let key = id.map { Self.menuSpriteKey(id: $0, shiny: shiny, floor: menuFrameFloor, form: form) }
         if key == menuSpriteKey, !menuFrames.isEmpty { return }   // 이미 이 개체로 애니메이션 중
         menuSpriteKey = key
         menuLoadGen += 1
@@ -351,13 +353,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
         // 정적 스프라이트 bob 을 먼저(없으면 받아와서). GIF 가 받아지면 아래에서 교체.
-        if let cached = SpriteLoader.cachedImage(speciesID: id, shiny: shiny) {
+        if let cached = SpriteLoader.cachedImage(speciesID: id, shiny: shiny, form: form) {
             setMenuFrames(Self.bobFrames(from: cached))
         } else {
             setMenuFrames(Self.eggFrames())
             Task { @MainActor [weak self] in
                 guard let self, gen == self.menuLoadGen,
-                      let sprite = await SpriteLoader.image(speciesID: id, shiny: shiny) else { return }
+                      let sprite = await SpriteLoader.image(speciesID: id, shiny: shiny, form: form) else { return }
                 guard gen == self.menuLoadGen else { return }
                 self.setMenuFrames(Self.bobFrames(from: sprite))
             }
@@ -369,7 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         menuAnimationTask = Task { @MainActor [weak self] in
             guard let self, gen == self.menuLoadGen else { return }
             // shiny GIF 미제공 종이면 일반 GIF 폴백
-            guard let data = await SpriteStore.shared.recoveringAnimatedData(speciesID: id, shiny: shiny),
+            guard let data = await SpriteStore.shared.recoveringAnimatedData(speciesID: id, shiny: shiny, form: form),
                   gen == self.menuLoadGen else { return }
             let raw = GIFDecoder.frames(from: data)
             guard raw.count > 1, gen == self.menuLoadGen else { return }
@@ -521,8 +523,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// **하한(fps 설정)이 반드시 들어가야 한다.** 프레임은 하한에 맞춰 솎아낸 결과물이라, 키가
     /// 종·이로치만 담으면 설정을 바꿔도 다음 진화까지 옛 fps 로 계속 돈다(설계 시 확인된 함정).
     /// 순수·테스트용: `testIdentityKeysIncludeTheFrameFloor`.
-    static func menuSpriteKey(id: Int, shiny: Bool, floor: TimeInterval) -> String {
-        "\(id)-\(shiny)-\(floor)"
+    /// The form is part of it too: pinning another Unown letter keeps the species and shine.
+    static func menuSpriteKey(id: Int, shiny: Bool, floor: TimeInterval, form: PokemonForm? = nil) -> String {
+        "\(PokemonForm.assetName(speciesID: id, form: form))-\(shiny)-\(floor)"
     }
 
     // MARK: 프레임 합성 (22px)

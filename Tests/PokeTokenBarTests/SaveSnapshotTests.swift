@@ -59,6 +59,24 @@ final class SaveSnapshotTests: XCTestCase {
         XCTAssertEqual(store.availableSnapshots.first?.id, snapshot.id)
     }
 
+    /// Upstream dc6de418: a backup's thumbnail shows the trained Pokémon's appearance, both in the
+    /// summary returned on creation and in the listing read back from disk.
+    func testSnapshotSummaryCarriesTheTrainedForm() throws {
+        let url = tempURL("form")
+        var state = sampleState(tokens: 1_000, dexCount: 1)
+        let burmy = MonState(baseID: 412, pathIDs: [412, 413], stageIndex: 1, usedAtStage: 0, rarity: .common,
+                             totalForms: 2, form: PokemonForm("sandy"))
+        state.party = [burmy]
+        state.trainingSlotID = burmy.id
+        try JSONEncoder().encode(state).write(to: url)
+        let store = CompanionStore(provider: OfflineProvider(), clock: { self.baseNow }, fileURL: url)
+
+        let snapshot = try store.createManualSnapshot()
+        XCTAssertEqual(snapshot.currentSpeciesID, 413)
+        XCTAssertEqual(snapshot.currentForm, PokemonForm("sandy"))
+        XCTAssertEqual(store.availableSnapshots.first?.currentForm, PokemonForm("sandy"))
+    }
+
     func testSnapshotPruningKeepsAtMostTen() throws {
         let url = tempURL("pruning")
         let state = sampleState(tokens: 20_000, dexCount: 2)

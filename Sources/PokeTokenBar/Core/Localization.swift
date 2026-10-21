@@ -754,6 +754,18 @@ struct L {
 
     // MARK: 도감 요약 헤더
     var openInPokedex: String { t("도감에서 보기", "Open in Pokédex", "図鑑で見る", "Ver en la Pokédex", "Voir dans le Pokédex", "Ver na Pokédex") }
+    /// The usual look of Castform, Rotom, Kyurem and Genesect, which have no official form name.
+    var normalForm: String { t("일반 폼", "Normal Form", "ノーマルフォルム", "Forma normal", "Forme normale", "Forma normal") }
+    func formsCollected(_ count: Int, of total: Int) -> String {
+        t("폼 \(count)/\(total)", "Forms \(count)/\(total)", "フォルム \(count)/\(total)",
+          "Formas \(count)/\(total)", "Formes \(count)/\(total)", "Formas \(count)/\(total)")
+    }
+    /// Stats, types and moves come from the species' default form; only the look changes.
+    var defaultFormDataNote: String {
+        t("정보는 기본 폼 기준", "Data uses the default form", "データは基本フォルムに基づきます",
+          "Datos de la forma predeterminada", "Données de la forme par défaut", "Dados da forma padrão")
+    }
+    var chooseForm: String { t("폼 선택", "Choose form", "フォルムを選択", "Elegir forma", "Choisir une forme", "Escolher forma") }
     var dexTitle: String { t("도감", "Pokédex", "図鑑", "Pokédex", "Pokédex", "Pokédex") }
     func dexTotal(_ n: Int) -> String { t("총 \(n)마리", "\(n) total", "全\(n)匹", "\(n) en total", "\(n) au total", "\(n) no total") }
     /// 포획 로그 = 개체 단위 기록(같은 라인 중복이 정상). 도감 = 종 단위 집계.

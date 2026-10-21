@@ -722,10 +722,12 @@ final class SaveTransferTests: XCTestCase {
         // gymBadges = same class as ownedTMs — earned by beating a battle opponent, travels with the save.
         // dayCare/pendingDayCareEgg = progress — paid-for eggs and their parents' traits, same class as
         // eggUsage/pendingHatchID. Both point at party members, which travel with them.
+        // pendingForm/representativeForm = progress, each the other half of pendingHatchID /
+        // representativeSpeciesID; sanitized() resolves both against their species.
         let progress: Set<String> = ["usedSinceInstall", "spentTokens", "eggUsage", "eggTier", "eggRegion",
-                                     "pendingHatchID", "party", "trainingSlotID", "dexUnlocked",
-                                     "dex", "collectedFinals", "inventory", "representativeSpeciesID", "ownedTMs",
-                                     "gymBadges", "dayCare", "pendingDayCareEgg"]
+                                     "pendingHatchID", "pendingForm", "party", "trainingSlotID", "dexUnlocked",
+                                     "dex", "collectedFinals", "inventory", "representativeSpeciesID",
+                                     "representativeForm", "ownedTMs", "gymBadges", "dayCare", "pendingDayCareEgg"]
         let deviceLedger: Set<String> = ["installBaselineSet", "claimedTodayTokensByProvider", "lastDate"]
         // candyGrantResetAt = candyGrantTier 와 한 쌍(같은 창의 지급 상태) — 분류가 갈리면 이전 후
         // tier 만 남아 재무장 증거가 사라진다.
