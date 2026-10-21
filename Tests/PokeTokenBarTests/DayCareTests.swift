@@ -576,4 +576,32 @@ final class DayCareTests: XCTestCase {
         st.trainingSlotID = nil
         XCTAssertEqual(SaveTransfer.sanitized(st).pendingHatchID, 1, "the egg keeps its parents' species")
     }
+
+    /// A baby species outside 1-649 decodes fine but can never hatch: the egg would sit in the active
+    /// slot retrying a failing PokéAPI lookup forever. It loads as an ordinary egg, and an incubating
+    /// slot carrying one is cancelled like any other slot that couldn't come from play.
+    func testSanitizeDropsABabyOutsideTheSupportedSpecies() {
+        func traits(_ baby: Int) -> InheritedTraits {
+            InheritedTraits(babySpeciesID: baby, parentIVs: [StatSpread(), StatSpread()], inheritedIVCount: 3,
+                            everstoneNature: nil, hiddenAbilityParent: false, parentMoves: [], masuda: false)
+        }
+        var st = CompanionState()
+        st.party = [Self.mon("a", base: 1, gender: .female), Self.mon("b", base: 4, gender: .male)]
+        for bad in [0, -1, 650, 99_999] {
+            st.pendingDayCareEgg = traits(bad)
+            let cleaned = SaveTransfer.sanitized(st)
+            XCTAssertNil(cleaned.pendingDayCareEgg, "baby #\(bad)")
+            XCTAssertNil(cleaned.pendingHatchID, "baby #\(bad)")
+
+            st.pendingDayCareEgg = nil
+            st.dayCare = [DayCareSlot(slot: 0, parentIDs: ["a", "b"], traits: traits(bad), babyRarity: .rare,
+                                      target: 10, usedDestinyKnot: true)]
+            let slots = SaveTransfer.sanitized(st)
+            XCTAssertTrue(slots.dayCare.isEmpty, "slot with baby #\(bad)")
+            XCTAssertEqual(slots.inventory[ItemKind.destinyKnot.rawValue], 1, "item refunded for baby #\(bad)")
+            st.dayCare = []
+        }
+        st.pendingDayCareEgg = traits(649)
+        XCTAssertEqual(SaveTransfer.sanitized(st).pendingHatchID, 649, "the last supported species still hatches")
+    }
 }

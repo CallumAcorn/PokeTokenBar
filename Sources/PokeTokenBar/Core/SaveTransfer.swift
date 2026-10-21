@@ -203,6 +203,7 @@ enum SaveTransfer {
             let valid = (0..<slotCount).contains(slot.slot) && !usedSlots.contains(slot.slot)
                 && parents.count == 2 && Set(parents).count == 2 && parents.allSatisfy(partyIDs.contains)
                 && slot.traits.parentIVs.count == 2
+                && PokemonAssets.animatedSpeciesIDs.contains(slot.traits.babySpeciesID)
                 && (slot.isReady || (!parents.contains { $0 == s.trainingSlotID } && lockedParents.isDisjoint(with: parents)))
             guard valid else {
                 if slot.usedDestinyKnot { s.inventory[ItemKind.destinyKnot.rawValue, default: 0] += 1 }
@@ -262,6 +263,12 @@ enum SaveTransfer {
         // 알이 그 pre-roll 로 부화해, 아무도 사지 않은 프리미엄 결과가 나온다.
         if s.trainingSlotID != nil { s.eggTier = nil; s.pendingHatchID = nil; s.pendingDayCareEgg = nil }
         // A Day Care egg in the active slot hatches its parents' species — keep the pre-roll pointing there.
+        // A baby outside the supported species can never hatch: the egg would sit in the active slot
+        // and retry a failing PokéAPI lookup on every tick. It falls back to an ordinary egg.
+        if let dayCareEgg = s.pendingDayCareEgg, !PokemonAssets.animatedSpeciesIDs.contains(dayCareEgg.babySpeciesID) {
+            s.pendingDayCareEgg = nil
+            s.pendingHatchID = nil
+        }
         if let dayCareEgg = s.pendingDayCareEgg {
             s.pendingDayCareEgg = sanitizedTraits(dayCareEgg)
             s.pendingHatchID = dayCareEgg.babySpeciesID
