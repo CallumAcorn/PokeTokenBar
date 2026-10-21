@@ -27,6 +27,18 @@ read_when:
   remains intentionally scoped to current activity. Preserve carriers during phase 1 to avoid
   hiding the chart between refresh phases. Removing the history predicates makes the historical
   carrier regression fail; restoring them passes all three history regression tests.
+- **Calendar totals are not a "recently used" signal.** Week and month totals reset at their
+  boundaries, so a provider used Friday had week = month = 0 on Monday (or after the 1st) and lost
+  its tab — and with it the official limits, which the popover can only reach through a snapshot,
+  although the limits had been fetched successfully (#336). Why it was missed: every carrier test
+  used positive week/month fixtures, so none crossed a boundary. Snapshots now also stay when the
+  newest positive-token entry (`lastUsage`, from the shared `ProviderEnrichment.local`) is within
+  `LocalUsageReader.recentUseWindow` (7 days, the weekly quota window); zero-token synthetic
+  records do not count (#56 boundary). `enrichmentScanStart` covers that window, and snapshots
+  keep provider registration order because carriers arrive in task-completion order. Guards:
+  `testCarrierForProviderUsedWithinRecentWindowAcrossCalendarBoundaries`,
+  `testNoCarrierForProviderIdleBeyondRecentWindow`, `testSnapshotOrderFollowsProviderRegistrationOrder`,
+  `testEnrichmentLastUsageIgnoresZeroTokenEntries`, extended `testEnrichmentScanStartCoversAllWindows`.
 
 - **Species ownership is not an individual's appearance.** A species-level shiny flag means
   at least one shiny was collected; using it for the selected individual's badge mislabeled

@@ -870,7 +870,9 @@ final class UsageStore {
             var prevWeek: PeriodUsage?
             var prevMonth: PeriodUsage?
             var prevMonthDaily: [DailyUsage]?
+            var prevLastUsage: Date?
             if let previous = snapshots.first(where: { $0.providerID == provider.id }) {
+                prevLastUsage = previous.lastUsage
                 if previous.today?.date == todayKey { prevToday = previous.today }
                 prevBlock = previous.activeBlock
                 // 주/월 누적도 이어받는다 — phase 2 가 다시 채우기 전까지 nil 로 비면
@@ -901,7 +903,8 @@ final class UsageStore {
                 monthTotal: prevMonth,
                 monthDaily: prevMonthDaily,
                 fetchedAt: Date(),
-                reportsCost: provider.reportsCost)
+                reportsCost: provider.reportsCost,
+                lastUsage: prevLastUsage)
             // Keep history visible while phase 2 refreshes it, including on idle days.
             if snapshot.hasDisplayableUsage { newSnapshots.append(snapshot) }
         }
@@ -935,7 +938,8 @@ final class UsageStore {
                             monthTotal: enrichment.periodsOK ? enrichment.monthTotal : nil,
                             monthDaily: enrichment.periodsOK ? enrichment.monthDaily : nil,
                             fetchedAt: Date(),
-                            reportsCost: provider.reportsCost)
+                            reportsCost: provider.reportsCost,
+                            lastUsage: enrichment.periodsOK ? enrichment.lastUsage : nil)
                         if snapshot.hasDisplayableUsage { snapshots.append(snapshot) }
                     }
                     continue
@@ -945,13 +949,17 @@ final class UsageStore {
                     snapshots[index].weekTotal = enrichment.weekTotal
                     snapshots[index].monthTotal = enrichment.monthTotal
                     snapshots[index].monthDaily = enrichment.monthDaily
+                    snapshots[index].lastUsage = enrichment.lastUsage
                 }
             }
         }
         // Successful empty enrichment removes obsolete carriers; failed reads retain history.
         snapshots.removeAll { !$0.hasDisplayableUsage }
-        // The daily ledger is recorded here: monthDaily only fills in phase 2, so recording right after
-        // phase 1 would leave the recap empty on the first refresh after install.
+        // Carriers arrive in task-completion order; keep tabs in provider registration order.
+        let order = Dictionary(providers.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        snapshots.sort { (order[$0.providerID] ?? .max) < (order[$1.providerID] ?? .max) }
+        // 일별 원장은 여기서 갱신한다, monthDaily 는 phase 2 에서만 채워지므로, phase 1 직후에
+        // 기록하면 설치 후 첫 갱신에서 사용량 요약이 통째로 빈다.
         recordDailyLedger()
 
         // ── 한도 조회 (Keychain 프롬프트로 블로킹될 수 있어 마지막)
@@ -1438,5 +1446,6 @@ private extension ProviderSnapshot {
             || (weekTotal?.totalTokens ?? 0) > 0
             || (monthTotal?.totalTokens ?? 0) > 0
             || monthDaily?.contains(where: { $0.totalTokens > 0 }) == true
+            || lastUsage.map { Date().timeIntervalSince($0) <= LocalUsageReader.recentUseWindow } == true
     }
 }

@@ -1023,6 +1023,58 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertFalse(store.snapshots.contains { $0.providerID == "claude_code" })
     }
 
+    /// [회귀 #336] Official limits are an account property, but the popover only reaches them through
+    /// a snapshot. Calendar week/month totals reset at their boundaries, so a provider used three days
+    /// ago (Friday → Monday, or across the 1st) has week = month = 0 and lost its tab and limits.
+    func testCarrierForProviderUsedWithinRecentWindowAcrossCalendarBoundaries() async {
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: nil)
+        codex.enrichment = ProviderEnrichment(
+            activeBlock: nil, blocksOK: true,
+            weekTotal: PeriodUsage(period: "w", totalTokens: 0, totalCost: 0),
+            monthTotal: PeriodUsage(period: "m", totalTokens: 0, totalCost: 0),
+            monthDaily: [todayDaily(0)], periodsOK: true,
+            lastUsage: Date().addingTimeInterval(-3 * 86_400))
+        let store = makeStore(providers: [codex], codex: codexLimits(primaryUsed: 81))
+        await store.refresh(scheduleEmptyRetry: false)
+
+        XCTAssertTrue(store.snapshots.contains { $0.providerID == "codex" },
+                      "recent use keeps the tab (and its limits) on idle days")
+        XCTAssertEqual(store.todayTotalTokens, 0, "a carrier never adds to today's total")
+        XCTAssertTrue(store.todayTokensByProvider.isEmpty)
+        XCTAssertEqual(store.burnTier, .idle)
+
+        // The next refresh starts from the carrier in phase 1 and must keep it there too.
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertTrue(store.snapshots.contains { $0.providerID == "codex" })
+    }
+
+    func testNoCarrierForProviderIdleBeyondRecentWindow() async {
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: nil)
+        codex.enrichment = ProviderEnrichment(
+            activeBlock: nil, blocksOK: true,
+            weekTotal: PeriodUsage(period: "w", totalTokens: 0, totalCost: 0),
+            monthTotal: PeriodUsage(period: "m", totalTokens: 0, totalCost: 0),
+            periodsOK: true,
+            lastUsage: Date().addingTimeInterval(-(LocalUsageReader.recentUseWindow + 3_600)))
+        let store = makeStore(providers: [codex])
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertTrue(store.snapshots.isEmpty, "a provider unused for over a week stays hidden")
+    }
+
+    /// Carriers are appended in phase-2 task completion order; tabs must not reshuffle each refresh.
+    func testSnapshotOrderFollowsProviderRegistrationOrder() async {
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: nil)
+        claude.enrichment = ProviderEnrichment(
+            activeBlock: nil, blocksOK: true,
+            weekTotal: PeriodUsage(period: "w", totalTokens: 0, totalCost: 0),
+            monthTotal: PeriodUsage(period: "m", totalTokens: 0, totalCost: 0),
+            periodsOK: true, lastUsage: Date().addingTimeInterval(-86_400))
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: todayDaily(5_000))
+        let store = makeStore(providers: [claude, codex])
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertEqual(store.snapshots.map(\.providerID), ["claude_code", "codex"])
+    }
+
     /// 여러 프로바이더의 burn 은 합산된다 (60k + 60k = 120k → fast).
     func testBurnTierCombinesProviders() async {
         let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(10_000_000))
