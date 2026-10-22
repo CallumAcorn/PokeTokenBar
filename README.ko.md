@@ -148,6 +148,34 @@ Antigravity 2.0 과 IDE 가 추정치가 아닌 실제 할당량을 보고합니
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-battle-gym-leader.png" width="340" alt="배틀 로스터 선택: 비상으로 플레이, 윙배지가 걸림"></td>
 </tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-dex-search-ko.png" width="300" alt="검색·정렬과 종별 폼 개수가 있는 도감"></td>
+<td width="55%" valign="middle">
+<h3>🔎 도감 검색, 모든 폼 수집</h3>
+도감과 포획 로그를 어느 언어 이름으로든 검색하고, 정렬하고, 이로치만 볼 수 있습니다. 폼이 있는 종은 모은 개수를 보여줍니다(예: 안농 <code>10/28</code>).
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>🔤 마음에 드는 모습 고르기</h3>
+안농 글자, 도롱충이 도롱, 로토무 가전, 아르세우스 타입 등 1~5세대 폼이 무작위로 부화합니다. 종 화면에서 모은 폼을 골라 메뉴바에 고정할 수 있습니다.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-forms-ko.png" width="300" alt="안농 화면: 모은 글자 중 하나를 골라 고정"></td>
+</tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-day-care-ko.png" width="300" alt="키우미집: 이브이와 피카츄가 알을 품는 중"></td>
+<td width="55%" valign="middle">
+<h3>🥚 키우미집에서 알 얻기</h3>
+PC → <b>키우미집</b>에 궁합이 맞는 두 마리를 맡기면, 훈련은 그대로 이어지면서 평소 사용량으로 알이 자랍니다. 새끼는 개체값·성격·숨겨진 특성·알 기술을 물려받습니다.
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>📊 지난 달 돌아보기</h3>
+사용량 돌아보기로 주·월·연 단위로 지난 기간까지 넘겨 볼 수 있습니다. 합계·일별 게이지·이전 기간 대비 변화·최고의 날·최장 연속·졸업한 포켓몬. 예시 데이터입니다.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-recap-ko.png" width="300" alt="8월 사용량 돌아보기: 합계·일별 게이지·최고의 날·졸업"></td>
+</tr>
 </table>
 
 ## 이 밖에도

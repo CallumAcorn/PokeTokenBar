@@ -148,6 +148,34 @@ Pick any gym leader, Elite Four member or Champion your party can field a team f
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-battle-gym-leader.png" width="340" alt="Battle roster picker: playing as Falkner, with the Zephyr Badge at stake"></td>
 </tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-dex-search.png" width="300" alt="Pokédex with search, sort and a forms count on each species"></td>
+<td width="55%" valign="middle">
+<h3>🔎 Search the Pokédex, collect every form</h3>
+Search the Pokédex and catch log by name in any language, sort them, or show shinies only. Species with alternate forms show how many you have, such as Unown <code>10/28</code>.
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>🔤 Pick the look you like</h3>
+Unown letters, Burmy cloaks, Rotom appliances, Arceus types and the other Gen 1 to 5 forms hatch at random. On the species page, choose any form you have collected and pin it to the menu bar.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-forms.png" width="300" alt="Unown's page: choose one of the collected letters and pin it"></td>
+</tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-day-care.png" width="300" alt="Day Care: Eevee and Pikachu incubating an egg"></td>
+<td width="55%" valign="middle">
+<h3>🥚 Breed at the Day Care</h3>
+Leave two compatible Pokémon in PC → <b>Day Care</b> and their egg grows from your normal usage while training carries on. The baby inherits IVs, nature, its hidden ability and egg moves.
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>📊 Look back at any month</h3>
+The usage recap steps back through any week, month or year: total, daily meters, the change on the previous period, best day, best streak and the Pokémon that graduated. Sample data shown.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-recap.png" width="300" alt="Usage recap for August: total, daily meters, best day and graduations"></td>
+</tr>
 </table>
 
 ## Also in the box

@@ -148,6 +148,34 @@ Antigravity 2.0 と IDE が推定値ではなく実際のクォータを返し�
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-battle-gym-leader.png" width="340" alt="バトルのロスター選択：ハヤトとしてプレイ、ウイングバッジが賭けられている"></td>
 </tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-dex-search-ja.png" width="300" alt="検索・並べ替えと種ごとのフォルム数がある図鑑"></td>
+<td width="55%" valign="middle">
+<h3>🔎 図鑑を検索、すべてのフォルムを集める</h3>
+図鑑と捕獲ログをどの言語の名前でも検索し、並べ替え、色違いだけを表示できます。フォルムのある種は集めた数を表示します（例: アンノーン <code>10/28</code>）。
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>🔤 好きな姿を選ぶ</h3>
+アンノーンの文字、ミノムッチのミノ、ロトムの家電、アルセウスのタイプなど第1〜5世代のフォルムがランダムに孵化します。種のページで集めたフォルムを選び、メニューバーに固定できます。
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-forms-ja.png" width="300" alt="アンノーンのページ: 集めた文字を選んで固定"></td>
+</tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-day-care-ja.png" width="300" alt="育て屋: イーブイとピカチュウがタマゴを温め中"></td>
+<td width="55%" valign="middle">
+<h3>🥚 育て屋でタマゴを</h3>
+PC → <b>育て屋</b>に相性の良い2匹を預けると、育成を続けながら普段の使用量でタマゴが育ちます。子は個体値・性格・隠れ特性・タマゴ技を受け継ぎます。
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>📊 過去の月をふりかえる</h3>
+使用量のふりかえりで週・月・年ごとに過去までさかのぼれます。合計・日別ゲージ・前の期間との変化・最高の日・最長連続・卒業したポケモン。サンプルデータです。
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-recap-ja.png" width="300" alt="8月の使用量ふりかえり: 合計・日別ゲージ・最高の日・卒業"></td>
+</tr>
 </table>
 
 ## そのほかにも

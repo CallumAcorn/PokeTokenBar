@@ -2315,7 +2315,7 @@ private struct ScrollWheelPager: NSViewRepresentable {
 }
 
 
-private struct DexGridView: View {
+struct DexGridView: View {
     let store: CompanionStore
     /// A species opened from a sprite link elsewhere. Consumed (set back to nil) once shown.
     @Binding var link: Int?
@@ -2477,12 +2477,14 @@ private struct DexGridView: View {
 
 /// 도감 종 개요 — 특정 개체(MonDetailView)가 아니라 **종 자체**가 낼 수 있는 범위를 보여준다.
 /// 일반형·이로치 스프라이트를 나란히(이로치는 잡은 적 있을 때만), 타입, 레벨 100 기준 능력치 최소~최대.
-private struct DexSpeciesDetailView: View {
+struct DexSpeciesDetailView: View {
     let store: CompanionStore
     let species: CompanionStore.DexSpecies
     /// Opens another species' detail in place — a "better option" row.
     var onOpenSpecies: (Int) -> Void = { _ in }
     var onClose: () -> Void
+    /// False only for offscreen renders (`ScreenshotGenTests`): `ImageRenderer` draws a ScrollView blank.
+    var scrolls = true
 
     /// A tapped move (suggested build or a learnset row) — shows MoveDetailView in this screen's place.
     @State private var selectedMoveID: Int?
@@ -2538,8 +2540,7 @@ private struct DexSpeciesDetailView: View {
     private var content: some View {
         // 진화 라인·도감 설명까지 붙으니 길이가 종/언어마다 들쭉날쭉하다(설명 길이 편차가 특히 크다) —
         // MonDetailView 와 같은 이유로 고정 높이 예산 대신 이 화면만 스크롤하게 한다.
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+        let sections = VStack(alignment: .leading, spacing: 10) {
                 header
                 hero
                 if !species.isSeen {
@@ -2566,6 +2567,8 @@ private struct DexSpeciesDetailView: View {
                 methodMovesSection(.legacy, title: store.l.dexMovesLegacyTitle)
                 tmMovesSection
             }
+        return Group {
+            if scrolls { ScrollView { sections } } else { sections }
         }
         .task(id: species.baseID) { line = await store.line(baseID: species.baseID) }
         .task(id: species.id) { await FormNameStore.shared.load(speciesID: species.id) }
@@ -2682,8 +2685,8 @@ private struct DexSpeciesDetailView: View {
                 Text(store.l.formsCollected(collectedForms.count, of: PokemonForm.forms(speciesID: species.id).count))
                     .font(.caption2).foregroundStyle(.secondary)
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
+            // Wraps instead of scrolling sideways: Unown alone has 28 letters.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 36, maximum: 36), spacing: 4)], alignment: .leading, spacing: 4) {
                     ForEach(collectedForms, id: \.self) { form in
                         let label = PokemonForm.label(speciesID: species.id, form: form, language: store.language) ?? form.rawValue
                         Button { selectedForm = form } label: {
@@ -2697,7 +2700,6 @@ private struct DexSpeciesDetailView: View {
                         .help(label)
                         .accessibilityLabel(label)
                     }
-                }
             }
         }
     }
