@@ -44,7 +44,7 @@ read_when:
 - **추적 끄기** = `disabledProviderIDs` (Settings → Tracked providers, upstream #460). opt-out 목록이라 새
   프로바이더는 등록만 하면 켜진 채로 목록에 나온다. 꺼진 프로바이더는 `refresh()` 가 아예 읽지
   않는다. 공식 한도처럼 스냅샷 밖에 따로 저장하는 값이 있으면, 그 프로바이더 전용 refresh 함수에서
-  `isProviderEnabled` 로 막고 값을 비운다 — 한도 알림·사탕은 스냅샷이 아니라 그 값을 직접 읽는다.
+  `isProviderEnabled` 로 막고 값을 비운다, 한도 알림·사탕은 스냅샷이 아니라 그 값을 직접 읽는다.
 - **append-only SQLite 사용량 스토어** (Cursor `cursorDiskKV`, Copilot `assistant_usage_events`,
   앞으로 같은 형태의 세 번째 소스) = `LocalAdditionalUsageReader.scanIncrementalStores`. URL 매핑·
   `MAX` SQL·row query·parse 만 넘긴다. watermark 루프를 프로바이더마다 복사하지 마라 (#157).
