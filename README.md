@@ -190,7 +190,10 @@ The usage recap steps back through any week, month or year: total, daily meters,
 - **Burn-rate forecast** — projects when the current 5h window hits 100%.
 - **In-app updates** — one-click update check; current version shown in Settings.
 - **Usage recap** — a Pokédex-style recap of any week, month or year you step back to (total, meters, comparison with the previous period, day for day while it is still running, best day, best streak, graduations). History is kept locally for this year and the last.
-- **Daily trend**: this month's usage day by day, stacked by service, with today highlighted.
+- **Daily trend**: usage day by day, stacked by service, with today highlighted. Choose the last 7, 14 or 21 days or the calendar month from the caption or Settings.
+- **Activity grid**: click the trend to switch to a 16-week heatmap of your usage, and click again to switch back.
+- **Streak**: a flame beside the recap button counts your current run of days with usage.
+- **Tracked providers**: Settings lists every supported tool with a switch. A switched-off tool's files are not read at all.
 - **Pace colours**: limit bars and menu-bar percentages turn orange or red when you are using a window faster than it resets, with a marker for where an even pace would be.
 - **Automatic backups**: local save snapshots every 12 hours (up to 10), restorable from Settings, with automatic recovery if the save file is damaged.
 - **Pokédex search**: search the Pokédex and catch log by name in any language, sort them, and show shinies only.
@@ -209,6 +212,7 @@ The usage recap steps back through any week, month or year: total, daily meters,
 | **Cursor** | today · 5h block · week · month | — |
 | **Grok CLI** | today · 5h block · week · month | — |
 | **Copilot CLI** | today · 5h block · week · month | — |
+| **Devin CLI** | today · 5h block · week · month | - |
 | **Kiro CLI** | today · 5h block · week · month | — (estimated) |
 | **Pi Agent** | today · 5h block · week · month | — |
 

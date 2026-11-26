@@ -136,7 +136,13 @@ final class LimitProgressRenderingTests: XCTestCase {
         // 눈금에서 몇 pt 떨어진 열 — 트랙만 칠해진 곳.
         let trackOnlyColumn = markerColumn + Int(8 * scale)
         let trackHeight = Double(paintedRows(column: trackOnlyColumn, darkerThan: 0.98)) / scale
-        let markerHeight = Double(paintedRows(column: markerColumn, darkerThan: 0.6)) / scale
+        // 0.8, not 0.6: on a 1x display the 10pt marker sits on a half-point offset, so its first and
+        // last pixel rows are half covered (brightness about 0.73 over white). A 0.6 cut-off dropped
+        // both and measured 8pt, failing on 1x screens while passing on 2x (CI). The bare track is
+        // lighter than 0.8, so it is still not counted as marker.
+        let markerHeight = Double(paintedRows(column: markerColumn, darkerThan: 0.8)) / scale
+        XCTAssertLessThan(Double(paintedRows(column: trackOnlyColumn, darkerThan: 0.8)), 1,
+                          "the track alone must stay above the marker cut-off, or this measures the track")
 
         XCTAssertGreaterThan(trackHeight, 0, "트랙이 칠해져야 아래 비교가 뜻을 가진다")
         XCTAssertEqual(markerHeight, trackHeight + 4, accuracy: 1,
