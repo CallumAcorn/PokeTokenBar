@@ -30,6 +30,8 @@ struct ProviderEnrichment: Sendable {
     /// Comes out of the same scan as `monthTotal` and is gated by the same `periodsOK`.
     /// `nil` means this provider cannot produce a series; aggregation uses available providers.
     var monthDaily: [DailyUsage]?
+    /// Rolling day-by-day totals (21 days → today, empty days as zeros).
+    var recentDaily: [DailyUsage]?
     var periodsOK = false
     /// Newest entry with tokens. Unlike week/month totals it does not reset at a calendar boundary,
     /// so it keeps the tab (and its official limits) of a provider used recently but not today (#336).
@@ -66,19 +68,26 @@ extension ProviderEnrichment {
             entries: entries, periodKey: LocalUsageReader.monthKey(now),
             fromDay: fmt.string(from: monthStart), toDay: fmt.string(from: now))
         let series = LocalUsageReader.monthDailySeries(entries: entries, now: now)
+        let recent = LocalUsageReader.rollingDailySeries(
+            entries: entries, days: LocalUsageReader.maxDailyTrendWindowDays, now: now)
 
         if zeroCost {
             result.weekTotal = PeriodUsage(period: week.period, totalTokens: week.totalTokens, totalCost: 0)
             result.monthTotal = PeriodUsage(period: month.period, totalTokens: month.totalTokens, totalCost: 0)
-            result.monthDaily = series.map {
-                DailyUsage(date: $0.date, inputTokens: $0.inputTokens, outputTokens: $0.outputTokens,
-                           cacheCreationTokens: $0.cacheCreationTokens, cacheReadTokens: $0.cacheReadTokens,
-                           totalTokens: $0.totalTokens, totalCost: 0)
+            func zeroed(_ days: [DailyUsage]) -> [DailyUsage] {
+                days.map {
+                    DailyUsage(date: $0.date, inputTokens: $0.inputTokens, outputTokens: $0.outputTokens,
+                               cacheCreationTokens: $0.cacheCreationTokens, cacheReadTokens: $0.cacheReadTokens,
+                               totalTokens: $0.totalTokens, totalCost: 0)
+                }
             }
+            result.monthDaily = zeroed(series)
+            result.recentDaily = zeroed(recent)
         } else {
             result.weekTotal = week
             result.monthTotal = month
             result.monthDaily = series
+            result.recentDaily = recent
         }
         result.periodsOK = true
         // Zero-token `<synthetic>` records are not use: an installed-only provider stays hidden (#56).

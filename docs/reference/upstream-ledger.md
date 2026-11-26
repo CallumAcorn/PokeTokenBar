@@ -222,3 +222,25 @@ declined for the same reason, not re-litigated.
 | `77f789d7` | — | **declined** | Upstream's version bump to 2.5.6 |
 | `2f2fb321` | #447 | **ported** | Recover sprite animations after failed downloads. Retry wait capped at 5 minutes instead of 30 seconds, and the menu bar cancels stale loops |
 | `d82867bb` | #448 | **skipped** | Empty Settings windows. Already fixed here by #44 without upstream's private `_EmptyScene` API |
+| `8f74054b` | #338 | **ported** | Parse Claude session logs incrementally (byte offset per file, byte-level line scan, shared ISO8601 formatter). The cache now keeps raw entries plus the latest cost-state ledger and prices on read; upstream's `sessionID` annotation left out |
+| `c1c92c11` | #432 | **ported** | Labelled recap button that wraps to its own row instead of splitting period costs. OCR rendering test and PR images not carried |
+| `3d1bfa4e` | #463 | **ported** | Max 5x shows as "Max", Max 20x as "Ultra". Tier mapping only: upstream's preferred `plan_display_name` comes from the profile call declined as #199 |
+| `d3bb1208` | #464 | **ported** | Menu bar falls back to the weekly Claude limit when `five_hour` is null. Multi-account test change not carried |
+| `cb5a1c01` | #460 | **ported** | Settings → Tracked providers (opt-out list). A switched-off provider is not read and its limits are cleared. OpenCode Go and Grok limit gates not carried (those limits are not in the fork) |
+| `2f4e03da` | #462 | **ported** | Devin CLI provider, read-only SQLite on `~/.local/share/devin/cli/sessions.db`. Tokens only (`reportsCost = false`, Devin bills ACUs). Reader tests ported; cache-level tests need an injectable cache the fork keeps private |
+| `1870acf7` | #451 | **ported** | Current usage streak badge beside the recap button |
+| `4f3986ee` | #430 | **ported** | Selectable daily trend window (7/14/21 days or month); scan start now reaches back 21 days. Month and rolling totals share one aggregator; screenshot generator not carried |
+| `d4ff5017` | #449 | **ported** | Activity row switches between bars and a 16-week grid |
+| `38e3e553` | #474 | **ported** | Launch at login as a login item (`SMAppService.mainApp`). Both fork agents (`…login`, `…autorestart`) failed to spawn here (`OS_REASON_CODESIGNING`), so the crash-restart opt-in is removed. See `fork-hardening.md` HIGH 3 |
+| `e72799a1` | #457 | **declined** | `poketokenbar://` URLs drive the floating pet. Registers a URL scheme any app or web page can open, default on. Callum's decision, 2026-11-26 |
+| `f026afcd` | #434 | **skipped** | Codex candy regrant needs a usage drop. The fork's Codex candy windows already carry no reset epoch |
+| `32ebe4ca` | #456 | **skipped** | OCR fixture for `DexBackNavigationTests`, which the fork does not carry |
+| `07a96fa1` | #455 | **skipped** | Cursor refreshed credentials. Depends on the Cursor dashboard API (declined `4fe965ee`) |
+| `964269ce` | #431 | **skipped** | omo and senpi usage. Not installed |
+| `2615860a` | #459 | **skipped** | OpenCode Go official limits. OpenCode not installed; adds a credentialed outbound call |
+| `db118af1` | #461 | **skipped** | Grok credit limits. Grok not installed; adds a credentialed outbound call |
+| `137a72e1` | #388 | **declined** | Growth progress in the menu bar. Built on difficulty multipliers (declined `b0c6074f`) and upstream's `state.active` model. Callum's decision, 2026-11-26 |
+| `a49237cd` | #442 | **declined** | Per-generation Pokédex badges. Changes the Pokédex model and save format, both diverged here. Callum's decision, 2026-11-26 |
+| `f71fcca2` | #466 | **declined** | Egg prayers, petting, sulking. Depends on `e72799a1` (declined) and deferred `746d8384`; changes the save format |
+| `54f6fab1` | none | **declined** | Upstream v2.5.7 guides and screenshots. READMEs have diverged |
+| `c35225dc` | none | **declined** | Upstream's version bump to 2.5.7 |

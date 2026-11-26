@@ -41,8 +41,40 @@ struct L {
     /// `weekly` 의 fr "Hebdo" 와 같은 이유로 줄인다. 바로 위 줄이 "Dieser Monat" 이라 문맥은 남는다.
     var dailyTrend: String { t("이번 달 일별", "Daily this month", "今月の日別",
                                "Diario de este mes", "Par jour ce mois-ci", "Diário deste mês") }
+    var dailyTrendPeriod: String { t("일별 추이 기간", "Daily trend period", "日別推移の期間",
+                                     "Período de tendencia diaria", "Période de tendance quotidienne", "Período de tendência diária") }
+    var dailyTrend7d: String { t("최근 7일", "Last 7 days", "直近7日",
+                                 "Últimos 7 días", "7 derniers jours", "Últimos 7 dias") }
+    var dailyTrend14d: String { t("최근 14일", "Last 14 days", "直近14日",
+                                  "Últimos 14 días", "14 derniers jours", "Últimos 14 dias") }
+    var dailyTrend21d: String { t("최근 21일", "Last 21 days", "直近21日",
+                                  "Últimos 21 días", "21 derniers jours", "Últimos 21 dias") }
+    var dailyTrendMonth: String { t("이번 달", "This month", "今月",
+                                    "Este mes", "Ce mois-ci", "Este mês") }
+
+    func title(for window: DailyTrendWindow) -> String {
+        switch window {
+        case .d7: return dailyTrend7d
+        case .d14: return dailyTrend14d
+        case .d21: return dailyTrend21d
+        case .month: return dailyTrendMonth
+        }
+    }
     /// 추이의 최댓값 라벨, 막대 높이가 상대값이라 절대 스케일을 한 군데는 적어줘야 한다.
     var peakDay: String { t("최다", "Peak", "最多", "Máx.", "Max.", "Máx.") }
+    /// 최근 16주 히트맵의 제목. 막대 제목보다 짧게 둔다: 캡션 한 줄에 리드아웃(날짜·토큰·비용)과
+    /// 최댓값이 같이 들어가야 한다. 숫자는 `ActivityHeatmapMetrics.weeks` 와 맞춘다
+    /// (`ActivityVisualizationTests` 가 대조한다).
+    var recentHeatmap: String {
+        t("최근 16주", "16 weeks", "16週間", "16 semanas", "16 semaines", "16 semanas")
+    }
+    /// 활동 시각화를 클릭으로 바꿀 수 있다는 안내(툴팁). 클릭 순환은 발견성이 낮아
+    /// 점(`PageDots`)과 이 툴팁이 유일한 단서다.
+    var activitySwitchHint: String {
+        t("클릭해서 다른 표시로 전환", "Click to switch the view", "クリックで表示を切り替え",
+          "Haz clic para cambiar la vista", "Cliquez pour changer d'affichage",
+          "Clique para alternar a exibição")
+    }
 
     // MARK: 한도 섹션
     var limitsOfficial: String { t("한도 (공식)", "Limits (official)", "上限（公式）", "Límites (oficial)", "Limites (officiel)", "Limites (oficiais)") }
@@ -179,6 +211,7 @@ struct L {
     var evolutionScrollNext: String { t("다음 진화 보기", "Show next evolutions", "次の進化を見る", "Ver evoluciones siguientes", "Voir les évolutions suivantes", "Ver próximas evoluções") }
     // MARK: Usage recap
     var recapOpen: String { t("사용량 돌아보기", "Usage recap", "使用量のふりかえり", "Resumen de uso", "Récap d'utilisation", "Resumo de uso") }
+    var recapDetails: String { t("상세", "Details", "詳細", "Detalle", "Détails", "Detalhes") }
     var recapTokensUnit: String { t("토큰", "tokens", "トークン", "tokens", "tokens", "tokens") }
     func recapScopeName(_ scope: RecapScope) -> String {
         switch scope {
@@ -206,6 +239,20 @@ struct L {
     var recapBestDay: String { t("최고의 날", "Best day", "最高の日", "Mejor día", "Meilleur jour", "Melhor dia") }
     var recapActiveDays: String { t("활동한 날", "Active days", "稼働日", "Días activos", "Jours actifs", "Dias ativos") }
     var recapBestStreak: String { t("최장 연속", "Best streak", "最長連続", "Mejor racha", "Meilleure série", "Melhor sequência") }
+    /// Current-streak badge tooltip. The number sits inside the sentence, so word order is left to
+    /// each language.
+    func streakDays(_ count: Int) -> String {
+        t("\(count)일 연속 사용", "\(count)-day streak", "\(count)日連続", "Racha de \(count) días",
+          "Série de \(count) jours", "\(count) dias seguidos")
+    }
+    /// The same while today has no usage yet: the run is intact but ends yesterday. Says what keeps
+    /// it going instead of implying it is already lost.
+    func streakDaysPending(_ count: Int) -> String {
+        t("\(count)일 연속: 오늘 사용하면 이어집니다", "\(count)-day streak: use it today to keep it going",
+          "\(count)日連続：今日使えば続きます", "Racha de \(count) días: úsalo hoy para mantenerla",
+          "Série de \(count) jours : utilisez-le aujourd'hui pour la garder",
+          "\(count) dias seguidos: use hoje para manter")
+    }
     var recapGraduates: String { t("졸업", "Graduated", "卒業", "Graduados", "Diplômés", "Formados") }
     var recapNoData: String { t("기록 없음", "no data", "記録なし", "sin datos", "pas de données", "sem dados") }
     func recapCurrentPeriod(_ scope: RecapScope) -> String {
@@ -323,8 +370,6 @@ struct L {
     var disableKeychain: String { t("자격증명 접근 끄기", "Disable credential access", "資格情報へのアクセスを無効化", "Desactivar acceso a credenciales") }
     var disableKeychainHint: String { t("켜면 Keychain 과 .credentials.json 을 아예 읽지 않습니다 — 공식 한도(%)만 숨겨지고 토큰·비용은 그대로", "When on, reads neither the Keychain nor .credentials.json — only official limits (%) are hidden; tokens/cost stay", "オンにすると Keychain も .credentials.json も読みません — 公式上限(%)のみ非表示、トークン・費用はそのまま", "Al activarlo, no lee ni el Keychain ni .credentials.json — solo se ocultan los límites oficiales (%), los tokens y el coste se mantienen") }
 
-    var autoRestart: String { t("크래시 시 자동 재시작", "Restart automatically after a crash", "クラッシュ時に自動再起動", "Reiniciar automáticamente tras un fallo") }
-    var autoRestartHint: String { t("끔이 기본. 켜면 launchd 워치독(KeepAlive)이 비정상 종료된 앱을 되살립니다 — 지속성이 늘어나 보안 도구가 주시할 수 있어요", "Off by default. When on, a launchd watchdog (KeepAlive) revives the app after an abnormal exit — more persistence, which security tooling may flag", "既定でオフ。オンにすると launchd のウォッチドッグ(KeepAlive)が異常終了したアプリを復帰させます — 常駐性が増し、セキュリティ製品が検知対象にすることがあります", "Desactivado por defecto. Si se activa, un vigilante de launchd (KeepAlive) revive la app tras una salida anómala — más persistencia, que las herramientas de seguridad pueden señalar") }
 
     var externalCredit: String { t("Claude Code 밖 사용도 성장에 반영", "Count non-Claude-Code use toward growth", "Claude Code 以外の利用も成長に反映", "Contar el uso fuera de Claude Code para el crecimiento") }
     var externalCreditHint: String { t("끔이 기본. Claude 웹·디자인·코워크는 로컬 기록을 남기지 않아 토큰 수를 알 수 없습니다 — 대신 로컬 토큰이 전혀 늘지 않은 구간의 세션(5시간) 한도 상승분만, 이 계정 자체의 보정 로그로 환산해 성장으로 반영합니다(대략치, 통계·상점 잔액에는 안 잡힘)", "Off by default. Claude Web, Design and Cowork leave no local record, so their token count is unknowable — instead, session (five-hour) limit movement during intervals where local tokens did not move at all is converted into growth, using a rate calibrated from this account's own history (approximate; never counted into stats or the shop wallet)", "既定でオフ。Claude Web・Design・Cowork はローカル記録を残さずトークン数が分かりません — 代わりに、ローカルのトークンが全く増えなかった区間のセッション(5時間)上限の上昇分だけを、このアカウント自身のキャリブレーションログから導いた換算率で成長に反映します（概算。統計やショップ残高には計上されません）", "Desactivado por defecto. Claude Web, Design y Cowork no dejan registro local, así que su cifra de tokens es desconocida — en su lugar, el movimiento del límite de sesión (cinco horas) en intervalos sin actividad local se convierte en crecimiento, con una tasa calibrada según el historial de esta cuenta (aproximado; nunca cuenta para estadísticas ni para el saldo de la tienda)") }
@@ -349,6 +394,14 @@ struct L {
     var refreshLimitToken: String { t("한도 토큰 캐시 갱신", "Refresh limit token cache", "上限トークンキャッシュを更新", "Actualizar caché del token de límite", "Actualiser le cache du token de limite", "Atualizar cache do token de limite") }
     var onlyOnPress: String { t("누를 때만 Keychain 을 읽어요 — 자동 폴링은 안 읽어 팝업이 안 떠요. 토큰 만료 후 이 버튼으로 한도 갱신", "Reads Keychain only when pressed — auto-polling never does, so no pop-ups. Refresh limits here after the token expires", "押した時のみKeychainを読みます — 自動更新では読まずポップアップも出ません。トークン期限切れ後はこのボタンで上限を更新", "Solo lee Keychain al pulsar — el sondeo automático nunca lo hace, así que no aparecen avisos. Usa este botón para actualizar los límites tras la expiración del token", "Lit le Keychain uniquement sur appui — le polling automatique ne le fait jamais, donc pas de pop-up. Actualise les limites ici après l'expiration du token", "Só lê o Keychain quando você clica no botão — a atualização automática nunca lê, então não aparecem avisos. Use este botão para atualizar os limites depois que o token expirar") }
     var launchAtLogin: String { t("로그인 시 자동 시작", "Launch at login", "ログイン時に自動起動", "Iniciar al arrancar sesión", "Lancer à l'ouverture de session", "Abrir ao iniciar sessão") }
+    var launchAtLoginApprovalHint: String {
+        t("자동 시작을 켜려면 시스템 설정에서 PokeTokenBar를 허용하세요.",
+          "Allow PokeTokenBar in System Settings to launch at login.",
+          "ログイン時に起動するには、システム設定で PokeTokenBar を許可してください。",
+          "Permite PokeTokenBar en Ajustes del Sistema para abrirlo al iniciar sesión.",
+          "Autorisez PokeTokenBar dans Réglages Système pour l’ouvrir à la connexion.",
+          "Permita o PokeTokenBar nos Ajustes do Sistema para abri-lo ao iniciar sessão.")
+    }
     var bundledOnly: String { t(".app 번들로 설치된 경우에만 사용 가능 (scripts/build-app.sh)", "Available only when installed as an .app bundle (scripts/build-app.sh)", ".appバンドルでインストールした場合のみ利用可能 (scripts/build-app.sh)", "Disponible solo si se instaló como paquete .app (scripts/build-app.sh)", "Disponible uniquement si installé comme paquet .app (scripts/build-app.sh)", "Disponível apenas quando instalado como pacote .app (scripts/build-app.sh)") }
     var notificationsSection: String { t("알림", "Notifications", "通知", "Notificaciones", "Notifications", "Notificações") }
     var limitNotificationsLabel: String { t("한도 알림", "Limit alerts", "上限通知", "Alertas de límite", "Alertes de limite", "Alertas de limite") }
@@ -358,6 +411,15 @@ struct L {
     var warning: String { t("경고", "Warning", "警告", "Aviso", "Avertissement", "Aviso") }
     var critical: String { t("임박", "Critical", "切迫", "Crítico", "Critique", "Crítico") }
     var aggregationNote: String { t("토큰 집계 기준: totalTokens (input + output + cache, 로컬 날짜)", "Token basis: totalTokens (input + output + cache, local date)", "集計基準: totalTokens (input + output + cache, ローカル日付)", "Base de cálculo: totalTokens (input + output + cache, fecha local)", "Base de calcul : totalTokens (input + output + cache, date locale)", "Base de cálculo: totalTokens (input + output + cache, data local)") }
+    var trackedProvidersSectionTitle: String { t("추적할 프로바이더", "Tracked providers", "集計するプロバイダー", "Proveedores rastreados", "Fournisseurs suivis", "Provedores monitorados") }
+    var trackedProvidersHint: String {
+        t("끈 프로바이더는 로그를 읽지 않아요. 탭·합계·포켓몬 성장·한도에서 빠져요.",
+          "Turned-off providers are not read. They are excluded from tabs, totals, Pokémon growth, and limits.",
+          "オフにしたプロバイダーのログは読みません。タブ・合計・ポケモンの成長・上限から外れます。",
+          "Los proveedores desactivados no se leen. Dejan de aparecer en pestañas, totales, crecimiento del Pokémon y límites.",
+          "Les fournisseurs désactivés ne sont pas lus. Ils disparaissent des onglets, des totaux, de la croissance du Pokémon et des limites.",
+          "Provedores desativados não são lidos. Eles saem das abas, dos totais, do crescimento do Pokémon e dos limites.")
+    }
     var customScanProviderLabel: String { t("프로바이더", "Provider", "プロバイダー", "Proveedor", "Fournisseur", "Provedor") }
     var customScanRootsLabel: String { t("추가 스캔 폴더", "Additional scan folders", "追加スキャンフォルダ", "Carpetas de escaneo adicionales", "Dossiers d'analyse supplémentaires", "Pastas extras para escanear") }
     var customScanRootsHint: String {

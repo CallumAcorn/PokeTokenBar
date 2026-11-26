@@ -77,11 +77,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# LaunchAgent 두 벌 — 정확히 하나만 등록된다(LoginItem.swift 가 전환).
-#   1) …login          RunAtLoad 만. 기본값이자 구버전과 같은 label 이라 기존 등록이 그대로 유효하다.
-#   2) …autorestart    RunAtLoad + KeepAlive. 크래시/OOM(exit≠0) 자동 재실행 — 설정에서 켤 때만.
-# 지속성 수준을 사용자가 고르게 하려고 나눴다: "로그인 시 실행"과 "죽으면 되살아남"은 다른 약속이고,
-# 후자는 엔드포인트 보안 도구가 주시하는 동작이다.
+# Legacy LaunchAgents. Launch at login is now a login item (SMAppService.mainApp, upstream #474):
+# launchd cannot spawn a self-signed build (AMFI launch constraint, OS_REASON_CODESIGNING).
+# These plists stay in the bundle only so SMAppService can query and unregister registrations
+# left by older builds. Nothing registers them any more.
+#   1) …login          RunAtLoad only.
+#   2) …autorestart    RunAtLoad + KeepAlive (the former crash-restart opt-in).
 # ProgramArguments 는 설치 경로(/Applications) 고정. codesign 전에 생성해 서명 seal 에 포함.
 mkdir -p "$APP/Contents/Library/LaunchAgents"
 cat > "$APP/Contents/Library/LaunchAgents/io.github.chattymin.poketokenbar.login.plist" <<AGENT

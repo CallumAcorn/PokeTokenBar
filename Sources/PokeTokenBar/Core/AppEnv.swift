@@ -9,6 +9,11 @@ enum AppEnv {
         Bundle.main.bundleIdentifier != nil && Bundle.main.bundlePath.hasSuffix(".app")
     }
 
+    /// The service label launchd gives this process when it starts as a LaunchAgent.
+    static var xpcServiceName: String? {
+        ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"]
+    }
+
     /// 저장소가 자기 파일을 읽고 써도 되는가.
     ///
     /// 경로를 **주입했으면** 언제나 허용한다 — 테스트가 임시 파일로 영속화를 검증하는 방식이다. 주입하지

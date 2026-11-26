@@ -1,14 +1,16 @@
 import AppKit
 import Darwin
 
-/// 같은 앱이 두 번 뜨는 것을 막는 가드 — **나중에 뜬 인스턴스가 물러난다**.
+/// 같은 앱이 두 번 뜨는 것을 막는 가드, **나중에 뜬 인스턴스가 물러난다**.
 ///
-/// 배경: 로그인 실행을 `SMAppService.agent`(LaunchAgent)로 등록하는데, plist 에 `RunAtLoad` 가 있어
-/// **등록하는 순간 launchd 가 실행 파일을 한 번 더 실행한다**. 앱이 떠 있는 상태에서 등록이 일어나는
-/// 경로가 둘이라, 둘 다 메뉴바 아이콘이 두 개가 된다:
-///   1. 설정에서 "로그인 시 실행"을 켤 때 — `LoginItem.setEnabled(true)`
-///   2. 구버전 로그인아이템 사용자의 업데이트 첫 기동 — `LoginItem.migrateFromLegacyLoginItemIfNeeded()`
-/// 2번은 사용자가 아무것도 누르지 않아도 일어난다.
+/// Launch at login is now a login item (`SMAppService.mainApp`, upstream #474), which goes through
+/// LaunchServices. The guard stays because a legacy LaunchAgent left from an older build can still
+/// exec the binary directly during migration, bypassing LaunchServices' duplicate check.
+/// The history below describes the agent era.
+///
+/// 배경(구 구현): 로그인 실행을 `SMAppService.agent`(LaunchAgent)로 등록했고, plist 의 `RunAtLoad` 때문에
+/// **등록하는 순간 launchd 가 실행 파일을 한 번 더 실행했다**. 설정 토글과 구버전 사용자의 첫 기동
+/// 이관 둘 다 메뉴바 아이콘을 두 개로 만들었다.
 ///
 /// LaunchServices 의 중복 실행 방지는 GUI 로 여는 경로(Finder·`open`)에만 걸린다 — launchd 는
 /// `Contents/MacOS/…` 를 직접 exec 하므로 그 경로를 타지 않는다. 그래서 앱이 스스로 막는다.

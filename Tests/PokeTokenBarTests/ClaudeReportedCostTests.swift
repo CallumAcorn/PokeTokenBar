@@ -35,6 +35,95 @@ final class ClaudeReportedCostTests: XCTestCase {
                        "a model with no parsed entry (haiku) must not inflate another model's day")
     }
 
+    // MARK: Incremental parsing (upstream 8f74054b, #338)
+
+    private func tempDir() -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("crc-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func assistant(id: String, ts: String) -> String {
+        #"{"type":"assistant","timestamp":"\#(ts)","requestId":"r\#(id)","message":{"id":"m\#(id)","model":"claude-opus-5-5","usage":{"input_tokens":10,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}"#
+    }
+
+    private func ledger(_ cost: Double) -> String {
+        #"{"type":"cost-state","modelUsage":{"claude-opus-5-5[1m]":{"costUSD":\#(cost)}}}"#
+    }
+
+    /// The cache keeps raw entries plus the latest ledger, so an appended ledger re-prices the
+    /// entries parsed earlier instead of only the new tail.
+    func testIncrementalAppendReattributesTheWholeSessionToLatestLedger() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("session.jsonl")
+        let prefix = assistant(id: "a", ts: "2026-09-15T10:00:00.000Z") + "\n" + ledger(1) + "\n"
+        try prefix.write(to: url, atomically: true, encoding: .utf8)
+        let cache = LocalUsageCache(claudeRoot: dir, fileURL: dir.appendingPathComponent("cache.json"))
+        let initial = await cache.claudeEntries(modifiedSince: .distantPast)
+        XCTAssertEqual(initial.compactMap(\.explicitCost).reduce(0, +), 1, accuracy: 1e-9)
+
+        try (prefix + assistant(id: "b", ts: "2026-09-16T10:00:00.000Z") + "\n" + ledger(9) + "\n")
+            .write(to: url, atomically: true, encoding: .utf8)
+        let appended = await cache.claudeEntries(modifiedSince: .distantPast)
+        XCTAssertEqual(appended.count, 2)
+        XCTAssertTrue(appended.allSatisfy { $0.explicitCost == 4.5 })
+
+        let unchanged = await cache.claudeEntries(modifiedSince: .distantPast)
+        XCTAssertTrue(unchanged.allSatisfy { $0.explicitCost == 4.5 })
+    }
+
+    /// The ledger survives a reload of the persisted cache when the appended tail has none.
+    func testPersistedLedgerIsRetainedWhenTheAppendedTailHasNoLedger() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("session.jsonl")
+        let cacheURL = dir.appendingPathComponent("cache.json")
+        let prefix = assistant(id: "a", ts: "2026-09-15T10:00:00.000Z") + "\n" + ledger(4) + "\n"
+        try prefix.write(to: url, atomically: true, encoding: .utf8)
+        _ = await LocalUsageCache(claudeRoot: dir, fileURL: cacheURL).claudeEntries(modifiedSince: .distantPast)
+
+        try (prefix + assistant(id: "b", ts: "2026-09-16T10:00:00.000Z") + "\n")
+            .write(to: url, atomically: true, encoding: .utf8)
+        let entries = await LocalUsageCache(claudeRoot: dir, fileURL: cacheURL).claudeEntries(modifiedSince: .distantPast)
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertTrue(entries.allSatisfy { $0.explicitCost == 2 })
+    }
+
+    /// A truncated file is re-read from the start, so its old ledger must not carry over.
+    func testTruncationDiscardsTheCachedLedger() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("session.jsonl")
+        let line = assistant(id: "a", ts: "2026-09-15T10:00:00.000Z")
+        try (line + "\n" + ledger(9) + "\n").write(to: url, atomically: true, encoding: .utf8)
+        let cache = LocalUsageCache(claudeRoot: dir, fileURL: dir.appendingPathComponent("cache.json"))
+        _ = await cache.claudeEntries(modifiedSince: .distantPast)
+
+        try (line + "\n").write(to: url, atomically: true, encoding: .utf8)
+        let entries = await cache.claudeEntries(modifiedSince: .distantPast)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertNil(entries.first?.explicitCost)
+    }
+
+    /// A ledger line cut mid-write is retried once it is complete.
+    func testHalfWrittenCostStateIsRetriedOnAppend() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("session.jsonl")
+        let prefix = assistant(id: "a", ts: "2026-09-15T10:00:00.000Z") + "\n"
+        let full = ledger(9)
+        try (prefix + full.prefix(full.count / 2)).write(to: url, atomically: true, encoding: .utf8)
+        let cache = LocalUsageCache(claudeRoot: dir, fileURL: dir.appendingPathComponent("cache.json"))
+        let initial = await cache.claudeEntries(modifiedSince: .distantPast)
+        XCTAssertNil(initial.first?.explicitCost)
+
+        try (prefix + full + "\n").write(to: url, atomically: true, encoding: .utf8)
+        let completed = await cache.claudeEntries(modifiedSince: .distantPast)
+        XCTAssertEqual(completed.count, 1)
+        XCTAssertEqual(completed.first?.explicitCost ?? 0, 9, accuracy: 1e-9)
+    }
+
     /// End to end: a session file's day costs what Claude reported, not the table estimate.
     func testSessionFileCostsWhatClaudeReported() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("cs-\(UUID().uuidString).jsonl")

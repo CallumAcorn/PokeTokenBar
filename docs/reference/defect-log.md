@@ -124,6 +124,13 @@ read_when:
   estimates cannot be passed to request-size-dependent pricing as if they were single requests.
   Parser semantic changes require the corresponding disk-cache version bump.
 
+- **Incremental transcript parsing must retain cumulative ledgers, not add their totals.** Claude's
+  latest `cost-state` reprices the entire session, including entries cached before the appended tail.
+  Keep raw entries and the latest ledger together in the blob, then attribute costs after merging.
+  Retain that ledger when the next tail has none; discard it on a full reparse. Assistant-only append
+  tests miss this semantic conflict with source-cost attribution. `ClaudeReportedCostTests` covers
+  changed totals, unchanged cache hits, disk reload without a new ledger, truncation, and partial ledgers.
+
 - **프로필 레벨은 난이도와 반복 부화 보정을 반영한 단계 진행에서 계산한다.** #244/#254의 임계값을
   낮춰도 #264가 원시 토큰을 기본 졸업 비용으로 나누면 졸업한 개체가 레벨 5 또는 52에 남는다.
   완료 단계의 기본 비용과 현재 단계의 실제 임계 대비 진행률을 합산해 표준 성장량을 영속한다.
@@ -570,6 +577,17 @@ read_when:
   `chooseBase()` 를 안 지나 통과하면서 아무것도 지키지 않았다(`testImportDuringSpeciesRollDiscardsTheHatch`).
 
 ## 프로세스·인스턴스
+
+- **A registered LaunchAgent is not a running one.** `SMAppService.agent.status == .enabled` held
+  for both of this fork's login agents while launchd could not start the app: AMFI kills a self-signed
+  or ad-hoc signed binary that launchd execs directly (`launchctl print` showed `spawn failed`,
+  `last exit reason = OS_REASON_CODESIGNING`, macOS 27.2.1, 2026-11-26). Launch at login was silently
+  broken. Why nothing caught it: every manual launch and test used `open`/LaunchServices, a different
+  path; no test covered the login path, and `verify-hardening.sh` checks only the plist contents. Fix (port of upstream #474):
+  register `SMAppService.mainApp`, migrate an enabled legacy agent at startup, unregister both
+  agents, and defer that cleanup when a legacy agent launched this process. The crash-restart
+  opt-in went with its agent. Check a login change with `launchctl print gui/$(id -u)/<label>` after
+  a real login, not with the `status` property. Pinned by `LoginItemTests`.
 
 - **로그인 실행을 LaunchAgent 로 등록하면 "등록하는 순간" 앱이 한 번 더 뜬다.** plist 의 `RunAtLoad` 는
   로그인 때만이 아니라 **에이전트가 로드되는 시점**의 실행을 뜻하고, `SMAppService.agent.register()` 가

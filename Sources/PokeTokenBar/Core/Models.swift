@@ -236,16 +236,32 @@ struct LimitStatus: Decodable, Sendable {
     }
 
     /// subscriptionType(max/pro/free) + rateLimitTier 배수를 합친 표시 문자열.
-    /// 예: subscriptionType="max", rateLimitTier="default_claude_max_20x" → "Max 20x".
-    /// 배수는 등급과 무관하게 tier 에 배수 토큰이 있을 때만 붙는다(Max 전용 분기 아님).
+    /// Claude renamed the Max tiers (Max 5x to Max, Max 20x to Ultra) but credentials still carry
+    /// the old tier tokens, so the rename is applied here: ("max","default_claude_max_20x") → "Ultra".
+    /// An unknown Max multiplier keeps its number ("Max 10x") rather than borrowing a name.
+    /// Upstream #463 prefers the profile endpoint's `plan_display_name`; this fork declined that
+    /// call (#199), so only the tier mapping is ported.
     /// tier 에 배수 토큰이 없으면 등급명만("Pro"/"Free"), 구독 정보가 없으면 nil.
     var planDisplay: String? {
         guard let subscriptionType, !subscriptionType.isEmpty else { return nil }
         let base = subscriptionType.prefix(1).uppercased() + subscriptionType.dropFirst()
-        if let tier = rateLimitTier, let multiplier = Self.tierMultiplier(from: tier) {
-            return "\(base) \(multiplier)"
+        guard let tier = rateLimitTier, let multiplier = Self.tierMultiplier(from: tier) else {
+            return base
         }
-        return base
+        guard subscriptionType.lowercased() == "max" else { return "\(base) \(multiplier)" }
+        switch multiplier {
+        case "5x": return "Max"
+        case "20x": return "Ultra"
+        default: return "Max \(multiplier)"
+        }
+    }
+
+    /// The window compact surfaces (the menu bar) show: the 5-hour session when present, else the
+    /// weekly window. Plans without a session limit (Ultra) send `five_hour: null` (upstream #464).
+    var headlineWindow: (window: LimitWindow, span: TimeInterval)? {
+        if let fiveHour, fiveHour.utilization != nil { return (fiveHour, LimitWindowSpan.fiveHour) }
+        if let sevenDay, sevenDay.utilization != nil { return (sevenDay, LimitWindowSpan.sevenDay) }
+        return nil
     }
 
     /// rateLimitTier 끝의 배수 토큰("20x"/"5x") 추출 — "_" 로 나눠 숫자+x 형태를 찾는다.
@@ -535,6 +551,8 @@ struct ProviderSnapshot: Sendable, Identifiable {
     /// This month's day-by-day totals (month start → today, empty days as zeros), or `nil` when
     /// the provider cannot produce a series. Defaulted so existing call sites stay unchanged.
     var monthDaily: [DailyUsage]? = nil
+    /// Rolling recent day-by-day totals (21 days → today), or `nil`.
+    var recentDaily: [DailyUsage]? = nil
     var fetchedAt: Date
     /// Mirrors `UsageProvider.reportsCost`. Default keeps existing call sites unchanged.
     var reportsCost: Bool = true
@@ -545,27 +563,65 @@ struct ProviderSnapshot: Sendable, Identifiable {
     var todayTotalTokens: Int { today?.totalTokens ?? 0 }
 }
 
+enum DailyTrendWindow: String, CaseIterable, Identifiable, Sendable {
+    case d7 = "7d"
+    case d14 = "14d"
+    case d21 = "21d"
+    case month = "month"
+
+    var id: String { rawValue }
+
+    var dayCount: Int? {
+        switch self {
+        case .d7: return 7
+        case .d14: return 14
+        case .d21: return 21
+        case .month: return nil
+        }
+    }
+}
+
 // MARK: - ISO8601 with fractional seconds
 
 enum ISO8601Parser {
     /// resets_at 은 마이크로초("...034464+00:00") 또는 밀리초("....303Z") 형태 — 둘 다 처리.
-    /// ISO8601DateFormatter 는 non-Sendable 이라 호출마다 생성 (파싱 빈도 낮음).
     static func date(from string: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = fractional.date(from: string) { return d }
-        // 소수점 자릿수가 3자리가 아니면 3자리로 절단 후 재시도
-        if let dotIndex = string.firstIndex(of: ".") {
-            let afterDot = string.index(after: dotIndex)
-            if let tzIndex = string[afterDot...].firstIndex(where: { $0 == "+" || $0 == "-" || $0 == "Z" }) {
-                let frac = String(string[afterDot..<tzIndex]).prefix(3)
-                let padded = String(frac).padding(toLength: 3, withPad: "0", startingAt: 0)
-                let rebuilt = String(string[..<dotIndex]) + "." + padded + String(string[tzIndex...])
-                if let d = fractional.date(from: rebuilt) { return d }
-            }
+        shared.date(from: string)
+    }
+
+    private static let shared = LockedParser()
+
+    /// This is also the per-line timestamp parser for every local session log, so it runs
+    /// millions of times on a large history. Allocating an `ISO8601DateFormatter` per call was
+    /// the dominant cost of a cold scan. The formatters are non-Sendable and callers (the
+    /// provider caches) run concurrently, so one shared pair is kept behind a lock.
+    private final class LockedParser: @unchecked Sendable {
+        private let lock = NSLock()
+        private let fractional: ISO8601DateFormatter
+        private let plain: ISO8601DateFormatter
+
+        init() {
+            fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            plain = ISO8601DateFormatter()
+            plain.formatOptions = [.withInternetDateTime]
         }
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        return plain.date(from: string)
+
+        func date(from string: String) -> Date? {
+            lock.lock()
+            defer { lock.unlock() }
+            if let d = fractional.date(from: string) { return d }
+            // 소수점 자릿수가 3자리가 아니면 3자리로 절단 후 재시도
+            if let dotIndex = string.firstIndex(of: ".") {
+                let afterDot = string.index(after: dotIndex)
+                if let tzIndex = string[afterDot...].firstIndex(where: { $0 == "+" || $0 == "-" || $0 == "Z" }) {
+                    let frac = String(string[afterDot..<tzIndex]).prefix(3)
+                    let padded = String(frac).padding(toLength: 3, withPad: "0", startingAt: 0)
+                    let rebuilt = String(string[..<dotIndex]) + "." + padded + String(string[tzIndex...])
+                    if let d = fractional.date(from: rebuilt) { return d }
+                }
+            }
+            return plain.date(from: string)
+        }
     }
 }

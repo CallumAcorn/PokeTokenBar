@@ -1459,6 +1459,22 @@ private func claudeFiveHour(_ utilization: Double, resetsIn: TimeInterval?, now:
     return try! JSONDecoder().decode(LimitStatus.self, from: Data(json.utf8))
 }
 
+/// A plan without a 5-hour session limit, as `oauth/usage` sends it: `five_hour` is null.
+/// `fiveHour` adds a session window back for the precedence case.
+private func claudeWeekly(_ utilization: Double, resetsIn: TimeInterval, fiveHour: Double? = nil,
+                          now: Date) -> LimitStatus {
+    let iso = ISO8601DateFormatter()
+    let weeklyReset = iso.string(from: now.addingTimeInterval(resetsIn))
+    let session = fiveHour.map {
+        "{\"utilization\":\($0),\"resets_at\":\"\(iso.string(from: now.addingTimeInterval(2.5 * 3600)))\"}"
+    } ?? "null"
+    let json = """
+    {"five_hour":\(session),
+     "seven_day":{"utilization":\(utilization),"resets_at":"\(weeklyReset)"}}
+    """
+    return try! JSONDecoder().decode(LimitStatus.self, from: Data(json.utf8))
+}
+
 private func codexPrimary(_ usedPercent: Int, resetsIn: TimeInterval, now: Date) -> CodexRateLimitStatus {
     let reset = Int(now.addingTimeInterval(resetsIn).timeIntervalSince1970)
     let json = "{\"rateLimits\":{\"primary\":{\"usedPercent\":\(usedPercent),\"windowDurationMins\":300,\"resetsAt\":\(reset)}}}"
@@ -1531,5 +1547,148 @@ extension UsageStoreTests {
         let store = makeStore(providers: [])
         store.menuLimitColorMode = .attention
         XCTAssertEqual(makeStore(providers: []).menuLimitColorMode, .attention)
+    }
+
+    func testDailyTrendWindowDefaultsTo14DaysAndPersists() {
+        let store = makeStore(providers: [])
+        XCTAssertEqual(store.dailyTrendWindow, .d14, "Default daily trend window must be 14 days")
+
+        store.dailyTrendWindow = .d7
+        XCTAssertEqual(store.dailyTrendWindow, .d7)
+
+        let reloaded = makeStore(providers: [])
+        XCTAssertEqual(reloaded.dailyTrendWindow, .d7, "Daily trend window selection must persist in defaults")
+    }
+
+    func testDailyTrendTotalsFollowsActiveWindow() async {
+        let fake = FakeUsageProvider(id: "fake", displayName: "Fake")
+        fake.daily = DailyUsage(date: "2026-10-15", inputTokens: 0, outputTokens: 100,
+                                cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 100, totalCost: 0)
+        var en = ProviderEnrichment()
+        en.recentDaily = [DailyUsage(date: "2026-10-15", inputTokens: 0, outputTokens: 100,
+                                     cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 100, totalCost: 0)]
+        en.monthDaily = [DailyUsage(date: "2026-10-01", inputTokens: 0, outputTokens: 500,
+                                    cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 500, totalCost: 0)]
+        en.periodsOK = true
+        fake.enrichment = en
+
+        let store = makeStore(providers: [fake])
+        await store.refresh()
+
+        store.dailyTrendWindow = .d14
+        XCTAssertEqual(store.dailyTrendTotals.first?.totalTokens, 100)
+
+        store.dailyTrendWindow = .month
+        XCTAssertEqual(store.dailyTrendTotals.first?.totalTokens, 500)
+    }
+
+    // MARK: Weekly fallback (upstream #464)
+
+    /// Plans without a session limit (Ultra) send `five_hour: null`: the menu bar falls back to the
+    /// weekly window instead of dropping Claude, and the pace comes from the 7-day span.
+    func testMenuShowsTheWeeklyLimitWhenThePlanHasNoSessionLimit() async throws {
+        let now = Date()
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(1_000))
+        let store = makeStore(providers: [claude], claude: claudeWeekly(66, resetsIn: 3.5 * 24 * 3600, now: now))
+        store.showTokensInMenu = false
+        store.showCostInMenu = false
+        store.showLimitInMenu = true
+        await store.refresh(scheduleEmptyRetry: false)
+
+        let parts = store.menuLimitParts(now: now)
+        XCTAssertEqual(parts.map(\.text), ["Claude 66%"])
+        XCTAssertEqual(try XCTUnwrap(parts.first?.pace), 0.5, accuracy: 0.01)
+
+        store.limitDisplayMode = .remaining
+        XCTAssertEqual(store.menuLimitParts(now: now).map(\.text), ["Claude 34%"])
+    }
+
+    /// With both windows, the menu bar keeps showing the 5-hour session.
+    func testMenuPrefersTheSessionLimitOverTheWeeklyOne() async {
+        let now = Date()
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(1_000))
+        let store = makeStore(providers: [claude],
+                              claude: claudeWeekly(66, resetsIn: 3.5 * 24 * 3600, fiveHour: 40, now: now))
+        store.showTokensInMenu = false
+        store.showCostInMenu = false
+        store.showLimitInMenu = true
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertEqual(store.menuLimitParts(now: now).map(\.text), ["Claude 40%"])
+    }
+
+    func testHeadlineWindowPicksTheSessionThenTheWeeklyWindow() throws {
+        let now = Date()
+        let both = try XCTUnwrap(claudeWeekly(66, resetsIn: 3600, fiveHour: 40, now: now).headlineWindow)
+        XCTAssertEqual(both.window.utilization, 40)
+        XCTAssertEqual(both.span, LimitWindowSpan.fiveHour)
+
+        let weeklyOnly = try XCTUnwrap(claudeWeekly(66, resetsIn: 3600, now: now).headlineWindow)
+        XCTAssertEqual(weeklyOnly.window.utilization, 66)
+        XCTAssertEqual(weeklyOnly.span, LimitWindowSpan.sevenDay)
+
+        let empty = try JSONDecoder().decode(LimitStatus.self, from: Data(#"{"five_hour":null,"seven_day":null}"#.utf8))
+        XCTAssertNil(empty.headlineWindow)
+    }
+
+    // MARK: Tracked providers, opt-out (upstream #460)
+
+    func testDisabledProviderLeavesTabsTotalsAndLimits() async {
+        testDefaults.set(["codex"], forKey: UsageStore.disabledProvidersKey)
+        let now = Date()
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(100))
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: todayDaily(50))
+        let store = makeStore(providers: [claude, codex],
+                              claude: claudeFiveHour(40, resetsIn: 3600, now: now),
+                              codex: codexPrimary(40, resetsIn: 3600, now: now))
+        await store.refresh(scheduleEmptyRetry: false)
+
+        XCTAssertEqual(store.snapshots.map(\.providerID), ["claude_code"])
+        XCTAssertEqual(store.todayTokensByProvider, ["claude_code": 100])
+        XCTAssertNil(store.codexLimits, "a disabled provider's limits must not feed alerts or candies")
+        XCTAssertNotNil(store.limits)
+        XCTAssertEqual(store.registeredProviderIDs, ["claude_code", "codex"], "Settings still lists it")
+    }
+
+    /// Phase 2 appends a carrier for a provider with history but no usage today (#336). That path
+    /// would keep a switched-off provider's tab, so it must honour the switch too.
+    func testDisabledProviderWithOnlyHistoryGetsNoCarrierTab() async {
+        testDefaults.set(["codex"], forKey: UsageStore.disabledProvidersKey)
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(100))
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: nil)
+        codex.enrichment = ProviderEnrichment(
+            weekTotal: PeriodUsage(period: "w", totalTokens: 900, totalCost: 0),
+            monthTotal: PeriodUsage(period: "m", totalTokens: 3_000, totalCost: 0),
+            periodsOK: true, lastUsage: Date())
+        let store = makeStore(providers: [claude, codex])
+        await store.refresh(scheduleEmptyRetry: false)
+
+        XCTAssertEqual(store.snapshots.map(\.providerID), ["claude_code"])
+        XCTAssertEqual(store.monthTotalTokens, 0)
+    }
+
+    func testDisablingClaudeClearsItsLimits() async {
+        testDefaults.set(["claude_code"], forKey: UsageStore.disabledProvidersKey)
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: todayDaily(50))
+        let store = makeStore(providers: [codex], claude: claudeFiveHour(90, resetsIn: 3600, now: Date()))
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertNil(store.limits)
+        XCTAssertFalse(store.limitsAvailable)
+    }
+
+    func testProviderSwitchDropsTabAtOnceAndPersists() async {
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(100))
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: todayDaily(50))
+        let store = makeStore(providers: [claude, codex])
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertEqual(store.snapshots.count, 2)
+
+        store.setProviderEnabled("codex", false)
+        XCTAssertEqual(store.snapshots.map(\.providerID), ["claude_code"], "tab goes before the next poll")
+        XCTAssertFalse(makeStore(providers: [claude, codex]).isProviderEnabled("codex"))
+
+        store.setProviderEnabled("codex", true)
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertEqual(store.snapshots.map(\.providerID), ["claude_code", "codex"])
+        XCTAssertTrue(makeStore(providers: [claude, codex]).isProviderEnabled("codex"))
     }
 }
