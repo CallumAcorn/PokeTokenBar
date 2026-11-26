@@ -359,6 +359,15 @@ struct L {
     var warning: String { t("경고", "Warning", "警告", "Aviso", "Avertissement", "Aviso") }
     var critical: String { t("임박", "Critical", "切迫", "Crítico", "Critique", "Crítico") }
     var aggregationNote: String { t("토큰 집계 기준: totalTokens (input + output + cache, 로컬 날짜)", "Token basis: totalTokens (input + output + cache, local date)", "集計基準: totalTokens (input + output + cache, ローカル日付)", "Base de cálculo: totalTokens (input + output + cache, fecha local)", "Base de calcul : totalTokens (input + output + cache, date locale)", "Base de cálculo: totalTokens (input + output + cache, data local)") }
+    var trackedProvidersSectionTitle: String { t("추적할 프로바이더", "Tracked providers", "集計するプロバイダー", "Proveedores rastreados", "Fournisseurs suivis", "Provedores monitorados") }
+    var trackedProvidersHint: String {
+        t("끈 프로바이더는 로그를 읽지 않아요. 탭·합계·포켓몬 성장·한도에서 빠져요.",
+          "Turned-off providers are not read. They are excluded from tabs, totals, Pokémon growth, and limits.",
+          "オフにしたプロバイダーのログは読みません。タブ・合計・ポケモンの成長・上限から外れます。",
+          "Los proveedores desactivados no se leen. Dejan de aparecer en pestañas, totales, crecimiento del Pokémon y límites.",
+          "Les fournisseurs désactivés ne sont pas lus. Ils disparaissent des onglets, des totaux, de la croissance du Pokémon et des limites.",
+          "Provedores desativados não são lidos. Eles saem das abas, dos totais, do crescimento do Pokémon e dos limites.")
+    }
     var customScanProviderLabel: String { t("프로바이더", "Provider", "プロバイダー", "Proveedor", "Fournisseur", "Provedor") }
     var customScanRootsLabel: String { t("추가 스캔 폴더", "Additional scan folders", "追加スキャンフォルダ", "Carpetas de escaneo adicionales", "Dossiers d'analyse supplémentaires", "Pastas extras para escanear") }
     var customScanRootsHint: String {

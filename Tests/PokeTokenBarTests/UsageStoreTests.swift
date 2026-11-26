@@ -1596,4 +1596,66 @@ extension UsageStoreTests {
         let empty = try JSONDecoder().decode(LimitStatus.self, from: Data(#"{"five_hour":null,"seven_day":null}"#.utf8))
         XCTAssertNil(empty.headlineWindow)
     }
+
+    // MARK: Tracked providers, opt-out (upstream #460)
+
+    func testDisabledProviderLeavesTabsTotalsAndLimits() async {
+        testDefaults.set(["codex"], forKey: UsageStore.disabledProvidersKey)
+        let now = Date()
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(100))
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: todayDaily(50))
+        let store = makeStore(providers: [claude, codex],
+                              claude: claudeFiveHour(40, resetsIn: 3600, now: now),
+                              codex: codexPrimary(40, resetsIn: 3600, now: now))
+        await store.refresh(scheduleEmptyRetry: false)
+
+        XCTAssertEqual(store.snapshots.map(\.providerID), ["claude_code"])
+        XCTAssertEqual(store.todayTokensByProvider, ["claude_code": 100])
+        XCTAssertNil(store.codexLimits, "a disabled provider's limits must not feed alerts or candies")
+        XCTAssertNotNil(store.limits)
+        XCTAssertEqual(store.registeredProviderIDs, ["claude_code", "codex"], "Settings still lists it")
+    }
+
+    /// Phase 2 appends a carrier for a provider with history but no usage today (#336). That path
+    /// would keep a switched-off provider's tab, so it must honour the switch too.
+    func testDisabledProviderWithOnlyHistoryGetsNoCarrierTab() async {
+        testDefaults.set(["codex"], forKey: UsageStore.disabledProvidersKey)
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(100))
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: nil)
+        codex.enrichment = ProviderEnrichment(
+            weekTotal: PeriodUsage(period: "w", totalTokens: 900, totalCost: 0),
+            monthTotal: PeriodUsage(period: "m", totalTokens: 3_000, totalCost: 0),
+            periodsOK: true, lastUsage: Date())
+        let store = makeStore(providers: [claude, codex])
+        await store.refresh(scheduleEmptyRetry: false)
+
+        XCTAssertEqual(store.snapshots.map(\.providerID), ["claude_code"])
+        XCTAssertEqual(store.monthTotalTokens, 0)
+    }
+
+    func testDisablingClaudeClearsItsLimits() async {
+        testDefaults.set(["claude_code"], forKey: UsageStore.disabledProvidersKey)
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: todayDaily(50))
+        let store = makeStore(providers: [codex], claude: claudeFiveHour(90, resetsIn: 3600, now: Date()))
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertNil(store.limits)
+        XCTAssertFalse(store.limitsAvailable)
+    }
+
+    func testProviderSwitchDropsTabAtOnceAndPersists() async {
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(100))
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: todayDaily(50))
+        let store = makeStore(providers: [claude, codex])
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertEqual(store.snapshots.count, 2)
+
+        store.setProviderEnabled("codex", false)
+        XCTAssertEqual(store.snapshots.map(\.providerID), ["claude_code"], "tab goes before the next poll")
+        XCTAssertFalse(makeStore(providers: [claude, codex]).isProviderEnabled("codex"))
+
+        store.setProviderEnabled("codex", true)
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertEqual(store.snapshots.map(\.providerID), ["claude_code", "codex"])
+        XCTAssertTrue(makeStore(providers: [claude, codex]).isProviderEnabled("codex"))
+    }
 }
