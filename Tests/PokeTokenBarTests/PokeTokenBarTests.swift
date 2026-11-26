@@ -236,10 +236,20 @@ final class ModelDecodingTests: XCTestCase {
 
         status.subscriptionType = "max"
         status.rateLimitTier = "default_claude_max_20x"
-        XCTAssertEqual(status.planDisplay, "Max 20x")
+        XCTAssertEqual(status.planDisplay, "Ultra")
 
         status.rateLimitTier = "default_claude_max_5x"
-        XCTAssertEqual(status.planDisplay, "Max 5x")
+        XCTAssertEqual(status.planDisplay, "Max")
+
+        // Max without a multiplier is still Max
+        status.rateLimitTier = "default_claude_max"
+        XCTAssertEqual(status.planDisplay, "Max")
+        status.rateLimitTier = nil
+        XCTAssertEqual(status.planDisplay, "Max")
+
+        // An unknown multiplier keeps its number instead of borrowing a name
+        status.rateLimitTier = "default_claude_max_10x"
+        XCTAssertEqual(status.planDisplay, "Max 10x")
 
         // 배수 토큰이 없는 등급 → 등급명만
         status.subscriptionType = "pro"

@@ -236,16 +236,32 @@ struct LimitStatus: Decodable, Sendable {
     }
 
     /// subscriptionType(max/pro/free) + rateLimitTier 배수를 합친 표시 문자열.
-    /// 예: subscriptionType="max", rateLimitTier="default_claude_max_20x" → "Max 20x".
-    /// 배수는 등급과 무관하게 tier 에 배수 토큰이 있을 때만 붙는다(Max 전용 분기 아님).
+    /// Claude renamed the Max tiers (Max 5x to Max, Max 20x to Ultra) but credentials still carry
+    /// the old tier tokens, so the rename is applied here: ("max","default_claude_max_20x") → "Ultra".
+    /// An unknown Max multiplier keeps its number ("Max 10x") rather than borrowing a name.
+    /// Upstream #463 prefers the profile endpoint's `plan_display_name`; this fork declined that
+    /// call (#199), so only the tier mapping is ported.
     /// tier 에 배수 토큰이 없으면 등급명만("Pro"/"Free"), 구독 정보가 없으면 nil.
     var planDisplay: String? {
         guard let subscriptionType, !subscriptionType.isEmpty else { return nil }
         let base = subscriptionType.prefix(1).uppercased() + subscriptionType.dropFirst()
-        if let tier = rateLimitTier, let multiplier = Self.tierMultiplier(from: tier) {
-            return "\(base) \(multiplier)"
+        guard let tier = rateLimitTier, let multiplier = Self.tierMultiplier(from: tier) else {
+            return base
         }
-        return base
+        guard subscriptionType.lowercased() == "max" else { return "\(base) \(multiplier)" }
+        switch multiplier {
+        case "5x": return "Max"
+        case "20x": return "Ultra"
+        default: return "Max \(multiplier)"
+        }
+    }
+
+    /// The window compact surfaces (the menu bar) show: the 5-hour session when present, else the
+    /// weekly window. Plans without a session limit (Ultra) send `five_hour: null` (upstream #464).
+    var headlineWindow: (window: LimitWindow, span: TimeInterval)? {
+        if let fiveHour, fiveHour.utilization != nil { return (fiveHour, LimitWindowSpan.fiveHour) }
+        if let sevenDay, sevenDay.utilization != nil { return (sevenDay, LimitWindowSpan.sevenDay) }
+        return nil
     }
 
     /// rateLimitTier 끝의 배수 토큰("20x"/"5x") 추출 — "_" 로 나눠 숫자+x 형태를 찾는다.

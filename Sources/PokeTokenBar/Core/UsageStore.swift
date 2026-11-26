@@ -307,8 +307,9 @@ final class UsageStore {
             parts.append(MenuLimitPart(text: "\(label) \(TokenFormatter.percent(limitDisplayPercent(utilization)))",
                                        utilization: utilization, pace: pace))
         }
-        if usedToday.contains("claude_code"), let window = limits?.fiveHour, let utilization = window.utilization {
-            add("Claude", utilization, reset: window.resetDate, span: LimitWindowSpan.fiveHour)
+        if usedToday.contains("claude_code"), let (window, span) = limits?.headlineWindow,
+           let utilization = window.utilization {
+            add("Claude", utilization, reset: window.resetDate, span: span)
         }
         if usedToday.contains("codex"), let usedPercent = codexLimits?.maxPrimaryUsedPercent {
             // The window the percentage came from, so the pace belongs to the same bucket.
