@@ -198,16 +198,18 @@ struct PopoverView: View {
 
             // 주간/월간 누적 (전 서비스 합산 — 오늘 합계와 함께 통합 통계)
             if store.weekTotalTokens > 0 || store.monthTotalTokens > 0 {
-                HStack(spacing: 14) {
-                    periodLabel(l.thisWeek, tokens: store.weekTotalTokens, cost: store.showsCost ? store.weekCostTotal : nil)
-                    periodLabel(l.thisMonth, tokens: store.monthTotalTokens, cost: store.showsCost ? store.monthCostTotal : nil)
-                    Spacer()
-                    Button { nav.showingRecap = true } label: {
-                        Image(systemName: "chart.bar.xaxis")
+                // The labelled button is wider than the old icon; ViewThatFits moves it to its own
+                // row rather than letting it split the period costs across lines (upstream #432).
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 14) {
+                        periodTotals.fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 0)
+                        recapButton
                     }
-                    .buttonStyle(.borderless)
-                    .help(l.recapOpen)
-                    .accessibilityLabel(l.recapOpen)
+                    VStack(alignment: .trailing, spacing: 6) {
+                        periodTotals.frame(maxWidth: .infinity, alignment: .leading)
+                        recapButton
+                    }
                 }
                 .padding(.top, 2)
             }
@@ -240,6 +242,39 @@ struct PopoverView: View {
     /// 현재 선택된 프로바이더 스냅샷 — 선택이 없거나 연결 해제됐으면 첫 번째로 폴백.
     private var selectedSnapshot: ProviderSnapshot? {
         store.snapshot(preferring: nav.providerID)
+    }
+
+    private var periodTotals: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) { periodLabels }
+                .fixedSize(horizontal: true, vertical: false)
+            VStack(alignment: .leading, spacing: 4) { periodLabels }
+        }
+    }
+
+    private var periodLabels: some View {
+        Group {
+            periodLabel(l.thisWeek, tokens: store.weekTotalTokens, cost: store.showsCost ? store.weekCostTotal : nil)
+                .fixedSize(horizontal: true, vertical: false)
+            periodLabel(l.thisMonth, tokens: store.monthTotalTokens, cost: store.showsCost ? store.monthCostTotal : nil)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private var recapButton: some View {
+        Button { nav.showingRecap = true } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "chart.bar.xaxis")
+                Text(l.recapDetails).font(.caption)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(l.recapOpen)
+        .accessibilityLabel(l.recapOpen)
     }
 
     private var providerTabBar: some View {

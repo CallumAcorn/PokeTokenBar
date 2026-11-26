@@ -179,6 +179,7 @@ struct L {
     var evolutionScrollNext: String { t("다음 진화 보기", "Show next evolutions", "次の進化を見る", "Ver evoluciones siguientes", "Voir les évolutions suivantes", "Ver próximas evoluções") }
     // MARK: Usage recap
     var recapOpen: String { t("사용량 돌아보기", "Usage recap", "使用量のふりかえり", "Resumen de uso", "Récap d'utilisation", "Resumo de uso") }
+    var recapDetails: String { t("상세", "Details", "詳細", "Detalle", "Détails", "Detalhes") }
     var recapTokensUnit: String { t("토큰", "tokens", "トークン", "tokens", "tokens", "tokens") }
     func recapScopeName(_ scope: RecapScope) -> String {
         switch scope {
