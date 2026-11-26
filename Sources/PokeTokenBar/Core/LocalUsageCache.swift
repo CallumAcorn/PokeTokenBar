@@ -16,11 +16,24 @@ actor LocalUsageCache {
         let offset: Int?
         /// Latest cumulative Claude ledger. Entries stay raw so a later total can be reapplied.
         let claudeCostState: LocalUsageReader.ClaudeCostState?
+        /// First bytes of the file when `offset` was recorded. A different head means the file was
+        /// replaced rather than appended to, so the offset no longer points at a line boundary.
+        let head: Data?
 
         init(mtime: Date, size: Int, entries: [LocalUsageReader.Entry], offset: Int? = nil,
-             claudeCostState: LocalUsageReader.ClaudeCostState? = nil) {
+             claudeCostState: LocalUsageReader.ClaudeCostState? = nil, head: Data? = nil) {
             self.mtime = mtime; self.size = size; self.entries = entries; self.offset = offset
             self.claudeCostState = claudeCostState
+            self.head = head
+        }
+
+        /// The byte offset to resume from, or 0 for a full parse. The cache file is outside input,
+        /// so the stored offset is trusted only inside `0...size` of the blob it came with, and
+        /// only when the file strictly grew and still starts with the same bytes.
+        func resumeOffset(currentSize: Int, currentHead: Data?) -> Int {
+            guard let offset, offset > 0, offset <= size, currentSize > size,
+                  let head, !head.isEmpty, head == currentHead else { return 0 }
+            return offset
         }
 
         init(from decoder: Decoder) throws {
@@ -30,6 +43,7 @@ actor LocalUsageCache {
             entries = try c.decode([LocalUsageReader.Entry].self, forKey: .entries)
             offset = try c.decodeIfPresent(Int.self, forKey: .offset)
             claudeCostState = try c.decodeIfPresent(LocalUsageReader.ClaudeCostState.self, forKey: .claudeCostState)
+            head = try c.decodeIfPresent(Data.self, forKey: .head)
         }
 
         var attributedEntries: [LocalUsageReader.Entry] {
@@ -306,14 +320,15 @@ actor LocalUsageCache {
                 let prior = cache[key]
                 // Tail-parse only when the file strictly grew; a same-size rewrite or a
                 // truncation is re-read from the start.
-                let from = prior.flatMap { p in size > p.size ? p.offset : nil } ?? 0
+                let head = LocalUsageReader.fileHead(url)
+                let from = prior?.resumeOffset(currentSize: size, currentHead: head) ?? 0
                 if let tail = incremental(url, from) {
                     let entries = from > 0
                         ? LocalUsageReader.dedupKeepMax((prior?.entries ?? []) + tail.entries)
                         : tail.entries
                     let costState = tail.costState ?? (from > 0 ? prior?.claudeCostState : nil)
                     let blob = Blob(mtime: mtime, size: size, entries: entries, offset: tail.newOffset,
-                                    claudeCostState: costState)
+                                    claudeCostState: costState, head: head)
                     cache[key] = blob
                     dirty = true
                     result.append(contentsOf: blob.attributedEntries)
@@ -425,9 +440,18 @@ actor LocalUsageCache {
 
     // MARK: 영속화
 
+    /// The compressed cache is about 1 MB for a heavy month; 64 MB is far outside real use.
+    static let maxCacheFileBytes = 64 << 20
+
     private func ensureLoaded() {
         guard !loaded else { return }
         loaded = true
+        // A cache far beyond any real size is corrupt or planted (a zlib bomb expands on the next
+        // line); drop it and rebuild from the logs.
+        if let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > Self.maxCacheFileBytes {
+            AppLog.write("usage cache ignored: \(size) bytes exceeds \(Self.maxCacheFileBytes)")
+            return
+        }
         guard persists, let raw = try? Data(contentsOf: fileURL) else { return }
         // zlib 압축 스냅샷(현행) → 실패 시 평문 JSON(구버전 캐시) 폴백
         let data = (try? (raw as NSData).decompressed(using: .zlib) as Data) ?? raw

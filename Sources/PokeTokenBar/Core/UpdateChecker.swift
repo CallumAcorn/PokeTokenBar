@@ -75,7 +75,10 @@ final class UpdateChecker {
 
     /// The URL goes to NSWorkspace.open, so only https on github.com (no scheme hijack).
     nonisolated static func isTrustedReleaseURL(_ string: String) -> Bool {
-        guard let url = URL(string: string), url.scheme == "https", url.host == "github.com" else { return false }
+        // The URL is opened in the browser from the update banner. Pinned to this repository's
+        // release pages, not any github.com page the API response might name.
+        guard let url = URL(string: string), url.scheme == "https", url.host == "github.com",
+              url.user == nil, url.path.hasPrefix("/\(repo)/releases/") else { return false }
         return true
     }
 

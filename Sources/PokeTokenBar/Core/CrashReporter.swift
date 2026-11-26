@@ -47,7 +47,8 @@ enum CrashReporter {
         ) { _ in markClean() }
 
         // 2) 치명 시그널 → crash.log 에 발생 시점 기록(async-signal-safe).
-        logFD = open(crashLogURL.path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
+        // Owner-only, and never through a symlink planted at the path.
+        logFD = open(crashLogURL.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0o600)
         for sig in [SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGTRAP] {
             signal(sig, CrashReporter.signalHandler)
         }
@@ -75,7 +76,8 @@ enum CrashReporter {
     private static func drainCrashLog() {
         guard let data = try? Data(contentsOf: crashLogURL), !data.isEmpty,
               let text = String(data: data, encoding: .utf8) else { return }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // crash.log is copied into the main log; bound it so a stray writer cannot flood that log.
+        let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4096))
         if !trimmed.isEmpty { AppLog.write("직전 세션 크래시-시점 기록: \(trimmed)") }
         try? FileManager.default.removeItem(at: crashLogURL)
     }

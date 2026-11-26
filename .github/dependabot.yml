@@ -1,0 +1,12 @@
+# Actions are pinned to commit SHAs (see ci.yml), so nothing updates them unless something proposes
+# the bump. Dependabot opens a PR with the new SHA and keeps the `# vN` comment in step.
+# There is no Swift package ecosystem entry: Package.swift declares no dependencies.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci

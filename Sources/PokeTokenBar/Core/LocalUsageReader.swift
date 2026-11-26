@@ -362,20 +362,89 @@ enum LocalUsageReader {
         return applyReportedCost(parsed.entries, costState)
     }
 
+    /// Read size for the Claude parser. A session log can be hundreds of MB; reading it in pieces
+    /// keeps peak memory at one chunk plus one line instead of the file size.
+    static let claudeChunkBytes = 1 << 20
+    /// A single JSONL record longer than this is dropped, so a newline-free file cannot grow the
+    /// carry buffer without bound. Real records are a few KB to a few MB.
+    static let maxClaudeLineBytes = 16 << 20
+    /// Ceiling for the formats still read whole (Pi, Gemini, Grok, small JSON stores).
+    static let maxWholeFileBytes = 256 << 20
+
+    static func isWithinWholeFileLimit(_ url: URL) -> Bool {
+        guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else { return true }
+        if size > maxWholeFileBytes {
+            AppLog.writeIfChanged("oversize-\(url.path)", "skipped oversize log (\(size) bytes): \(url.lastPathComponent)")
+            return false
+        }
+        return true
+    }
+
+    /// First bytes of a file, kept with the cached offset so a file that was replaced by a larger
+    /// one (not appended to) is detected and re-read from the start.
+    static func fileHead(_ url: URL, length: Int = 64) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        return try? handle.read(upToCount: length)
+    }
+
     /// Parses only the bytes after `fromOffset`. Session logs are append-only and the active
     /// one can be hundreds of MB, so the cache re-reads just the new tail each refresh instead
     /// of the whole file. `newOffset` stops at the last complete line so a half-written record
     /// is retried next time. Entries are raw (no reported cost applied). Nil means unreadable.
-    /// Ported from upstream 8f74054b (#338).
-    static func parseClaudeFile(_ url: URL, fromOffset: Int, fmt: DateFormatter)
+    /// Ported from upstream 8f74054b (#338); reads in chunks so memory stays bounded.
+    static func parseClaudeFile(_ url: URL, fromOffset: Int, fmt: DateFormatter,
+                                chunkBytes: Int = claudeChunkBytes, maxLineBytes: Int = maxClaudeLineBytes)
         -> (entries: [Entry], newOffset: Int, costState: ClaudeCostState?)?
     {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        // The offset comes from the cache file, which is outside input: `UInt64(negative)` traps.
+        guard fromOffset >= 0, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
-        guard (try? handle.seek(toOffset: UInt64(fromOffset))) != nil,
-              let data = try? handle.readToEnd() else { return nil }
-        let parsed = parseClaudeData(data, fmt: fmt)
-        return (parsed.entries, fromOffset + parsed.consumed, parsed.costState)
+        guard (try? handle.seek(toOffset: UInt64(fromOffset))) != nil else { return nil }
+
+        var entries: [Entry] = []
+        var costState: ClaudeCostState?
+        var offset = fromOffset
+        var carry = Data()
+        var skippingOversizeLine = false
+        while true {
+            let chunk: Data
+            do {
+                guard let read = try handle.read(upToCount: max(1, chunkBytes)), !read.isEmpty else { break }
+                chunk = read
+            } catch { return nil }
+
+            var buffer = chunk
+            if skippingOversizeLine {
+                // Still inside a dropped record: discard up to and including its newline.
+                guard let nl = chunk.firstIndex(of: 0x0A) else { offset += chunk.count; continue }
+                let dropped = nl - chunk.startIndex + 1
+                offset += dropped
+                buffer = Data(chunk[(nl + 1)...])
+                skippingOversizeLine = false
+            } else if !carry.isEmpty {
+                buffer = carry + chunk
+            }
+            let parsed = parseClaudeData(buffer, fmt: fmt, parseTrailing: false)
+            entries.append(contentsOf: parsed.entries)
+            if let state = parsed.costState { costState = state }
+            offset += parsed.consumed
+            carry = Data(buffer[(buffer.startIndex + parsed.consumed)...])
+            if carry.count > maxLineBytes {
+                offset += carry.count
+                carry = Data()
+                skippingOversizeLine = true
+            }
+        }
+        // A trailing line with no newline is a finished file's last record or one still being
+        // written. Parse it now but leave it out of the offset so the next incremental read picks
+        // it up again; dedup by id makes the repeat harmless.
+        if !carry.isEmpty {
+            let parsed = parseClaudeData(carry, fmt: fmt, parseTrailing: true)
+            entries.append(contentsOf: parsed.entries)
+            if let state = parsed.costState { costState = state }
+        }
+        return (dedupKeepMax(entries), offset, costState)
     }
 
     private static let usageNeedle = Data("\"usage\"".utf8)
@@ -384,7 +453,7 @@ enum LocalUsageReader {
 
     /// Byte-level line scan: no whole-file String or per-line Substring allocation.
     /// `consumed` is the byte count up to and including the last newline.
-    static func parseClaudeData(_ data: Data, fmt: DateFormatter)
+    static func parseClaudeData(_ data: Data, fmt: DateFormatter, parseTrailing: Bool = true)
         -> (entries: [Entry], consumed: Int, costState: ClaudeCostState?)
     {
         var out: [Entry] = []
@@ -416,10 +485,9 @@ enum LocalUsageReader {
             consumed = nl - data.startIndex + 1
             lineStart = nl + 1
         }
-        // A trailing line with no newline is a finished file's last record or one still being
-        // written. Parse it now but leave it out of `consumed` so the next incremental read
-        // picks it up again; dedup by id makes the repeat harmless.
-        if lineStart < data.endIndex { parse(data[lineStart...]) }
+        // The unterminated tail is parsed only when the caller has no more bytes coming
+        // (`parseTrailing`); it is never counted in `consumed`.
+        if parseTrailing, lineStart < data.endIndex { parse(data[lineStart...]) }
         return (dedupKeepMax(out), consumed, costState)
     }
 
@@ -517,6 +585,7 @@ enum LocalUsageReader {
     }
 
     static func parsePiFile(_ url: URL, fmt: DateFormatter) -> [Entry]? {
+        guard isWithinWholeFileLimit(url) else { return [] }
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         var out: [Entry] = []
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
@@ -1268,7 +1337,7 @@ enum LocalUsageReader {
     ///   input = (input − cached) + tool(toolUsePrompt, 입력측) / cacheRead = cached
     ///   output = output + thoughts(출력측 reasoning) / cacheWrite = 0
     static func parseGeminiFile(_ url: URL, fmt: DateFormatter) -> [Entry] {
-        guard let data = try? Data(contentsOf: url) else { return [] }
+        guard isWithinWholeFileLimit(url), let data = try? Data(contentsOf: url) else { return [] }
         let file = url.lastPathComponent
         // 메시지 id → (레코드, 토큰) — message_update 가 나중에 오면 갱신
         var byID: [String: Entry] = [:]
@@ -1363,7 +1432,7 @@ enum LocalUsageReader {
     /// - `output = outputTokens` (reasoning 은 output 에 포함), `cacheWrite = 0`
     ///   (Grok 은 캐시 쓰기를 prompt 토큰에 접어 넣는다).
     static func parseGrokFile(_ url: URL, fmt: DateFormatter) -> [Entry] {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        guard isWithinWholeFileLimit(url), let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
         var out: [Entry] = []
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             // updates.jsonl 은 스트리밍 청크까지 전부 라인으로 남는다(세션당 수만 라인) →

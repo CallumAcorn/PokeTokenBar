@@ -21,7 +21,7 @@ final class SpectatorStore {
     private let pollIntervalNanoseconds: UInt64
     private var pollTask: Task<Void, Never>?
 
-    init(session: URLSession = .shared, pollIntervalNanoseconds: UInt64 = 2_000_000_000) {
+    init(session: URLSession = OnlineStore.urlSession, pollIntervalNanoseconds: UInt64 = 2_000_000_000) {
         self.session = session
         self.pollIntervalNanoseconds = pollIntervalNanoseconds
     }

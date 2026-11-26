@@ -841,7 +841,9 @@ final class UsageStoreTests: XCTestCase {
 
     func testLimitWarningFromCodexSecondary() async {
         let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(10_000_000))
-        let store = makeStore(providers: [claude], codex: codexLimits(primaryUsed: 10, secondaryUsed: 97))
+        // Codex limits are read only while Codex has recent usage (no process spawn for an idle tool).
+        let codex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: todayDaily(1_000))
+        let store = makeStore(providers: [claude, codex], codex: codexLimits(primaryUsed: 10, secondaryUsed: 97))
         store.critThreshold = 95
         await store.refresh(scheduleEmptyRetry: false)
         XCTAssertTrue(store.isLimitWarning)
@@ -1690,5 +1692,22 @@ extension UsageStoreTests {
         await store.refresh(scheduleEmptyRetry: false)
         XCTAssertEqual(store.snapshots.map(\.providerID), ["claude_code", "codex"])
         XCTAssertTrue(makeStore(providers: [claude, codex]).isProviderEnabled("codex"))
+    }
+
+    // MARK: Codex limits are read only while Codex is in use
+
+    /// Reading Codex limits spawns `codex app-server`. With no recent Codex usage there is no tab
+    /// to show them in, so the process must not be started every poll.
+    func testCodexLimitsAreNotFetchedWithoutRecentCodexUsage() async {
+        let now = Date()
+        let claude = FakeUsageProvider(id: "claude_code", displayName: "Claude Code", daily: todayDaily(100))
+        let idleCodex = FakeUsageProvider(id: "codex", displayName: "Codex", daily: nil)
+        let store = makeStore(providers: [claude, idleCodex], codex: codexPrimary(40, resetsIn: 3600, now: now))
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertNil(store.codexLimits)
+
+        idleCodex.daily = todayDaily(5)
+        await store.refresh(scheduleEmptyRetry: false)
+        XCTAssertNotNil(store.codexLimits, "limits come back as soon as Codex is used again")
     }
 }

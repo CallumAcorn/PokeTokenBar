@@ -25,18 +25,13 @@ protocol ClaudeLimitsProviding: Sendable {
     func fetch(allowKeychainPrompt: Bool) async throws -> LimitStatus
 }
 
-/// 공식 한도 % 조회 — Claude Code 자격증명(Keychain)의 OAuth 토큰으로 usage endpoint 호출.
-/// 비공식 endpoint 이므로 실패해도 토큰 표시에는 영향 없음 (한도 섹션만 숨김).
-struct OAuthLimitsProvider: ClaudeLimitsProviding, Sendable {
-    private static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
-    private let accessTokenCache = OAuthAccessTokenCache.shared
-
-    /// This is the one request that carries the user's OAuth bearer token, so it does not go
-    /// through `URLSession.shared`: an ephemeral configuration keeps the response out of the
-    /// on-disk URL cache and holds no cookie or credential storage that could outlive the call.
-    /// Created once and reused — a session built per request leaks its delegate queue unless
-    /// `invalidateAndCancel()` is called, and that is easy to get wrong on a throwing path.
-    private static let session: URLSession = {
+/// The session for every request that carries a user credential (Claude and Google bearer tokens,
+/// the Google refresh token). It does not go through `URLSession.shared`: an ephemeral configuration
+/// keeps responses out of the on-disk URL cache and holds no cookie or credential storage that could
+/// outlive the call. Created once and reused, because a session built per request leaks its
+/// delegate queue unless `invalidateAndCancel()` is called, which is easy to miss on a throwing path.
+enum CredentialedSession {
+    static let shared: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.urlCache = nil
         config.httpCookieStorage = nil
@@ -44,6 +39,15 @@ struct OAuthLimitsProvider: ClaudeLimitsProviding, Sendable {
         config.urlCredentialStorage = nil
         return URLSession(configuration: config)
     }()
+}
+
+/// 공식 한도 % 조회 — Claude Code 자격증명(Keychain)의 OAuth 토큰으로 usage endpoint 호출.
+/// 비공식 endpoint 이므로 실패해도 토큰 표시에는 영향 없음 (한도 섹션만 숨김).
+struct OAuthLimitsProvider: ClaudeLimitsProviding, Sendable {
+    private static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
+    private let accessTokenCache = OAuthAccessTokenCache.shared
+
+    private static var session: URLSession { CredentialedSession.shared }
 
     func fetch(allowKeychainPrompt: Bool = false) async throws -> LimitStatus {
         // 테스트가 사용자의 실제 토큰으로 원격을 부르지 않게 — `AppEnv.allowsLiveLimitsFetch` 참조.
@@ -461,7 +465,6 @@ enum OAuthCredentialData {
     struct Credential {
         let accessToken: String
         let expiresAt: Date?
-        let data: Data
         /// 구독 등급(max/pro/free)과 rate limit 티어(default_claude_max_20x 등) — 플랜 표시용.
         let subscriptionType: String?
         let rateLimitTier: String?
@@ -504,7 +507,6 @@ enum OAuthCredentialData {
         return Credential(
             accessToken: token,
             expiresAt: expiresAt(from: oauth["expiresAt"]),
-            data: data,
             subscriptionType: oauth["subscriptionType"] as? String,
             rateLimitTier: oauth["rateLimitTier"] as? String)
     }

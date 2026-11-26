@@ -144,6 +144,62 @@ legitimate sprite is never rejected; a RIFF container that is not WebP is refuse
   which is frequently read/write for every scope.
 - `persist-credentials: false` on checkout, since no job pushes.
 - `verify-hardening.sh` fails if an unpinned action reappears.
+- `.github/dependabot.yml` proposes the SHA bumps, so pinning does not mean going stale.
+
+## Security and operational review, 2026-11
+
+A full sweep of the app. Each item is a defect that was reachable, with the guard that closes it.
+Tests are in `SecurityUpliftTests` and `TradeStoreNetworkTests`.
+
+**Online play (self-hosted server, opt-in).** The server and the other player are untrusted.
+
+- A server could answer `completed` to any poll and the client swapped the offered Pokémon for
+  whatever came back, with no review screen. A completion is now applied only if the user confirmed,
+  and only for exactly the offer they reviewed.
+- An incoming Pokémon whose id matched one already owned was silently dropped after the user's own
+  were removed. Colliding ids are replaced.
+- Peer-set presentation flags (`isFloating` opened a desktop window per received Pokémon) are reset,
+  and evolution chains and free-text fields are length-capped in `SaveTransfer.sanitizedMon`.
+- Server requests use an ephemeral session (no cookies, cache or credential storage), a 10 s
+  timeout and a 4 MB response cap. Session ids spliced into request paths are validated, so an
+  invite link cannot retarget a request to another route.
+- Not changed, by design: gym badges and battle results are whatever the configured server says.
+  Only connect to a server you trust.
+
+**Credentials.**
+
+- Antigravity requests (Google bearer and refresh tokens) used `URLSession.shared`; they now share
+  the ephemeral `CredentialedSession` with the Claude request (extends MED 4).
+- `CLOUD_CODE_URL` could send the Google token to any host. It is now honoured only for an https
+  `*.googleapis.com` URL.
+- The Claude credential blob, which includes the refresh token, was kept in memory unused. It is
+  no longer retained.
+- The update banner opens only this repository's release pages.
+
+**Untrusted local files.**
+
+- SQLite counters were not clamped the way JSON counters are, so one huge value crashed the app on
+  every refresh. Clamped at the column read and again where the sums happen.
+- The cached parse offset is validated, and a log replaced by a larger file is detected by its
+  first bytes and re-read. A negative offset in the cache file used to crash on launch.
+- Claude logs are read in 1 MB chunks with a 16 MB per-line cap; formats still read whole are
+  skipped above 256 MB; the usage cache is ignored above 64 MB; save import checks size before
+  reading.
+- Logs and the crash file are created owner-only, and the crash file is not opened through a
+  symlink.
+
+**Operational.**
+
+- `codex app-server` was spawned on every poll (720 a day) whenever Codex was installed. It now
+  runs only while Codex has usage in the last 7 days.
+- SQLite reads wait up to 250 ms on a lock instead of dropping that refresh.
+- Dependabot proposes updates for the SHA-pinned GitHub Actions.
+
+**Known gaps, not fixed here.**
+
+- Battle polling has no overall deadline and holds a no-idle-sleep assertion while waiting.
+- Pi, Gemini and Grok logs are still read whole (now size-capped, not streamed).
+- There is no static analysis (CodeQL) in CI.
 
 ## Testing
 

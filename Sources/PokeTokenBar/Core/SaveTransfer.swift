@@ -109,6 +109,15 @@ enum SaveTransfer {
         return try encoder.encode(envelope)
     }
 
+    /// Decodes a save from a user-chosen file. The size is checked from file metadata before any
+    /// byte is read: `decode(_:)` alone applied the limit only after the whole file was in memory.
+    static func decode(contentsOf url: URL) throws -> SaveEnvelope {
+        if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > maxFileBytes {
+            throw SaveTransferError.fileTooLarge(bytes: size, limit: maxFileBytes)
+        }
+        return try decode(try Data(contentsOf: url))
+    }
+
     static func decode(_ data: Data) throws -> SaveEnvelope {
         guard data.count <= maxFileBytes else {
             throw SaveTransferError.fileTooLarge(bytes: data.count, limit: maxFileBytes)
@@ -152,6 +161,9 @@ enum SaveTransfer {
         return ids.filter { seen.insert($0).inserted }
     }
 
+    static let maxChainLength = 12
+    static let maxIdentifierLength = 64
+
     static func sanitizedMon(_ mon: MonState) -> MonState {
         var m = mon
         m.usedAtStage = clampToken(m.usedAtStage)
@@ -161,8 +173,13 @@ enum SaveTransfer {
         // A species repeated in a chain (hand edit) traps `Dictionary(uniqueKeysWithValues:)` in dex
         // name lookup, release and graduation. Keep the first occurrence and re-find the current one.
         let currentID = m.currentID
-        m.pathIDs = dedupedSpecies(m.pathIDs)
-        m.plannedPathIDs = dedupedSpecies(m.plannedPathIDs)
+        // Capped as well as deduplicated: these arrive from a trade peer or an imported file, and an
+        // evolution line is never longer than `totalForms` allows (12).
+        m.pathIDs = Array(dedupedSpecies(m.pathIDs).prefix(maxChainLength))
+        m.plannedPathIDs = Array(dedupedSpecies(m.plannedPathIDs).prefix(maxChainLength))
+        // Free-text fields from outside the app: an id is a UUID, an ability a short slug.
+        m.id = String(m.id.prefix(maxIdentifierLength))
+        m.ability = m.ability.map { String($0.prefix(maxIdentifierLength)) }
         m.stageIndex = min(m.pathIDs.firstIndex(of: currentID) ?? m.stageIndex, max(0, m.pathIDs.count - 1))
         // IV/EV feed StatCalc.compute's `2*base + iv + ev/4` — same overflow-trap shape as usedAtStage,
         // just with real games' own valid ranges as the clamp instead of maxTokenValue.

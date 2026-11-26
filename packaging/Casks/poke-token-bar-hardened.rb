@@ -1,5 +1,9 @@
 # Hardened cask for this fork. Copy into your own Homebrew tap.
 #
+# TEMPLATE ONLY. This fork currently publishes source-only releases (see INSTALL.md), so the
+# release zip this cask points at does not exist and the sha256 below is a placeholder. It is kept
+# so that, if binaries are ever published, the cask starts from the hardened shape.
+#
 # The token is deliberately NOT upstream's `poke-token-bar`. Sharing it meant
 # `brew upgrade --cask poke-token-bar` could match an upstream install and pull
 # their build instead of this one, which is the opposite of what a fork user
@@ -51,9 +55,9 @@ cask "poke-token-bar-hardened" do
     To open it once you have decided you trust it:
       right-click PokeTokenBar.app in /Applications, choose Open, then confirm.
 
-    The app reads local AI CLI usage logs. It reads a Claude credential only if you
-    turn on "Disable credential access" → off in Settings → Advanced; it is off by
-    default in this build. See SECURITY.md in the repository for the full data map.
+    The app reads local AI CLI usage logs. To show official limits it also reads the
+    Claude Code credential; that is on by default. Turn it off with Settings →
+    Advanced → "Disable credential access". See SECURITY.md for the full data map.
   EOS
 
   zap trash: [

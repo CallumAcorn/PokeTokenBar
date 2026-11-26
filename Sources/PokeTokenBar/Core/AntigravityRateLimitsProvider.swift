@@ -35,10 +35,25 @@ public struct AntigravityRateLimitsProvider: AntigravityLimitsProviding, Sendabl
         }
     }
 
+    /// `CLOUD_CODE_URL` picks the endpoint that receives the user's Google bearer token, and it is
+    /// read from the environment (or, with shell resolution on, from the login shell's rc files).
+    /// Unrestricted, any value there redirected the token to an arbitrary host. Only an https
+    /// Google API host is accepted; anything else is ignored and the built-in endpoints are used.
+    static func overrideEndpoint(from raw: String?) -> URL? {
+        guard let raw, let base = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              base.scheme?.lowercased() == "https", base.user == nil, base.password == nil,
+              let host = base.host?.lowercased(), host.hasSuffix(".googleapis.com") else {
+            if let raw, !raw.isEmpty {
+                AppLog.writeIfChanged("cloud-code-url", "CLOUD_CODE_URL ignored: not an https *.googleapis.com URL")
+            }
+            return nil
+        }
+        return URL(string: "https://\(host)\(base.port.map { ":\($0)" } ?? "")/v1internal:retrieveUserQuotaSummary")
+    }
+
     private func fetchStatus(accessToken: String) async throws -> AntigravityRateLimitStatus {
         var endpoints: [URL] = []
-        if let envURLString = UsageEnvironment.value("CLOUD_CODE_URL"),
-           let envURL = URL(string: envURLString + "/v1internal:retrieveUserQuotaSummary") {
+        if let envURL = Self.overrideEndpoint(from: UsageEnvironment.value("CLOUD_CODE_URL")) {
             endpoints.append(envURL)
         }
         endpoints.append(Self.dailyURL)
@@ -54,7 +69,7 @@ public struct AntigravityRateLimitsProvider: AntigravityLimitsProviding, Sendabl
             request.httpBody = Data("{}".utf8)
 
             do {
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await CredentialedSession.shared.data(for: request)
                 if let http = response as? HTTPURLResponse {
                     if http.statusCode == 200 {
                         return try JSONDecoder().decode(AntigravityRateLimitStatus.self, from: data)
@@ -174,7 +189,7 @@ private actor AntigravityTokenCache {
             .joined(separator: "&")
         request.httpBody = Data(bodyString.utf8)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await CredentialedSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse {
             if http.statusCode == 429 {
                 throw LimitsError.rateLimited(retryAfter: OAuthLimitsProvider.retryAfterSeconds(http))

@@ -189,7 +189,7 @@ declined for the same reason, not re-litigated.
 | `26efe4ec` | #394 | **ported** | Open a Pokédex entry by clicking a sprite, through a popover navigation hook; checked in the running app |
 | `11eebe62` | #402 | **ported** | Keep recent providers' tabs across calendar resets. Applies now the fork has `ProviderEnrichment.local` |
 | `656d603f` | #380 | **ported** | 22pt pager hit area without moving the footer; checked in the running app (7 and 10pt from the glyph page, 12pt do not) |
-| `9be4ea95` | #372 | deferred | Russian UI. Every string gains a column and the fork's own strings need translations |
+| `9be4ea95` | #372 | **declined** | Russian UI. Every string gains a column and the fork's own strings would need translations; same standing decision as German (`77e159ce`). Callum's decision, 2026-11-26 (was deferred) |
 | `0269dad7` | #395 | **ported** | Daily trend by calendar month. Taken with #270 |
 | `5afeb2a5` | #368 | **ported** | Recap chart tooltips. Taken with #332 |
 | `e21fb015` | #367 | **ported** | Return to the current period from recaps. Taken with #332 |
