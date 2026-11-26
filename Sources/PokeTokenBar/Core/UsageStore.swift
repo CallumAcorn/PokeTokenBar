@@ -668,7 +668,7 @@ final class UsageStore {
         LocalClaudeProvider(), LocalCodexProvider(), LocalGeminiProvider(),
         LocalAntigravityProvider(), LocalOpenCodeProvider(), LocalHermesProvider(),
         LocalCursorProvider(), LocalGrokProvider(), LocalCopilotProvider(), LocalKiroProvider(),
-        LocalPiProvider(),
+        LocalPiProvider(), LocalDevinProvider(),
     ],
          supplementalProviders: [any UsageProvider] = [LocalDesktopChatProvider()],
          claudeLimitsProvider: any ClaudeLimitsProviding = OAuthLimitsProvider(),
