@@ -118,9 +118,9 @@ Advanced, or point directly at the binary with a `<binary>Path` user default. Lo
 codex not in static paths and shell resolution is disabled — skipping shell spawn
 ```
 
-**The app does not restart itself.** Upstream's login agent carries `KeepAlive`, so launchd
-revives it after any non-zero exit. Here that is a separate opt-in switch, off by default.
-"Launch at login" on its own only starts the app at login.
+**The app does not restart itself.** "Launch at login" registers a login item that starts the app
+once at login (System Settings → General → Login Items). There is no launchd agent and no
+`KeepAlive`. If macOS asks you to allow it, the Settings row links there.
 
 ## Updating
 

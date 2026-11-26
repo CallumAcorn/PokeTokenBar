@@ -578,6 +578,17 @@ read_when:
 
 ## 프로세스·인스턴스
 
+- **A registered LaunchAgent is not a running one.** `SMAppService.agent.status == .enabled` held
+  for both of this fork's login agents while launchd could not start the app: AMFI kills a self-signed
+  or ad-hoc signed binary that launchd execs directly (`launchctl print` showed `spawn failed`,
+  `last exit reason = OS_REASON_CODESIGNING`, macOS 27.2.1, 2026-11-26). Launch at login was silently
+  broken. Why nothing caught it: every manual launch and test used `open`/LaunchServices, a different
+  path; no test covered the login path, and `verify-hardening.sh` checks only the plist contents. Fix (port of upstream #474):
+  register `SMAppService.mainApp`, migrate an enabled legacy agent at startup, unregister both
+  agents, and defer that cleanup when a legacy agent launched this process. The crash-restart
+  opt-in went with its agent. Check a login change with `launchctl print gui/$(id -u)/<label>` after
+  a real login, not with the `status` property. Pinned by `LoginItemTests`.
+
 - **로그인 실행을 LaunchAgent 로 등록하면 "등록하는 순간" 앱이 한 번 더 뜬다.** plist 의 `RunAtLoad` 는
   로그인 때만이 아니라 **에이전트가 로드되는 시점**의 실행을 뜻하고, `SMAppService.agent.register()` 가
   곧 그 로드다. 앱이 떠 있는 채로 등록되는 경로가 둘이라 둘 다 아이콘이 두 개가 된다 — 설정 토글

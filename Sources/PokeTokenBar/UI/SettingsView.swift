@@ -8,8 +8,8 @@ struct SettingsView: View {
     @Environment(OnlineStore.self) private var online
     /// 팝오버 내부 화면 전환 방식 — sheet/dismiss 를 쓰지 않는다 (PopoverView 의 NOTE 참조)
     var onClose: () -> Void
-    @State private var launchAtLogin = LoginItem.isEnabled
-    @State private var autoRestart = LoginItem.isAutoRestartEnabled
+    @State private var launchAtLoginEnabled = false
+    @State private var launchAtLoginNeedsApproval = false
     @State private var launchAtLoginError: String?
     /// 셸 해석 옵트인 — 기본은 끔(BinaryLocator 가 같은 키를 같은 기본값으로 읽는다).
     @AppStorage(BinaryLocator.shellResolutionDefaultsKey) private var disableShellResolution = true
@@ -81,6 +81,39 @@ struct SettingsView: View {
             footer
         }
         .frame(height: 460)
+        .onAppear(perform: refreshLaunchAtLoginStatus)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // The user may have just approved (or removed) the login item in System Settings.
+            refreshLaunchAtLoginStatus()
+        }
+    }
+
+    private func refreshLaunchAtLoginStatus() {
+        guard isBundledApp else { return }
+        let item = LoginItem.system
+        do {
+            try item.removeLegacyAgentsAfterActivation()
+        } catch {
+            AppLog.write("login item cleanup failed: \(error)")
+        }
+        updateLaunchAtLoginState(item)
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        let item = LoginItem.system
+        do {
+            try item.setEnabled(enabled)
+            launchAtLoginError = nil
+        } catch {
+            AppLog.write("login item update failed: \(error)")
+            launchAtLoginError = error.localizedDescription
+        }
+        updateLaunchAtLoginState(item)
+    }
+
+    private func updateLaunchAtLoginState(_ item: LoginItem) {
+        launchAtLoginEnabled = item.isEnabled
+        launchAtLoginNeedsApproval = item.status == .requiresApproval
     }
 
     private var header: some View {
@@ -189,47 +222,22 @@ struct SettingsView: View {
                     Text(l.launchAtLogin)
                     if !isBundledApp {
                         Text(l.bundledOnly).font(.caption2).foregroundStyle(.tertiary)
+                    } else if launchAtLoginNeedsApproval {
+                        Button(l.launchAtLoginApprovalHint) { setLaunchAtLogin(true) }
+                            .buttonStyle(.link)
+                            .font(.caption2)
                     }
                     if let launchAtLoginError {
                         Text(launchAtLoginError).font(.caption2).foregroundStyle(.red)
                     }
                 }
                 Spacer()
-                Toggle("", isOn: $launchAtLogin)
+                Toggle("", isOn: Binding(
+                    get: { launchAtLoginEnabled },
+                    set: { setLaunchAtLogin($0) }
+                ))
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
                     .disabled(!isBundledApp)
-                    .onChange(of: launchAtLogin) { _, newValue in
-                        do {
-                            try LoginItem.setEnabled(newValue, autoRestart: autoRestart)
-                            launchAtLoginError = nil
-                        } catch {
-                            launchAtLoginError = "\(error.localizedDescription)"
-                            launchAtLogin = LoginItem.isEnabled
-                        }
-                    }
-            }
-            Divider()
-            groupRow {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(l.autoRestart)
-                    Text(l.autoRestartHint).font(.caption2).foregroundStyle(.tertiary)
-                }
-                Spacer()
-                // 로그인 실행이 꺼져 있으면 등록할 에이전트가 없다. 그대로 두면 사용자가 켠 값이
-                // 아무 데도 저장되지 않고 다음에 설정을 열 때 조용히 되돌아간다 — 비활성으로
-                // 종속 관계를 드러내는 쪽이 정직하다.
-                Toggle("", isOn: $autoRestart)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                    .disabled(!isBundledApp || !launchAtLogin)
-                    .onChange(of: autoRestart) { _, newValue in
-                        do {
-                            try LoginItem.setAutoRestart(newValue)
-                            launchAtLoginError = nil
-                        } catch {
-                            launchAtLoginError = "\(error.localizedDescription)"
-                            autoRestart = LoginItem.isAutoRestartEnabled
-                        }
-                    }
             }
         }
     }

@@ -14,7 +14,7 @@ Three defaults are inverted relative to upstream. Everything else keeps upstream
 |---|---|---|---|
 | Credential access | Enabled | Enabled | Unchanged. See MED 4 for the automatic-refresh interlock |
 | Shell path resolution | Enabled | **Disabled** | Tools outside the static path list are not found |
-| Login agent `KeepAlive` | Always on with login | **Opt-in** | App does not restart itself after a crash |
+| Login agent `KeepAlive` | Always on with login | **None** (login item, no agent) | App does not restart itself after a crash |
 
 An explicit prior choice is never overwritten. The defaults apply only when the key has never
 been written, so upgrading does not silently change a setting you already made.
@@ -54,16 +54,24 @@ auditable decision by the person installing rather than something the installer 
 
 Fully closing this needs an Apple Developer ID and notarisation, which this fork does not have.
 
-## HIGH 3 — Persistence with auto-restart
+## HIGH 3: Persistence with auto-restart
 
-**Upstream:** one launchd agent with `KeepAlive.SuccessfulExit=false`, registered by the single
-"launch at login" toggle. The app therefore reappears after being killed.
+**Upstream (before #474):** one launchd agent with `KeepAlive.SuccessfulExit=false`, registered by
+the single "launch at login" toggle. The app therefore reappeared after being killed.
 
-**Here:** two agents ship in the bundle and exactly one is ever registered. The default keeps the
-existing label and drops `KeepAlive`, so existing registrations stay valid across the upgrade and
-no migration is needed. Auto-restart moves to its own switch, off by default.
+**Here, first:** two agents shipped in the bundle and exactly one was registered: `…login`
+(RunAtLoad only, the default) or `…autorestart` (RunAtLoad + KeepAlive, an opt-in).
 
-`UpdateChecker` now kickstarts either label after a brew upgrade.
+**Here, now (port of upstream 38e3e553, #474):** neither agent could run. launchd execs the binary
+directly and AMFI kills a self-signed or ad-hoc signed build with a launch constraint violation, so
+`SMAppService.agent.status` read `.enabled` while `launchctl print` showed `spawn failed` and
+`last exit reason = OS_REASON_CODESIGNING` (verified on macOS 27.2.1, 2026-11-26). Launch at login
+is now a login item (`SMAppService.mainApp`): visible in System Settings → Login Items, no launchd
+job, no `KeepAlive`. The crash-restart switch is gone because its agent could never start.
+
+Startup migrates an enabled legacy agent to the login item and then unregisters both agents. The
+agent plists stay in the bundle so `SMAppService` can still unregister old registrations, and
+`verify-hardening.sh` still asserts the default one carries no `KeepAlive`.
 
 ## MED 4 — Claude OAuth token handling
 

@@ -110,7 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
         NSApp.setActivationPolicy(.accessory)
         Self.migrateLegacyStorageIfNeeded()   // TokenMac → PokeTokenBar 리네임: 기존 companion/캐시 보존
-        LoginItem.migrateFromLegacyLoginItemIfNeeded()   // 로그인아이템 → KeepAlive 에이전트(크래시 자동 재실행)
+        if AppEnv.isBundledApp {
+            // Legacy LaunchAgent → login item (the agents cannot spawn a self-signed build).
+            LoginItem.system.migrateFromLegacyAgentIfNeeded()
+        }
         store = UsageStore()
         companion = CompanionStore()
         updater = UpdateChecker()

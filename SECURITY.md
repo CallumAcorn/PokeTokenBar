@@ -145,19 +145,21 @@ Three further bounds on that automatic read:
 
 ## Persistence
 
-"Launch at login" registers a launchd agent from inside the app bundle. This fork ships two, and
-registers exactly one:
+"Launch at login" registers the app as a login item (`SMAppService.mainApp`). It appears in
+System Settings → General → Login Items, starts the app once at login, and never restarts it.
 
-| Agent | Behaviour | Default |
-|---|---|---|
-| `io.github.chattymin.poketokenbar.login` | `RunAtLoad` only | Used when launch at login is on |
-| `io.github.chattymin.poketokenbar.autorestart` | `RunAtLoad` + `KeepAlive` | Opt-in |
+Older builds registered a launchd agent instead, one of these two:
 
-The second one restarts the app whenever it exits non-zero. That is genuine crash recovery, and
-it is also the behaviour endpoint security tools watch for, so it is a separate switch rather
-than something bundled into the login toggle.
+| Agent | Behaviour |
+|---|---|
+| `io.github.chattymin.poketokenbar.login` | `RunAtLoad` only |
+| `io.github.chattymin.poketokenbar.autorestart` | `RunAtLoad` + `KeepAlive` |
 
-To remove either by hand:
+launchd cannot start a self-signed build from either (macOS kills it on a launch-constraint check),
+so they were replaced. The app migrates an enabled agent to the login item at startup and then
+unregisters both; the plists stay in the bundle only for that cleanup.
+
+To remove a leftover agent by hand:
 
 ```
 launchctl bootout gui/$(id -u)/io.github.chattymin.poketokenbar.login
