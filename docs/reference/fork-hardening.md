@@ -145,6 +145,7 @@ legitimate sprite is never rejected; a RIFF container that is not WebP is refuse
 - `persist-credentials: false` on checkout, since no job pushes.
 - `verify-hardening.sh` fails if an unpinned action reappears.
 - `.github/dependabot.yml` proposes the SHA bumps, so pinning does not mean going stale.
+- CodeQL runs with the same pinning and least-privilege rules (`security-events: write` only).
 
 ## Security and operational review, 2026-11
 
@@ -195,11 +196,17 @@ Tests are in `SecurityUpliftTests` and `TradeStoreNetworkTests`.
 - SQLite reads wait up to 250 ms on a lock instead of dropping that refresh.
 - Dependabot proposes updates for the SHA-pinned GitHub Actions.
 
-**Known gaps, not fixed here.**
+**Follow-up, same month.**
 
-- Battle polling has no overall deadline and holds a no-idle-sleep assertion while waiting.
-- Pi, Gemini and Grok logs are still read whole (now size-capped, not streamed).
-- There is no static analysis (CodeQL) in CI.
+- Battle polling now gives up after 10 minutes without an opponent and after 45 failed polls in a
+  row, backing off while the server is failing. Idle sleep is blocked only while a battle is live;
+  waiting in a lobby holds off App Nap but lets the Mac sleep.
+- CodeQL (`.github/workflows/codeql.yml`, `security-extended`) analyses the Swift sources on every
+  pull request, on `main`, and weekly.
+
+**Known gaps.**
+
+- Pi, Gemini and Grok logs are still read whole (size-capped, not streamed).
 
 ## Testing
 

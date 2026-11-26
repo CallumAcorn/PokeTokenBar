@@ -97,12 +97,14 @@ private final class FixedStubURLProtocol: URLProtocol {
 /// create→poll→poll→choose exchange in one test, unlike `FixedStubURLProtocol`'s single fixed reply.
 private final class QueuedStubURLProtocol: URLProtocol {
     nonisolated(unsafe) static var responses: [(Int, Data)] = []
+    /// Served once `responses` is empty, so a fast poll loop keeps seeing a steady server state.
+    nonisolated(unsafe) static var fallback: (Int, Data)?
     private static let lock = NSLock()
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Self.lock.lock()
-        let next = Self.responses.isEmpty ? (200, Data()) : Self.responses.removeFirst()
+        let next = Self.responses.isEmpty ? (Self.fallback ?? (200, Data())) : Self.responses.removeFirst()
         Self.lock.unlock()
         let response = HTTPURLResponse(url: request.url!, statusCode: next.0, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -114,6 +116,8 @@ private final class QueuedStubURLProtocol: URLProtocol {
 
 @MainActor
 final class BattleStoreNetworkTests: XCTestCase {
+    private final class TestClock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_700_000_000) }
+
     private let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)
     private let pikachuStats = BaseStats(hp: 35, attack: 55, defense: 40, specialAttack: 50, specialDefense: 50, speed: 90,
                                          abilities: [PokemonAbility(name: "static", isHidden: false)])
@@ -142,7 +146,9 @@ final class BattleStoreNetworkTests: XCTestCase {
                  rarity: .common, totalForms: 1, nature: .adamant, ability: "static", knownMoves: [84])
     }
 
-    private func makeStore(protocolClass: URLProtocol.Type, pollIntervalNanoseconds: UInt64 = 2_000_000_000) -> BattleStore {
+    private func makeStore(protocolClass: URLProtocol.Type, pollIntervalNanoseconds: UInt64 = 2_000_000_000,
+                           maxWaitForOpponent: TimeInterval = 600, maxConsecutivePollFailures: Int = 45,
+                           clock: @escaping () -> Date = Date.init) -> BattleStore {
         let companionURL = FileManager.default.temporaryDirectory.appendingPathComponent("battle-net-\(UUID().uuidString).json")
         let provider = ReadyProvider(stats: pikachuStats, moves: [84: Move(id: 84, name: "thunder-shock", type: .electric, power: 40, accuracy: 100, pp: 30, damageClass: .special, names: [:])])
         let companion = CompanionStore(provider: provider, clock: { self.fixedNow }, fileURL: companionURL, rng: SeededRNG(seed: 7))
@@ -151,7 +157,9 @@ final class BattleStoreNetworkTests: XCTestCase {
         let session = URLSession(configuration: config)
         let online = OnlineStore(defaults: UserDefaults(suiteName: "BattleStoreNetworkTests.\(UUID().uuidString)")!, session: session)
         online.serverURL = "https://mock.test"
-        let store = BattleStore(companion: companion, online: online, session: session, pollIntervalNanoseconds: pollIntervalNanoseconds)
+        let store = BattleStore(companion: companion, online: online, session: session, pollIntervalNanoseconds: pollIntervalNanoseconds,
+                                maxWaitForOpponent: maxWaitForOpponent, maxConsecutivePollFailures: maxConsecutivePollFailures,
+                                clock: clock)
         // SpectatorStoreTests 와 같은 누수: 멈추지 않은 스토어가 다음 테스트가 정적 공유 큐에 넣은 응답을
         // 먼저 가져간다. 거기서 CI 간헐 실패로 드러났고, 같은 패턴을 복사한 이 파일은 스토어를 하나도 안
         // 멈추고 있었다(아직 터지지 않았을 뿐). 부류째 고친다.
@@ -161,6 +169,75 @@ final class BattleStoreNetworkTests: XCTestCase {
 
     override func setUp() async throws {
         QueuedStubURLProtocol.responses = []
+        QueuedStubURLProtocol.fallback = nil
+    }
+
+    private static let waitingReply = Data(#"{"status":"waiting","turn":0}"#.utf8)
+    private static let activeReply = Data("""
+        {"status":"active","turn":1,"pendingChoice":"move",
+         "you":{"displayName":"Ash","roster":[{"speciesID":25,"name":"Ash-0","fainted":false,"hpFraction":1}],"activeIndex":0},
+         "opponent":{"displayName":"Gary","active":{"speciesID":4,"name":"Gary-0","fainted":false,"hpFraction":1},"rosterSize":1},
+         "log":[]}
+        """.utf8)
+
+    /// A lobby that never fills used to be polled every 2s, with the Mac kept awake, until the user
+    /// cancelled. It now gives up after the deadline.
+    func testWaitingForAnOpponentGivesUpAfterTheDeadline() async {
+        let clock = TestClock()
+        QueuedStubURLProtocol.responses = [(200, Data(#"{"sessionId":"sess-1"}"#.utf8))]
+        QueuedStubURLProtocol.fallback = (200, Self.waitingReply)
+        let battle = makeStore(protocolClass: QueuedStubURLProtocol.self, pollIntervalNanoseconds: 5_000_000,
+                               maxWaitForOpponent: 600, clock: { clock.now })
+        await battle.createBattle(roster: [mon()])
+        guard case .waitingForOpponent = battle.phase else { return XCTFail("got \(battle.phase)") }
+
+        // Several polls inside the deadline change nothing.
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        guard case .waitingForOpponent = battle.phase else { return XCTFail("gave up early: \(battle.phase)") }
+        XCTAssertFalse(battle.holdsNoSleepAssertion, "waiting for an opponent must not keep the Mac awake")
+
+        clock.now.addTimeInterval(601)
+        let gaveUp = await waitUntil {
+            switch battle.phase {
+            case .failed, .idle: return true
+            default: return false
+            }
+        }
+        XCTAssertTrue(gaveUp, "expected the wait to end after the deadline, got \(battle.phase)")
+        XCTAssertFalse(battle.holdsNoSleepAssertion)
+    }
+
+    /// A server that stops answering sensibly is not polled forever.
+    func testRepeatedPollFailuresEndTheBattleInsteadOfRetryingForever() async {
+        QueuedStubURLProtocol.responses = [(200, Data(#"{"sessionId":"sess-1"}"#.utf8))]
+        QueuedStubURLProtocol.fallback = (200, Data("not json".utf8))
+        let battle = makeStore(protocolClass: QueuedStubURLProtocol.self, pollIntervalNanoseconds: 2_000_000,
+                               maxConsecutivePollFailures: 3)
+        await battle.createBattle(roster: [mon()])
+        let ended = await waitUntil {
+            switch battle.phase {
+            case .failed, .idle: return true
+            default: return false
+            }
+        }
+        XCTAssertTrue(ended, "expected the battle to be abandoned after repeated failures, got \(battle.phase)")
+    }
+
+    /// Idle sleep is blocked only while a battle is live.
+    func testTheMacIsKeptAwakeOnlyOnceTheBattleIsActive() async {
+        QueuedStubURLProtocol.responses = [(200, Data(#"{"sessionId":"sess-1"}"#.utf8)), (200, Self.waitingReply)]
+        QueuedStubURLProtocol.fallback = (200, Self.activeReply)
+        let battle = makeStore(protocolClass: QueuedStubURLProtocol.self, pollIntervalNanoseconds: 5_000_000)
+        await battle.createBattle(roster: [mon()])
+        XCTAssertFalse(battle.holdsNoSleepAssertion)
+        let active = await waitUntil {
+            if case .battling(_, let view) = battle.phase { return view.status == "active" }
+            return false
+        }
+        XCTAssertTrue(active)
+        XCTAssertTrue(battle.holdsNoSleepAssertion, "a live battle keeps the Mac awake")
+        await battle.cancel()
+        XCTAssertFalse(battle.holdsNoSleepAssertion, "the assertion is released when the battle ends")
     }
 
     /// [Mirrors TradeStoreFailureTests] A 401 must not be a dead end — self-heals back to idle.

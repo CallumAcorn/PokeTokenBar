@@ -176,6 +176,27 @@ PC → <b>키우미집</b>에 궁합이 맞는 두 마리를 맡기면, 훈련�
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-recap-ko.png" width="300" alt="8월 사용량 돌아보기: 합계·일별 게이지·최고의 날·졸업"></td>
 </tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-trend-window-ko.png" width="300" alt="최근 14일 일별 추이(도구별 누적)와 12일 연속 배지"></td>
+<td width="55%" valign="middle">
+<h3>📈 기간을 고르고, 연속 기록을 이어가기</h3>
+추이를 최근 7·14·21일 또는 이번 달로 볼 수 있습니다. 불꽃은 사용이 이어진 날 수를 세고, <b>상세</b>는 돌아보기를 엽니다. 예시 데이터입니다.
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>🟩 16주를 한눈에</h3>
+추이를 클릭하면 최근 16주를 하루 한 칸으로 보여주는 히트맵으로 바뀝니다. 다시 클릭하면 돌아옵니다. 예시 데이터입니다.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-activity-grid-ko.png" width="300" alt="활동 그리드: 16주간의 일별 사용량을 색 칸으로 표시"></td>
+</tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-tracked-providers-ko.png" width="300" alt="설정의 추적할 프로바이더 목록(도구별 스위치)"></td>
+<td width="55%" valign="middle">
+<h3>🎚️ 쓰는 도구만 추적</h3>
+설정에서 지원하는 도구마다 스위치로 켜고 끕니다. 끈 도구는 아예 읽지 않습니다: 탭도, 합계도, 한도도 없습니다.
+</td>
+</tr>
 </table>
 
 ## 이 밖에도

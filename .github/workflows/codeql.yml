@@ -1,0 +1,52 @@
+name: CodeQL
+
+# Static analysis of the Swift sources. Findings appear under Security → Code scanning and as
+# annotations on the pull request that introduces them.
+#
+# Scheduled weekly as well as on change: new queries find issues in code nobody touched.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * 1"
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze (swift)
+    # Swift analysis needs a macOS runner; macos-15 matches ci.yml (Swift 6 / Xcode 16).
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      # Upload results to code scanning.
+      security-events: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934 # v4
+        with:
+          languages: swift
+          # Swift is a compiled language: CodeQL observes a real build.
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build
+        run: swift build
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934 # v4
+        with:
+          category: "/language:swift"

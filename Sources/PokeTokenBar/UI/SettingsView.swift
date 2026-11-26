@@ -274,19 +274,11 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder
     private func trackedProvidersGroup(_ store: UsageStore) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            settingsSection(l.trackedProvidersSectionTitle) {
-                ForEach(Array(store.registeredProviders.enumerated()), id: \.element.id) { index, provider in
-                    if index > 0 { Divider() }
-                    toggleRow(provider.displayName, Binding(
-                        get: { store.isProviderEnabled(provider.id) },
-                        set: { store.setProviderEnabled(provider.id, $0) }))
-                }
-            }
-            Text(l.trackedProvidersHint).font(.caption2).foregroundStyle(.tertiary).padding(.leading, 4)
-        }
+        TrackedProvidersSection(providers: store.registeredProviders,
+                                isEnabled: { store.isProviderEnabled($0) },
+                                setEnabled: { store.setProviderEnabled($0, $1) },
+                                l: l)
     }
 
     @ViewBuilder
@@ -733,31 +725,16 @@ struct SettingsView: View {
     private func settingsSection<Content: View>(
         _ title: String, @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
-                .textCase(.uppercase).padding(.leading, 4)
-            VStack(spacing: 0) { content() }
-                .background(Color(nsColor: .controlBackgroundColor),
-                           in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 1))
-        }
+        SettingsChrome.section(title, content: content)
     }
 
-    /// 카드 내부 한 줄 — 좌 라벨 / 우 컨트롤.
+    /// 카드 내부 한 줄, 좌 라벨 / 우 컨트롤.
     private func groupRow<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        HStack(spacing: 10) { content() }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .frame(minHeight: 38)
+        SettingsChrome.row(content)
     }
 
     private func toggleRow(_ label: String, _ isOn: Binding<Bool>) -> some View {
-        groupRow {
-            Text(label)
-            Spacer()
-            Toggle("", isOn: isOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
-        }
+        SettingsChrome.toggleRow(label, isOn)
     }
 
     /// 푸터 링크 — 버전 표기와 동일한 크기·색을 상속하고 밑줄로만 구분.
@@ -999,5 +976,60 @@ private struct SnapshotHistoryButton: NSViewRepresentable {
         var isExpanded: Binding<Bool>
         init(isExpanded: Binding<Bool>) { self.isExpanded = isExpanded }
         @objc func toggle() { isExpanded.wrappedValue.toggle() }
+    }
+}
+
+/// The card look shared by every Settings group. File-level so a section that is rendered on its
+/// own (`TrackedProvidersSection`, used for the README screenshot) draws exactly what Settings draws.
+@MainActor
+enum SettingsChrome {
+    static func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
+                .textCase(.uppercase).padding(.leading, 4)
+            VStack(spacing: 0) { content() }
+                .background(Color(nsColor: .controlBackgroundColor),
+                           in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 1))
+        }
+    }
+
+    static func row<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 10) { content() }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .frame(minHeight: 38)
+    }
+
+    static func toggleRow(_ label: String, _ isOn: Binding<Bool>) -> some View {
+        row {
+            Text(label)
+            Spacer()
+            Toggle("", isOn: isOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
+        }
+    }
+}
+
+/// Settings → Tracked providers: one switch per registered provider (upstream #460).
+@MainActor
+struct TrackedProvidersSection: View {
+    let providers: [(id: String, displayName: String)]
+    let isEnabled: (String) -> Bool
+    let setEnabled: (String, Bool) -> Void
+    let l: L
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SettingsChrome.section(l.trackedProvidersSectionTitle) {
+                ForEach(Array(providers.enumerated()), id: \.element.id) { index, provider in
+                    if index > 0 { Divider() }
+                    SettingsChrome.toggleRow(provider.displayName, Binding(
+                        get: { isEnabled(provider.id) },
+                        set: { setEnabled(provider.id, $0) }))
+                }
+            }
+            Text(l.trackedProvidersHint).font(.caption2).foregroundStyle(.tertiary).padding(.leading, 4)
+        }
     }
 }
