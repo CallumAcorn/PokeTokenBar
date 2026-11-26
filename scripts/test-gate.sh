@@ -39,9 +39,19 @@ LOGIC_CORE=(
 echo "▶ swift test (--enable-code-coverage)"
 swift test --enable-code-coverage
 
-PROF=$(find .build -name 'default.profdata' | head -1)
-# dSYM 안에도 같은 이름의 DWARF 바이너리가 있어 head -1 이 그걸 집으면 llvm-cov 가 실패한다 → 제외.
-BIN=$(find .build -name 'PokeTokenBarPackageTests' -type f ! -path '*.dSYM/*' | head -1)
+# Ask SwiftPM where this run's products are. `find .build ... | head -1` picked up binaries left
+# behind by an older toolchain's layout (.build/arm64-apple-macosx/debug) after newer SwiftPM moved
+# products to .build/out/Products, so the gate scored a months-old build (61% against a real 80%+).
+CODECOV_JSON=$(swift test --show-codecov-path 2>/dev/null | tail -1)
+PROF="$(dirname "$CODECOV_JSON")/default.profdata"
+BIN_DIR=$(swift build --show-bin-path 2>/dev/null | tail -1)
+BIN=""
+# The test bundle is named after the package (older SwiftPM) or the test target (newer).
+for name in PokeTokenBarPackageTests PokeTokenBarTests; do
+  candidate="$BIN_DIR/$name.xctest/Contents/MacOS/$name"
+  if [[ -f "$candidate" ]]; then BIN="$candidate"; break; fi
+done
+[[ -f "$PROF" ]] || PROF=""
 if [[ -z "$PROF" || -z "$BIN" ]]; then
   echo "✗ 커버리지 산출물(profdata/binary)을 찾지 못했습니다." >&2
   exit 1
@@ -49,13 +59,33 @@ fi
 
 echo
 echo "▶ 로직 코어 커버리지 (임계값 ${THRESHOLD}%)"
-REPORT=$(xcrun llvm-cov report "$BIN" -instr-profile="$PROF" "${LOGIC_CORE[@]}" 2>/dev/null)
-echo "$REPORT"
-
-# TOTAL 행의 라인 커버리지(%) 추출 — 컬럼: ... Lines MissedLines Cover(=$10)
-COVER=$(echo "$REPORT" | awk '/^TOTAL/ { gsub("%","",$10); print $10 }')
+# Line coverage is summed from llvm-cov's JSON export over exactly the logic-core files. The
+# previous `llvm-cov report BIN <files>` relied on positional file filters, which newer llvm-cov
+# ignores: it then reported every file (UI and tests included) and the gate compared an unrelated
+# total. Matching by path suffix works whether the tool records absolute or relative paths.
+COVER=$(xcrun llvm-cov export "$BIN" -instr-profile="$PROF" -summary-only 2>/dev/null \
+  | python3 -c '
+import json, sys
+core = sys.argv[1:]
+files = json.load(sys.stdin)["data"][0]["files"]
+total = covered = 0
+missing = []
+for want in core:
+    hit = [f for f in files if f["filename"] == want or f["filename"].endswith("/" + want)]
+    if not hit:
+        missing.append(want)
+        continue
+    lines = hit[0]["summary"]["lines"]
+    total += lines["count"]; covered += lines["covered"]
+    sys.stderr.write("  %6.2f%%  %s\n" % (lines["percent"], want))
+# A core file absent from the data means a stale or wrong binary: refuse to produce a number.
+if missing or total == 0:
+    sys.stderr.write("missing from coverage data: %s\n" % ", ".join(missing))
+    sys.exit(1)
+print("%.2f" % (100.0 * covered / total))
+' "${LOGIC_CORE[@]}") || COVER=""
 if [[ -z "$COVER" ]]; then
-  echo "✗ 커버리지 수치 파싱 실패." >&2
+  echo "✗ 커버리지 산출 실패 (binary: $BIN) — 로직 코어 파일이 커버리지 데이터에 없습니다." >&2
   exit 1
 fi
 

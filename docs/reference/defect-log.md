@@ -1047,6 +1047,25 @@ read_when:
 
 ## 릴리스 스크립트
 
+- **The coverage gate scored the wrong binary, then the wrong files, and still printed a number.**
+  `test-gate.sh` located its inputs with `find .build -name ... | head -1`. A newer SwiftPM moved
+  products to `.build/out/Products`, so `find` returned binaries an older toolchain had left in
+  `.build/arm64-apple-macosx/debug` months earlier: the gate measured a stale build. Separately,
+  newer `llvm-cov report` ignores positional file filters, so the "logic core" total silently became
+  the total of every file, tests included (61% against a real 90%). Neither failure was visible: a
+  percentage was always produced. CI used the older toolchain, where both happened to work. The
+  script now asks SwiftPM for the paths (`--show-codecov-path`, `--show-bin-path`), sums line counts
+  from `llvm-cov export` over exactly the listed files, and exits non-zero if any listed file is
+  absent from the data. A gate must fail when it cannot find what it measures.
+- **A pixel-measuring test encoded the display scale.** `testPaceMarkerStaysCloseToPaintedTrackHeight`
+  counted rows darker than 0.6. On a 1x display the marker's first and last rows are half covered
+  (about 0.73) and were not counted, so it measured 8pt instead of 10pt and failed only on machines
+  whose main display is not Retina. It passed in CI (2x), which hid it; locally it blocked
+  `test-gate.sh`, so the coverage step never ran here. It also compared the marker with a *measured*
+  track, and the system track measures 6pt on one renderer and 3pt in CI, so CI passed by two errors
+  cancelling (8 against 3+4). The cut-off is now 0.8 and the marker is compared with its design
+  height (10pt), which is the same everywhere.
+
 - **사람의 관례(커밋 메시지)로 판정하는 가드는 조용히 안 걸린다 — 무엇이 바뀌었는지로 판정한다.**
   에셋 게이트는 "UI 를 건드린 커밋 제목이 `feat:` 인가"로 새 화면을 찾았다. 결과: moves/TM, battles,
   gym badges 가 **전부 새 화면인데 세 릴리스 연속 통과**했다(기여자가 conventional commits 를 쓰지

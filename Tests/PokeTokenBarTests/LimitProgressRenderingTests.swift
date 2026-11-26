@@ -136,10 +136,22 @@ final class LimitProgressRenderingTests: XCTestCase {
         // 눈금에서 몇 pt 떨어진 열 — 트랙만 칠해진 곳.
         let trackOnlyColumn = markerColumn + Int(8 * scale)
         let trackHeight = Double(paintedRows(column: trackOnlyColumn, darkerThan: 0.98)) / scale
-        let markerHeight = Double(paintedRows(column: markerColumn, darkerThan: 0.6)) / scale
+        // 0.8, not 0.6: on a 1x display the 10pt marker sits on a half-point offset, so its first and
+        // last pixel rows are half covered (brightness about 0.73 over white). A 0.6 cut-off dropped
+        // both and measured 8pt, failing on 1x screens while passing on 2x (CI). The bare track is
+        // lighter than 0.8, so it is still not counted as marker.
+        let markerHeight = Double(paintedRows(column: markerColumn, darkerThan: 0.8)) / scale
+        XCTAssertLessThan(Double(paintedRows(column: trackOnlyColumn, darkerThan: 0.8)), 1,
+                          "the track alone must stay above the marker cut-off, or this measures the track")
 
         XCTAssertGreaterThan(trackHeight, 0, "트랙이 칠해져야 아래 비교가 뜻을 가진다")
-        XCTAssertEqual(markerHeight, trackHeight + 4, accuracy: 1,
+        // Compared with the design value (6pt track + 2pt overhang each side), not the measured
+        // track. How much of the system track counts as "painted" depends on the renderer: it
+        // measured 6pt on one machine and 3pt in CI, so `marker == track + 4` held on each only by
+        // coincidence of two errors (8 vs 6+4 failed locally, 8 vs 3+4 passed in CI). The marker is
+        // ours, so its height is stable: 10pt everywhere. The defect this guards is a marker sized
+        // to the 12-16pt layout cell.
+        XCTAssertEqual(markerHeight, 10, accuracy: 1,
                        "눈금은 트랙 위아래로 2pt 씩만 물려야 한다 (트랙 \(trackHeight)pt, 눈금 \(markerHeight)pt)")
     }
 }
