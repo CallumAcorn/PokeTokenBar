@@ -357,33 +357,76 @@ enum LocalUsageReader {
 
     /// Claude 파일 하나를 파싱(파일 내 dedup). 캐시가 파일 단위로 호출.
     static func parseClaudeFile(_ url: URL, fmt: DateFormatter) -> [Entry] {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        guard let parsed = parseClaudeFile(url, fromOffset: 0, fmt: fmt) else { return [] }
+        guard let costState = parsed.costState else { return parsed.entries }
+        return applyReportedCost(parsed.entries, costState)
+    }
+
+    /// Parses only the bytes after `fromOffset`. Session logs are append-only and the active
+    /// one can be hundreds of MB, so the cache re-reads just the new tail each refresh instead
+    /// of the whole file. `newOffset` stops at the last complete line so a half-written record
+    /// is retried next time. Entries are raw (no reported cost applied). Nil means unreadable.
+    /// Ported from upstream 8f74054b (#338).
+    static func parseClaudeFile(_ url: URL, fromOffset: Int, fmt: DateFormatter)
+        -> (entries: [Entry], newOffset: Int, costState: ClaudeCostState?)?
+    {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: UInt64(fromOffset))) != nil,
+              let data = try? handle.readToEnd() else { return nil }
+        let parsed = parseClaudeData(data, fmt: fmt)
+        return (parsed.entries, fromOffset + parsed.consumed, parsed.costState)
+    }
+
+    private static let usageNeedle = Data("\"usage\"".utf8)
+    private static let assistantNeedle = Data("\"assistant\"".utf8)
+    private static let costStateNeedle = Data("\"cost-state\"".utf8)
+
+    /// Byte-level line scan: no whole-file String or per-line Substring allocation.
+    /// `consumed` is the byte count up to and including the last newline.
+    static func parseClaudeData(_ data: Data, fmt: DateFormatter)
+        -> (entries: [Entry], consumed: Int, costState: ClaudeCostState?)
+    {
         var out: [Entry] = []
         var costState: ClaudeCostState?
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+        var consumed = 0
+        var lineStart = data.startIndex
+        func parse(_ line: Data.SubSequence) {
             // Cumulative ledger: the last record in the file wins.
-            if line.contains("\"cost-state\"") {
+            if line.range(of: costStateNeedle) != nil {
                 autoreleasepool {
-                    if let state = parseClaudeCostStateLine(String(line)) { costState = state }
+                    if let text = String(data: line, encoding: .utf8),
+                       let state = parseClaudeCostStateLine(text) { costState = state }
                 }
-                continue
+                return
             }
-            guard line.contains("\"usage\""), line.contains("\"assistant\"") else { continue }
+            guard !line.isEmpty,
+                  line.range(of: usageNeedle) != nil,
+                  line.range(of: assistantNeedle) != nil,
+                  let text = String(data: line, encoding: .utf8) else { return }
             // 라인마다 autoreleasepool — JSONSerialization 이 만드는 autoreleased NSDictionary/NSString 가
             // 수천 파일·수만 라인에 걸쳐 배출 없이 누적돼 콜드 파싱 피크를 키우던 것을 즉시 배출.
             autoreleasepool {
-                if let e = parseClaudeLine(String(line), fmt: fmt) { out.append(e) }
+                if let e = parseClaudeLine(text, fmt: fmt) { out.append(e) }
             }
         }
-        let deduped = dedupKeepMax(out)
-        guard let costState else { return deduped }
-        return applyReportedCost(deduped, costState)
+        while lineStart < data.endIndex {
+            guard let nl = data[lineStart...].firstIndex(of: 0x0A) else { break }
+            parse(data[lineStart..<nl])
+            consumed = nl - data.startIndex + 1
+            lineStart = nl + 1
+        }
+        // A trailing line with no newline is a finished file's last record or one still being
+        // written. Parse it now but leave it out of `consumed` so the next incremental read
+        // picks it up again; dedup by id makes the repeat harmless.
+        if lineStart < data.endIndex { parse(data[lineStart...]) }
+        return (dedupKeepMax(out), consumed, costState)
     }
 
     /// Claude Code's own cost ledger (`type:"cost-state"`), cumulative through a session. Its final
     /// per-model totals are what Anthropic priced, so they beat a table estimate (one measured
     /// session: table $6.95, reported $6.13). Ported from upstream 8b2dd955.
-    struct ClaudeCostState: Sendable, Equatable {
+    struct ClaudeCostState: Codable, Sendable, Equatable {
         /// Base model id (context-window suffix stripped) to reported USD for the whole session.
         var costByModel: [String: Double] = [:]
     }

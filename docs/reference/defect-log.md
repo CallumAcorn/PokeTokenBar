@@ -124,6 +124,13 @@ read_when:
   estimates cannot be passed to request-size-dependent pricing as if they were single requests.
   Parser semantic changes require the corresponding disk-cache version bump.
 
+- **Incremental transcript parsing must retain cumulative ledgers, not add their totals.** Claude's
+  latest `cost-state` reprices the entire session, including entries cached before the appended tail.
+  Keep raw entries and the latest ledger together in the blob, then attribute costs after merging.
+  Retain that ledger when the next tail has none; discard it on a full reparse. Assistant-only append
+  tests miss this semantic conflict with source-cost attribution. `ClaudeReportedCostTests` covers
+  changed totals, unchanged cache hits, disk reload without a new ledger, truncation, and partial ledgers.
+
 - **프로필 레벨은 난이도와 반복 부화 보정을 반영한 단계 진행에서 계산한다.** #244/#254의 임계값을
   낮춰도 #264가 원시 토큰을 기본 졸업 비용으로 나누면 졸업한 개체가 레벨 5 또는 52에 남는다.
   완료 단계의 기본 비용과 현재 단계의 실제 임계 대비 진행률을 합산해 표준 성장량을 영속한다.
