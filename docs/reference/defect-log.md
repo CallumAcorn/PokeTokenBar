@@ -1061,8 +1061,10 @@ read_when:
   counted rows darker than 0.6. On a 1x display the marker's first and last rows are half covered
   (about 0.73) and were not counted, so it measured 8pt instead of 10pt and failed only on machines
   whose main display is not Retina. It passed in CI (2x), which hid it; locally it blocked
-  `test-gate.sh`, so the coverage step never ran here. The cut-off is now 0.8, with an assertion that
-  the bare track stays above it.
+  `test-gate.sh`, so the coverage step never ran here. It also compared the marker with a *measured*
+  track, and the system track measures 6pt on one renderer and 3pt in CI, so CI passed by two errors
+  cancelling (8 against 3+4). The cut-off is now 0.8 and the marker is compared with its design
+  height (10pt), which is the same everywhere.
 
 - **사람의 관례(커밋 메시지)로 판정하는 가드는 조용히 안 걸린다 — 무엇이 바뀌었는지로 판정한다.**
   에셋 게이트는 "UI 를 건드린 커밋 제목이 `feat:` 인가"로 새 화면을 찾았다. 결과: moves/TM, battles,
