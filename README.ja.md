@@ -176,6 +176,27 @@ PC → <b>育て屋</b>に相性の良い2匹を預けると、育成を続け�
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-recap-ja.png" width="300" alt="8月の使用量ふりかえり: 合計・日別ゲージ・最高の日・卒業"></td>
 </tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-trend-window-ja.png" width="300" alt="直近14日の日別推移(ツール別の積み上げ)と12日連続のバッジ"></td>
+<td width="55%" valign="middle">
+<h3>📈 期間を選び、連続記録を伸ばす</h3>
+推移を直近7・14・21日または今月で表示できます。炎は使用が続いている日数を数え、<b>詳細</b>でふりかえりを開きます。サンプルデータです。
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>🟩 16週間をひと目で</h3>
+推移をクリックすると、直近16週間を1日1マスで示すヒートマップに切り替わります。もう一度クリックすると戻ります。サンプルデータです。
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-activity-grid-ja.png" width="300" alt="アクティビティグリッド: 16週間の日別使用量を色付きのマスで表示"></td>
+</tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-tracked-providers-ja.png" width="300" alt="設定の「集計するプロバイダー」一覧(ツールごとのスイッチ)"></td>
+<td width="55%" valign="middle">
+<h3>🎚️ 使うツールだけを集計</h3>
+設定で対応ツールごとにスイッチでオン・オフできます。オフにしたツールは一切読みません。タブも合計も上限も表示されません。
+</td>
+</tr>
 </table>
 
 ## そのほかにも

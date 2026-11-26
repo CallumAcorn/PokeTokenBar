@@ -95,11 +95,25 @@ final class BattleStore {
     /// polling itself has been talking to, not necessarily this side's own configured server.
     private var activeServerURL: String?
 
-    init(companion: CompanionStore, online: OnlineStore, session: URLSession = OnlineStore.urlSession, pollIntervalNanoseconds: UInt64 = 2_000_000_000) {
+    /// How long a created battle waits for an opponent before giving up. Without a limit, a server
+    /// that never matched anyone kept a 2s poll (and the activity assertion) alive until the user
+    /// noticed and cancelled.
+    private let maxWaitForOpponent: TimeInterval
+    /// Consecutive failed polls before the battle is abandoned instead of retried forever.
+    private let maxConsecutivePollFailures: Int
+    private let clock: () -> Date
+    private var waitingSince: Date?
+    private var consecutivePollFailures = 0
+
+    init(companion: CompanionStore, online: OnlineStore, session: URLSession = OnlineStore.urlSession, pollIntervalNanoseconds: UInt64 = 2_000_000_000,
+         maxWaitForOpponent: TimeInterval = 600, maxConsecutivePollFailures: Int = 45, clock: @escaping () -> Date = Date.init) {
         self.companion = companion
         self.online = online
         self.session = session
         self.pollIntervalNanoseconds = pollIntervalNanoseconds
+        self.maxWaitForOpponent = maxWaitForOpponent
+        self.maxConsecutivePollFailures = maxConsecutivePollFailures
+        self.clock = clock
     }
 
     /// An invite that arrived via deep link — the UI reads this to show a "join this battle?" screen.
@@ -222,30 +236,42 @@ final class BattleStore {
     /// this window focused, so polling holds a `ProcessInfo` activity token for as long as it runs,
     /// same mechanism apps use to stay responsive during a background download/render.
     private var activityToken: NSObjectProtocol?
+    /// Whether the current assertion also keeps the Mac awake. Exposed for tests.
+    private(set) var holdsNoSleepAssertion = false
 
-    private func beginPollingActivity() {
+    /// Two strengths. While waiting for an opponent only App Nap is held off, so the poll keeps
+    /// its cadence but the Mac may still sleep: nobody is playing yet, and a lobby that never fills
+    /// must not keep the machine awake. Idle sleep is blocked only once the battle is live.
+    private func beginPollingActivity(keepAwake: Bool) {
+        if activityToken != nil, holdsNoSleepAssertion == keepAwake { return }
         endPollingActivity()
         activityToken = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiated, .idleSystemSleepDisabled],
-            reason: "Live Pokémon battle in progress")
+            options: keepAwake ? [.userInitiated, .idleSystemSleepDisabled] : [.userInitiatedAllowingIdleSystemSleep],
+            reason: keepAwake ? "Live Pokémon battle in progress" : "Waiting for a Pokémon battle opponent")
+        holdsNoSleepAssertion = keepAwake
     }
 
     private func endPollingActivity() {
         if let activityToken { ProcessInfo.processInfo.endActivity(activityToken) }
         activityToken = nil
+        holdsNoSleepAssertion = false
     }
 
     private func startPolling(sessionId: String, server: String? = nil) {
         let serverURL = server ?? online.serverURL
         activeServerURL = serverURL
         pollTask?.cancel()
-        beginPollingActivity()
+        beginPollingActivity(keepAwake: false)
+        waitingSince = clock()
+        consecutivePollFailures = 0
         pollTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
                 await self.pollOnce(sessionId: sessionId, serverURL: serverURL)
                 if Task.isCancelled { return }
-                try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+                // Back off while the server is failing instead of hammering it every tick.
+                let backoff = UInt64(1 + min(self.consecutivePollFailures, 4))
+                try? await Task.sleep(nanoseconds: pollIntervalNanoseconds * backoff)
             }
         }
     }
@@ -253,8 +279,11 @@ final class BattleStore {
     private func pollOnce(sessionId: String, serverURL: String) async {
         do {
             let view = try await BattleClient.status(serverURL: serverURL, sessionId: sessionId, uuid: online.clientUUID, session: session)
+            consecutivePollFailures = 0
             switch view.status {
             case "active", "completed":
+                waitingSince = nil
+                if view.status == "active" { beginPollingActivity(keepAwake: true) }
                 phase = .battling(sessionId: sessionId, view: view)
                 if view.status == "completed" {
                     // Score BEFORE cancelling — pollOnce runs *inside* pollTask's own loop, so
@@ -270,7 +299,12 @@ final class BattleStore {
                     endPollingActivity()
                 }
             default:
-                break   // "waiting" — nothing new, still waiting for a join
+                // "waiting": still no opponent. Give up after the deadline; `fail` leaves the
+                // session on the server and stops the poll.
+                if let since = waitingSince, clock().timeIntervalSince(since) > maxWaitForOpponent {
+                    AppLog.write("battle: no opponent after \(Int(maxWaitForOpponent))s, giving up")
+                    fail(.client(.server(status: 408)))
+                }
             }
         } catch BattleClient.BattleError.server(status: 404) {
             fail(.client(.server(status: 404)))
@@ -279,7 +313,13 @@ final class BattleStore {
             // wall), so don't let it spin the "waiting" state forever like a real network hiccup would.
             fail(.client(.server(status: 401)))
         } catch {
-            // A transient network failure retries on the next tick — don't overwrite phase.
+            // A transient network failure retries on the next tick, so `phase` is left alone, but
+            // not forever: a server that has gone away must not be polled until the user notices.
+            consecutivePollFailures += 1
+            if consecutivePollFailures >= maxConsecutivePollFailures {
+                AppLog.write("battle: \(consecutivePollFailures) failed polls in a row, giving up")
+                fail(.client(.network("no response from the battle server")))
+            }
         }
     }
 

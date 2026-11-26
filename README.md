@@ -176,6 +176,27 @@ The usage recap steps back through any week, month or year: total, daily meters,
 </td>
 <td width="45%" align="center"><img src="assets/screenshot-recap.png" width="300" alt="Usage recap for August: total, daily meters, best day and graduations"></td>
 </tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-trend-window.png" width="300" alt="Daily trend for the last 14 days, stacked by tool, with a 12-day streak badge"></td>
+<td width="55%" valign="middle">
+<h3>📈 Choose the window, keep the streak</h3>
+Show the trend for the last 7, 14 or 21 days or the calendar month. The flame counts your current run of days with usage, and <b>Details</b> opens the recap. Sample data shown.
+</td>
+</tr>
+<tr>
+<td width="55%" valign="middle">
+<h3>🟩 Sixteen weeks at a glance</h3>
+Click the trend to switch to a heatmap of the last 16 weeks, one square per day. Click again to go back. Sample data shown.
+</td>
+<td width="45%" align="center"><img src="assets/screenshot-activity-grid.png" width="300" alt="Activity grid: sixteen weeks of daily usage as shaded squares"></td>
+</tr>
+<tr>
+<td width="45%" align="center"><img src="assets/screenshot-tracked-providers.png" width="300" alt="Tracked providers list in Settings with a switch per tool"></td>
+<td width="55%" valign="middle">
+<h3>🎚️ Track only what you use</h3>
+Settings lists every supported tool with a switch. A switched-off tool is not read at all: no tab, no totals, no limits.
+</td>
+</tr>
 </table>
 
 ## Also in the box
