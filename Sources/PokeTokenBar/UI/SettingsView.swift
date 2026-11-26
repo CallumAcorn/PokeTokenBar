@@ -174,6 +174,17 @@ struct SettingsView: View {
             }
             Divider()
             groupRow {
+                Text(l.dailyTrendPeriod)
+                Spacer()
+                Picker(l.dailyTrendPeriod, selection: $store.dailyTrendWindow) {
+                    ForEach(DailyTrendWindow.allCases) { win in
+                        Text(l.title(for: win)).tag(win)
+                    }
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+            }
+            Divider()
+            groupRow {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(l.launchAtLogin)
                     if !isBundledApp {
