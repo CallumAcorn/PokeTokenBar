@@ -99,6 +99,7 @@ enum CalibrationLog {
                 try? handle.write(contentsOf: bytes)
             } else {
                 try? bytes.write(to: url)
+                AppLog.restrictToOwner(url)
             }
         }
     }

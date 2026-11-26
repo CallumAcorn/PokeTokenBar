@@ -1820,6 +1820,11 @@ final class CompanionStore {
         var incoming = SaveTransfer.sanitizedMon(mon)
         incoming.acquiredVia = .trade(from: displayName)
         incoming.acquiredAt = clock()
+        // Presentation flags are the receiver's choice. A peer that sent `isFloating: true` opened
+        // a desktop window per received mon.
+        incoming.isFloating = false
+        incoming.isBackFacing = false
+        incoming.isMirrored = false
         state.party.append(incoming)
         // 거래로 받은 개체는 지금 이 모습 하나만 실제로 "본" 것이다 — 이전 진화 단계는 보낸 쪽이 겪은
         // 역사지 받는 쪽이 목격한 게 아니다. 그래서 egg 개체(직접 진화시키며 전 단계를 목격)와 달리

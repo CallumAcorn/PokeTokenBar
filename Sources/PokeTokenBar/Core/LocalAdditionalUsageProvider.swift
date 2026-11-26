@@ -449,7 +449,7 @@ enum LocalAdditionalUsageReader {
                 date: date,
                 model: model,
                 input: columnInt(statement, 5),
-                output: columnInt(statement, 6) + columnInt(statement, 9),
+                output: columnInt(statement, 6) + columnInt(statement, 9),   // each clamped, sum cannot trap
                 cacheWrite: columnInt(statement, 8),
                 cacheRead: columnInt(statement, 7),
                 cost: actualCost > 0 ? actualCost : estimatedCost)
@@ -1146,12 +1146,16 @@ enum LocalAdditionalUsageReader {
         total: Int = 0,
         cost: Double? = nil
     ) -> LocalUsageReader.Entry? {
-        let safeInput = max(0, input)
-        let safeCacheWrite = max(0, cacheWrite)
-        let safeCacheRead = max(0, cacheRead)
-        var safeOutput = max(0, output)
+        // Backstop clamp: every caller should already pass clamped values, but the sums below trap
+        // on overflow, so the bound is enforced where the arithmetic happens.
+        let cap = LocalUsageReader.maxParsedTokenValue
+        let safeInput = min(max(0, input), cap)
+        let safeCacheWrite = min(max(0, cacheWrite), cap)
+        let safeCacheRead = min(max(0, cacheRead), cap)
+        var safeOutput = min(max(0, output), cap)
         let parts = safeInput + safeOutput + safeCacheWrite + safeCacheRead
-        if total > parts { safeOutput += total - parts }
+        let safeTotal = min(max(0, total), cap)
+        if safeTotal > parts { safeOutput += safeTotal - parts }
         guard safeInput + safeOutput + safeCacheWrite + safeCacheRead > 0 else { return nil }
         return LocalUsageReader.Entry(
             id: id,
@@ -1190,7 +1194,7 @@ enum LocalAdditionalUsageReader {
     }
 
     private static func jsonObject(at url: URL) -> Object? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard LocalUsageReader.isWithinWholeFileLimit(url), let data = try? Data(contentsOf: url) else { return nil }
         return jsonObject(data: data)
     }
 
@@ -1249,6 +1253,9 @@ enum LocalAdditionalUsageReader {
             databaseURL.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK,
               let database else { return nil }
         defer { sqlite3_close(database) }
+        // The owning tool writes while we read. Without a timeout a momentary lock returns BUSY at
+        // once and the provider silently loses that refresh.
+        sqlite3_busy_timeout(database, 250)
 
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
@@ -1302,7 +1309,13 @@ enum LocalAdditionalUsageReader {
         return String(cString: bytes)
     }
 
+    /// Clamped like `intValue`: a database is file content too, and an unclamped Int64 column
+    /// trapped on the first `+` (Hermes adds two columns; `makeEntry` sums four).
     private static func columnInt(_ statement: OpaquePointer, _ index: Int32) -> Int {
-        max(0, Int(sqlite3_column_int64(statement, index)))
+        clampedCounter(sqlite3_column_int64(statement, index))
+    }
+
+    static func clampedCounter(_ raw: Int64) -> Int {
+        Int(min(max(0, raw), Int64(LocalUsageReader.maxParsedTokenValue)))
     }
 }

@@ -1299,7 +1299,10 @@ final class UsageStore {
     }
 
     private func refreshCodexLimits() async {
-        guard isProviderEnabled("codex") else {
+        // Reading Codex limits spawns `codex app-server` (a full process). Doing that on every poll,
+        // 720 times a day, for a tool with no recent usage is wasted energy and needless process
+        // execution. A snapshot exists only while Codex was used within `recentUseWindow`.
+        guard isProviderEnabled("codex"), snapshots.contains(where: { $0.providerID == "codex" }) else {
             codexLimits = nil
             return
         }

@@ -118,7 +118,7 @@ enum BattleClient {
     /// No `uuid` — spectating needs none of the participant auth `status(...)` requires (see
     /// `GET /battles/:id/spectate`'s own doc comment server-side).
     static func spectate(serverURL: String, sessionId: String,
-                          session: URLSession = .shared) async throws(BattleError) -> SpectatorView {
+                          session: URLSession = OnlineStore.urlSession) async throws(BattleError) -> SpectatorView {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/\(sessionId)/spectate") else {
             throw .invalidServerURL
         }
@@ -197,11 +197,12 @@ enum BattleClient {
         }
         guard let http = response as? HTTPURLResponse else { throw .network("no response") }
         guard (200..<300).contains(http.statusCode) else { throw .server(status: http.statusCode) }
+        guard data.count <= OnlineStore.maxResponseBytes else { throw .decoding }
         return data
     }
 
     static func create(serverURL: String, uuid: String, displayName: String, party: [Primitive],
-                        session: URLSession = .shared) async throws(BattleError) -> String {
+                        session: URLSession = OnlineStore.urlSession) async throws(BattleError) -> String {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles") else { throw .invalidServerURL }
         let req = try request(url, method: "POST", body: CreatePayload(uuid: uuid, displayName: displayName, party: party))
         let data = try await send(req, session: session)
@@ -210,7 +211,7 @@ enum BattleClient {
     }
 
     static func join(serverURL: String, sessionId: String, uuid: String, displayName: String, party: [Primitive],
-                      session: URLSession = .shared) async throws(BattleError) {
+                      session: URLSession = OnlineStore.urlSession) async throws(BattleError) {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/\(sessionId)/join") else {
             throw .invalidServerURL
         }
@@ -219,7 +220,7 @@ enum BattleClient {
     }
 
     static func status(serverURL: String, sessionId: String, uuid: String,
-                        session: URLSession = .shared) async throws(BattleError) -> BattleView {
+                        session: URLSession = OnlineStore.urlSession) async throws(BattleError) -> BattleView {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/\(sessionId)",
                                                 queryItems: [URLQueryItem(name: "uuid", value: uuid)]) else {
             throw .invalidServerURL
@@ -231,7 +232,7 @@ enum BattleClient {
     }
 
     static func choose(serverURL: String, sessionId: String, uuid: String, choice: String,
-                        session: URLSession = .shared) async throws(BattleError) -> BattleView {
+                        session: URLSession = OnlineStore.urlSession) async throws(BattleError) -> BattleView {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/\(sessionId)/choose") else {
             throw .invalidServerURL
         }
@@ -246,7 +247,7 @@ enum BattleClient {
     /// so the other side's next poll reports a real win rather than a stalled session. Best-effort:
     /// callers fire-and-forget this (app quit, window close-while-waiting) as well as await it.
     static func leave(serverURL: String, sessionId: String, uuid: String,
-                       session: URLSession = .shared) async throws(BattleError) {
+                       session: URLSession = OnlineStore.urlSession) async throws(BattleError) {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/\(sessionId)/leave") else {
             throw .invalidServerURL
         }
@@ -254,7 +255,7 @@ enum BattleClient {
         _ = try await send(req, session: session)
     }
 
-    static func openBattles(serverURL: String, session: URLSession = .shared) async throws(BattleError) -> [OpenBattle] {
+    static func openBattles(serverURL: String, session: URLSession = OnlineStore.urlSession) async throws(BattleError) -> [OpenBattle] {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/open") else { throw .invalidServerURL }
         let req = request(url, method: "GET")
         let data = try await send(req, session: session)
@@ -262,7 +263,7 @@ enum BattleClient {
         return decoded.battles
     }
 
-    static func liveBattles(serverURL: String, session: URLSession = .shared) async throws(BattleError) -> [LiveBattle] {
+    static func liveBattles(serverURL: String, session: URLSession = OnlineStore.urlSession) async throws(BattleError) -> [LiveBattle] {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/battles/live") else { throw .invalidServerURL }
         let req = request(url, method: "GET")
         let data = try await send(req, session: session)

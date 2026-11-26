@@ -95,7 +95,7 @@ final class BattleStore {
     /// polling itself has been talking to, not necessarily this side's own configured server.
     private var activeServerURL: String?
 
-    init(companion: CompanionStore, online: OnlineStore, session: URLSession = .shared, pollIntervalNanoseconds: UInt64 = 2_000_000_000) {
+    init(companion: CompanionStore, online: OnlineStore, session: URLSession = OnlineStore.urlSession, pollIntervalNanoseconds: UInt64 = 2_000_000_000) {
         self.companion = companion
         self.online = online
         self.session = session

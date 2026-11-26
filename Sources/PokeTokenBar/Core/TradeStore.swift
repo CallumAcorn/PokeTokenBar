@@ -115,8 +115,11 @@ final class TradeStore {
     /// one side has confirmed, and `pollOnce` must not downgrade `.confirmed` back to
     /// `.reviewingCounterpart` on the next tick just because the status string hasn't changed yet.
     private var hasConfirmed = false
+    /// The counterpart offer the user tapped Confirm on. Set before the confirm request goes out,
+    /// because the completing poll can land while that request is still in flight.
+    private var confirmedOffer: Offer?
 
-    init(companion: CompanionStore, online: OnlineStore, fileURL: URL? = nil, session: URLSession = .shared,
+    init(companion: CompanionStore, online: OnlineStore, fileURL: URL? = nil, session: URLSession = OnlineStore.urlSession,
          pollIntervalNanoseconds: UInt64 = 2_000_000_000) {
         self.companion = companion
         self.online = online
@@ -247,8 +250,19 @@ final class TradeStore {
                 }
             case "completed":
                 if let c = response.counterpart, !completedSessionIDs.contains(sessionId) {
+                    // The server is not trusted to decide that a trade happened. Apply it only if
+                    // the user confirmed, and only for exactly the offer they reviewed: otherwise
+                    // a server could answer "completed" to the first poll and swap the user's mons
+                    // for anything, with no review screen.
+                    let offer = Self.incomingOffer(c)
+                    guard Self.mayApplyCompletion(confirmed: confirmedOffer, completed: offer) else {
+                        AppLog.write("trade: server reported completion the user did not confirm, ignored")
+                        releaseReservation()
+                        fail(.server(status: 409))
+                        return
+                    }
                     completedSessionIDs.insert(sessionId)
-                    applyCompletion(Self.incomingOffer(c))
+                    applyCompletion(offer, sessionId: sessionId)
                 }
                 pollTask?.cancel()
             default:
@@ -273,6 +287,7 @@ final class TradeStore {
 
     func confirm() async {
         guard case .reviewingCounterpart(let sessionId, let counterpart) = phase else { return }
+        confirmedOffer = counterpart
         do {
             _ = try await TradeClient.confirm(serverURL: online.serverURL, sessionId: sessionId, uuid: online.clientUUID, session: session)
             // Applying completion is handled by the next polling tick (once the server returns
@@ -282,6 +297,7 @@ final class TradeStore {
             hasConfirmed = true
             phase = .confirmed(sessionId: sessionId, counterpart: counterpart)
         } catch {
+            confirmedOffer = nil
             fail(error)
         }
     }
@@ -295,6 +311,7 @@ final class TradeStore {
     func backOut() async {
         guard case .confirmed(let sessionId, _) = phase else { return }
         hasConfirmed = false
+        confirmedOffer = nil
         _ = try? await TradeClient.unconfirm(serverURL: online.serverURL, sessionId: sessionId, uuid: online.clientUUID, session: session)
         guard case .confirmed = phase else { return }
         cancel()
@@ -330,9 +347,30 @@ final class TradeStore {
     /// Applies a completed trade — idempotent (both removeFromParty/addTradedMon/applyTradeTokens
     /// are a no-op for an id/delta already handled — see each's own doc comment). Safe for a
     /// late-arriving poll to call this again.
-    private func applyCompletion(_ counterpart: Offer) {
+    /// A completion is applied only for the offer the user confirmed, compared whole (mons and tokens).
+    nonisolated static func mayApplyCompletion(confirmed: Offer?, completed: Offer) -> Bool {
+        confirmed != nil && confirmed == completed
+    }
+
+    /// Incoming ids are the peer's. One that matches a mon already here (or repeats inside the
+    /// offer) made `addTradedMon` a silent no-op after the user's own mons were already removed, so
+    /// the trade lost a mon. A colliding id is replaced by one derived from the session, which keeps
+    /// a repeated application of the same session idempotent.
+    nonisolated static func withUniqueIDs(_ incoming: [MonState], existing: Set<String>, sessionId: String) -> [MonState] {
+        var taken = existing
+        return incoming.enumerated().map { index, mon in
+            var mon = mon
+            if taken.contains(mon.id) { mon.id = "trade-\(sessionId)-\(index)" }
+            taken.insert(mon.id)
+            return mon
+        }
+    }
+
+    private func applyCompletion(_ counterpart: Offer, sessionId: String) {
         for id in myOfferedMonIDs { companion.removeFromParty(id) }
-        for mon in counterpart.pokemon { companion.addTradedMon(mon, from: counterpart.displayName) }
+        let received = Self.withUniqueIDs(counterpart.pokemon, existing: Set(companion.state.party.map(\.id)),
+                                          sessionId: sessionId)
+        for mon in received { companion.addTradedMon(mon, from: counterpart.displayName) }
         // Sender's ledger moves by what I sent (pays for my own gift) and what I received (frees up
         // balance) — see CompanionStore.applyTradeTokens's doc comment for the sign convention.
         companion.applyTradeTokens(spentDelta: myOfferedTokens - counterpart.tokens)
@@ -351,6 +389,7 @@ final class TradeStore {
         pollTask?.cancel()
         pollTask = nil
         hasConfirmed = false
+        confirmedOffer = nil
         if case .completed = phase {} else { releaseReservation() }
         phase = .idle
     }

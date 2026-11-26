@@ -32,7 +32,7 @@ final class OnlineStore {
     private let defaults: UserDefaults
     private let session: URLSession
 
-    init(defaults: UserDefaults = .standard, session: URLSession = .shared) {
+    init(defaults: UserDefaults = .standard, session: URLSession = OnlineStore.urlSession) {
         self.defaults = defaults
         self.session = session
         serverURL = defaults.string(forKey: "onlineServerURL") ?? ""
@@ -72,7 +72,7 @@ final class OnlineStore {
     /// function — two separate server-address parsing rules would quietly drift if only one got fixed.
     nonisolated static func endpointURL(from input: String, path: String, queryItems: [URLQueryItem] = []) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        guard !trimmed.isEmpty, isSafeEndpointPath(path) else { return nil }
         let withScheme = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
         guard var components = URLComponents(string: withScheme),
               let host = components.host, !host.isEmpty,
@@ -85,6 +85,34 @@ final class OnlineStore {
         if !queryItems.isEmpty { components.queryItems = queryItems }
         return components.url
     }
+
+    /// Every endpoint path is a fixed route with at most a session id spliced in. That id comes from
+    /// an invite link or a server response, so it is outside input: `x/../../battles` would retarget
+    /// an authenticated POST to another route on the same server. Only plain segments are allowed.
+    nonisolated static func isSafeEndpointPath(_ path: String) -> Bool {
+        guard path.hasPrefix("/"), path.utf8.count <= 256 else { return false }
+        let segments = path.dropFirst().split(separator: "/", omittingEmptySubsequences: false)
+        return !segments.isEmpty && segments.allSatisfy { segment in
+            !segment.isEmpty && segment.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
+        }
+    }
+
+    /// The one URLSession for the self-hosted server. Ephemeral with no cookie, cache or credential
+    /// storage: the server is user-configured and can arrive from an invite link, so nothing it
+    /// sends should persist on disk or ride along on later requests (`URLSession.shared` keeps all
+    /// three). Created once and reused.
+    nonisolated static let urlSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.urlCache = nil
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.urlCredentialStorage = nil
+        config.timeoutIntervalForRequest = 15
+        return URLSession(configuration: config)
+    }()
+
+    /// Upper bound for one server response body. Real payloads are a few KB (six mons, a battle log).
+    nonisolated static let maxResponseBytes = 4 * 1024 * 1024
 
     /// Transport policy for the server address.
     ///

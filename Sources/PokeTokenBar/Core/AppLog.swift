@@ -17,6 +17,18 @@ enum AppLog {
     /// 레퍼런스(size-capped 회전, 수 MB)에 맞춤 — 일자별 폴더는 무한 성장/정리 필요라 채택 안 함.
     private static let maxBytes = 2 * 1024 * 1024
 
+    /// Logs hold tool paths, plan names and stderr tails. `Data.write` creates 0644; these are the
+    /// user's own diagnostics, so they are narrowed to the owner.
+    static func restrictToOwner(_ url: URL) {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    /// Files written by earlier builds are 0644; narrow them the first time this launch logs.
+    private static let narrowExistingLogsOnce: Void = {
+        let old = url.deletingPathExtension().appendingPathExtension("old.log")
+        for file in [url, old] { restrictToOwner(file) }
+    }()
+
     private static let backend = AsyncLineLog(queue: DispatchQueue(label: "poketokenbar.log")) { line in
         if let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int,
            size > maxBytes {
@@ -24,6 +36,7 @@ enum AppLog {
             try? FileManager.default.removeItem(at: old)
             try? FileManager.default.moveItem(at: url, to: old)
         }
+        _ = narrowExistingLogsOnce
         if let data = line.data(using: .utf8) {
             if let handle = try? FileHandle(forWritingTo: url) {
                 defer { try? handle.close() }
@@ -31,6 +44,7 @@ enum AppLog {
                 try? handle.write(contentsOf: data)
             } else {
                 try? data.write(to: url)
+                restrictToOwner(url)
             }
         }
     }

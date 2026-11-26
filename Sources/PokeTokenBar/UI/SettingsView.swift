@@ -852,7 +852,7 @@ struct SettingsView: View {
 
         let envelope: SaveEnvelope
         do {
-            envelope = try SaveTransfer.decode(try Data(contentsOf: url))
+            envelope = try SaveTransfer.decode(contentsOf: url)
         } catch {
             presentAlert(title: l.importSaveLabel, message: l.importErrorMessage(error), style: .warning)
             return

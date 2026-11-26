@@ -85,6 +85,8 @@ enum TradeClient {
     private static func request(_ url: URL, method: String) -> URLRequest {
         var req = URLRequest(url: url)
         req.httpMethod = method
+        // Without this the default is 60s, so a stalled server left trade polling hanging.
+        req.timeoutInterval = BattleClient.requestTimeout
         return req
     }
 
@@ -105,11 +107,12 @@ enum TradeClient {
         }
         guard let http = response as? HTTPURLResponse else { throw .network("no response") }
         guard (200..<300).contains(http.statusCode) else { throw .server(status: http.statusCode) }
+        guard data.count <= OnlineStore.maxResponseBytes else { throw .decoding }
         return data
     }
 
     static func create(serverURL: String, uuid: String, displayName: String, offering mons: [MonState], tokens: Int,
-                        session: URLSession = .shared) async throws(TradeError) -> String {
+                        session: URLSession = OnlineStore.urlSession) async throws(TradeError) -> String {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/trades") else { throw .invalidServerURL }
         let req = try request(url, method: "POST",
                                body: OfferPayload(uuid: uuid, displayName: displayName, pokemon: mons, tokens: tokens))
@@ -119,7 +122,7 @@ enum TradeClient {
     }
 
     static func join(serverURL: String, sessionId: String, uuid: String, displayName: String, offering mons: [MonState], tokens: Int,
-                      session: URLSession = .shared) async throws(TradeError) {
+                      session: URLSession = OnlineStore.urlSession) async throws(TradeError) {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/trades/\(sessionId)/join") else {
             throw .invalidServerURL
         }
@@ -129,7 +132,7 @@ enum TradeClient {
     }
 
     static func status(serverURL: String, sessionId: String, uuid: String,
-                        session: URLSession = .shared) async throws(TradeError) -> StatusResponse {
+                        session: URLSession = OnlineStore.urlSession) async throws(TradeError) -> StatusResponse {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/trades/\(sessionId)",
                                                 queryItems: [URLQueryItem(name: "uuid", value: uuid)]) else {
             throw .invalidServerURL
@@ -141,7 +144,7 @@ enum TradeClient {
     }
 
     static func confirm(serverURL: String, sessionId: String, uuid: String,
-                         session: URLSession = .shared) async throws(TradeError) -> StatusResponse {
+                         session: URLSession = OnlineStore.urlSession) async throws(TradeError) -> StatusResponse {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/trades/\(sessionId)/confirm") else {
             throw .invalidServerURL
         }
@@ -156,7 +159,7 @@ enum TradeClient {
     /// the trade could still complete on the counterpart's side the moment they confirm too). The
     /// server 409s once the trade has actually completed — see trades.ts's own doc comment.
     static func unconfirm(serverURL: String, sessionId: String, uuid: String,
-                           session: URLSession = .shared) async throws(TradeError) -> StatusResponse {
+                           session: URLSession = OnlineStore.urlSession) async throws(TradeError) -> StatusResponse {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/trades/\(sessionId)/unconfirm") else {
             throw .invalidServerURL
         }
@@ -168,7 +171,7 @@ enum TradeClient {
 
     /// Lists sessions still waiting for a second player — mirrors `BattleClient.openBattles`.
     /// Browse is now the primary way into a trade too, not just a shared link — see trading-overhaul.md.
-    static func openTrades(serverURL: String, session: URLSession = .shared) async throws(TradeError) -> [OpenTrade] {
+    static func openTrades(serverURL: String, session: URLSession = OnlineStore.urlSession) async throws(TradeError) -> [OpenTrade] {
         guard let url = OnlineStore.endpointURL(from: serverURL, path: "/trades/open") else { throw .invalidServerURL }
         let req = request(url, method: "GET")
         let data = try await send(req, session: session)

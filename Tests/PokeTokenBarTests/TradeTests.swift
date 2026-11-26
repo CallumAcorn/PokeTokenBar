@@ -340,12 +340,14 @@ final class TradeStoreFailureTests: XCTestCase {
 /// BattleStoreTests' own `QueuedStubURLProtocol`.
 private final class QueuedTradeStubURLProtocol: URLProtocol {
     nonisolated(unsafe) static var responses: [(Int, Data)] = []
+    /// Served once `responses` is empty, so a fast poll loop keeps seeing a steady server state.
+    nonisolated(unsafe) static var fallback: (Int, Data)?
     private static let lock = NSLock()
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Self.lock.lock()
-        let next = Self.responses.isEmpty ? (200, Data()) : Self.responses.removeFirst()
+        let next = Self.responses.isEmpty ? (Self.fallback ?? (200, Data())) : Self.responses.removeFirst()
         Self.lock.unlock()
         let response = HTTPURLResponse(url: request.url!, statusCode: next.0, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -404,13 +406,21 @@ final class TradeStoreNetworkTests: XCTestCase {
         // Fast polling — real 2s ticks would make this test slow for no benefit.
         let trade = TradeStore(companion: companion, online: online, fileURL: reservationsURL, session: session, pollIntervalNanoseconds: 10_000_000)
 
-        QueuedTradeStubURLProtocol.responses = [
-            (200, encode(StubCreate(sessionId: "sess-1"))),
-            (200, encode(StubStatus(status: "completed",
-                                     counterpart: StubCounterpart(displayName: "Gary", pokemon: [received1, received2], tokens: 500)))),
-        ]
+        // The server may only complete a trade the user reviewed and confirmed, so the flow goes
+        // offered → confirm → completed, with the same counterpart offer throughout.
+        let counterpart = StubCounterpart(displayName: "Gary", pokemon: [received1, received2], tokens: 500)
+        defer { QueuedTradeStubURLProtocol.fallback = nil }
+        QueuedTradeStubURLProtocol.responses = [(200, encode(StubCreate(sessionId: "sess-1")))]
+        QueuedTradeStubURLProtocol.fallback = (200, encode(StubStatus(status: "offered", counterpart: counterpart)))
 
         await trade.createTrade(offering: [mine1, mine2], tokens: 200)
+        let reviewing = await waitUntil {
+            if case .reviewingCounterpart = trade.phase { return true }
+            return false
+        }
+        XCTAssertTrue(reviewing, "expected .reviewingCounterpart before confirming, got \(trade.phase)")
+        await trade.confirm()
+        QueuedTradeStubURLProtocol.fallback = (200, encode(StubStatus(status: "completed", counterpart: counterpart)))
 
         let completed = await waitUntil {
             if case .completed = trade.phase { return true }
@@ -425,6 +435,102 @@ final class TradeStoreNetworkTests: XCTestCase {
         // Sent 200, received 500 — net +300 to available balance (spentTokens moves by -300).
         XCTAssertEqual(companion.state.spentTokens, -300)
         XCTAssertTrue(trade.reservedMonIDs.isEmpty, "both offered mons' reservations release on completion")
+    }
+
+    private func makeTrade(companion: CompanionStore) -> TradeStore {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [QueuedTradeStubURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let online = OnlineStore(defaults: UserDefaults(suiteName: "TradeStoreNetworkTests.\(UUID().uuidString)")!, session: session)
+        online.serverURL = "https://mock.test"
+        let reservationsURL = FileManager.default.temporaryDirectory.appendingPathComponent("trade-net-reservations-\(UUID().uuidString).json")
+        return TradeStore(companion: companion, online: online, fileURL: reservationsURL, session: session, pollIntervalNanoseconds: 10_000_000)
+    }
+
+    /// [Security] A server that answers "completed" before the user has reviewed and confirmed must
+    /// not move anything: previously the first poll could swap the offered mons for whatever the
+    /// server sent, with no review screen.
+    func testServerCannotCompleteATradeTheUserNeverConfirmed() async {
+        let companionURL = FileManager.default.temporaryDirectory.appendingPathComponent("trade-net-\(UUID().uuidString).json")
+        let companion = CompanionStore(provider: TradeStubProvider(), clock: { self.fixedNow }, fileURL: companionURL, rng: SeededRNG(seed: 7))
+        let mine = mon(baseID: 1)
+        _ = companion.addTradedMon(mine, from: "Seed")
+        let planted = mon(baseID: 150)
+        let trade = makeTrade(companion: companion)
+
+        defer { QueuedTradeStubURLProtocol.fallback = nil }
+        QueuedTradeStubURLProtocol.responses = [(200, encode(StubCreate(sessionId: "sess-1")))]
+        QueuedTradeStubURLProtocol.fallback = (200, encode(StubStatus(
+            status: "completed", counterpart: StubCounterpart(displayName: "Mallory", pokemon: [planted], tokens: 0))))
+
+        await trade.createTrade(offering: [mine], tokens: 100)
+        let refused = await waitUntil {
+            switch trade.phase {
+            case .failed, .idle: return true
+            default: return false
+            }
+        }
+        XCTAssertTrue(refused, "an unconfirmed completion must be refused, got \(trade.phase)")
+        XCTAssertTrue(companion.party.contains { $0.id == mine.id }, "the offered mon must stay")
+        XCTAssertFalse(companion.party.contains { $0.id == planted.id }, "nothing from the server may be added")
+        XCTAssertEqual(companion.state.spentTokens, 0, "no tokens may move")
+        XCTAssertTrue(trade.reservedMonIDs.isEmpty, "the reservation is released so the mon is usable again")
+    }
+
+    /// [Security] Confirming offer A does not authorise the server to complete with offer B.
+    func testCompletionMustMatchTheOfferTheUserConfirmed() async {
+        let companionURL = FileManager.default.temporaryDirectory.appendingPathComponent("trade-net-\(UUID().uuidString).json")
+        let companion = CompanionStore(provider: TradeStubProvider(), clock: { self.fixedNow }, fileURL: companionURL, rng: SeededRNG(seed: 7))
+        let mine = mon(baseID: 1)
+        _ = companion.addTradedMon(mine, from: "Seed")
+        let reviewed = mon(baseID: 4)
+        let swapped = mon(baseID: 10)
+        let trade = makeTrade(companion: companion)
+
+        defer { QueuedTradeStubURLProtocol.fallback = nil }
+        QueuedTradeStubURLProtocol.responses = [(200, encode(StubCreate(sessionId: "sess-1")))]
+        QueuedTradeStubURLProtocol.fallback = (200, encode(StubStatus(
+            status: "offered", counterpart: StubCounterpart(displayName: "Gary", pokemon: [reviewed], tokens: 0))))
+        await trade.createTrade(offering: [mine])
+        let reviewing = await waitUntil {
+            if case .reviewingCounterpart = trade.phase { return true }
+            return false
+        }
+        XCTAssertTrue(reviewing)
+        await trade.confirm()
+        QueuedTradeStubURLProtocol.fallback = (200, encode(StubStatus(
+            status: "completed", counterpart: StubCounterpart(displayName: "Gary", pokemon: [swapped], tokens: 0))))
+
+        let refused = await waitUntil {
+            switch trade.phase {
+            case .failed, .idle: return true
+            default: return false
+            }
+        }
+        XCTAssertTrue(refused, "a completion with a different offer must be refused, got \(trade.phase)")
+        XCTAssertTrue(companion.party.contains { $0.id == mine.id })
+        XCTAssertFalse(companion.party.contains { $0.id == swapped.id })
+    }
+
+    /// [Regression] An incoming id equal to a mon already here made `addTradedMon` a no-op after
+    /// the user's own mons were removed, so the trade lost a mon. Colliding ids are replaced.
+    func testIncomingIDsThatCollideAreReplacedNotDropped() {
+        var a = mon(baseID: 4); a.id = "dup"
+        var b = mon(baseID: 7); b.id = "dup"
+        var c = mon(baseID: 9); c.id = "mine"
+        let out = TradeStore.withUniqueIDs([a, b, c], existing: ["mine"], sessionId: "s1")
+        XCTAssertEqual(out.map(\.id), ["dup", "trade-s1-1", "trade-s1-2"])
+        XCTAssertEqual(out.map(\.baseID), [4, 7, 9], "every mon is kept")
+        XCTAssertEqual(Set(out.map(\.id)).count, 3)
+    }
+
+    func testCompletionGateNeedsAConfirmedEqualOffer() {
+        let mons = [mon(baseID: 4)]
+        let offer = TradeStore.Offer(displayName: "Gary", pokemon: mons, tokens: 5)
+        let other = TradeStore.Offer(displayName: "Gary", pokemon: mons, tokens: 6)
+        XCTAssertTrue(TradeStore.mayApplyCompletion(confirmed: offer, completed: offer))
+        XCTAssertFalse(TradeStore.mayApplyCompletion(confirmed: nil, completed: offer))
+        XCTAssertFalse(TradeStore.mayApplyCompletion(confirmed: offer, completed: other), "tokens are part of the offer")
     }
 
     /// [Regression] Tapping Confirm used to leave the screen looking completely unchanged (still

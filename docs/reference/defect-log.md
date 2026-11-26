@@ -231,6 +231,21 @@ read_when:
 
 ## 외부 로그·사용량 소스
 
+- **A clamp added for one input format is not a clamp for the class.** Token counters from JSON
+  were clamped to `LocalUsageReader.maxParsedTokenValue` after an overflow trap; the SQLite readers
+  (`columnInt`) were not, so a single huge `output_tokens` in a Hermes or Copilot database trapped
+  on `a + b` every refresh and every relaunch. The JSON tests passed because they never touched the
+  SQLite path. When fixing a trap on parsed numbers, grep every place a number enters
+  (`sqlite3_column_int64`, `Int(`, `as? NSNumber`), and clamp again where the arithmetic happens
+  (`makeEntry`). Pinned by `SecurityUpliftTests.testSQLiteCountersAreClampedSoSumsCannotTrap`.
+- **A value read back from our own cache file is still outside input.** The incremental Claude
+  parser trusted `Blob.offset` from `usage-cache.json`: `UInt64(-1)` trapped on launch, an offset
+  past the end froze the file's totals, and "the file grew" was taken to mean "it was appended to",
+  so a replaced file was read from mid-line. The upstream tests only appended. The offset is now
+  accepted only inside the blob's own size and only if the file still starts with the same bytes.
+  Pinned by `testTamperedCacheOffsetFallsBackToAFullParse` and
+  `testReplacedLargerFileIsReadFromTheStart`.
+
 ## 외부 로그·사용량 소스
 
 - **append-only SQLite watermark 루프를 프로바이더마다 복사하지 마라.** Cursor 와 Copilot 이
@@ -577,6 +592,14 @@ read_when:
   `chooseBase()` 를 안 지나 통과하면서 아무것도 지키지 않았다(`testImportDuringSpeciesRollDiscardsTheHatch`).
 
 ## 프로세스·인스턴스
+
+- **A test can pin the defect.** `testMultiMonAndTokenCompletion...` fed the trade store a
+  `completed` reply as the first poll and asserted the swap happened, which is exactly what a
+  hostile server would send: the client applied a completion the user never reviewed or confirmed.
+  The happy-path test doubled as proof of the hole. A state the remote side asserts ("completed",
+  "win") must be checked against what the local user actually did before it changes the save.
+  Pinned by `testServerCannotCompleteATradeTheUserNeverConfirmed` and
+  `testCompletionMustMatchTheOfferTheUserConfirmed`.
 
 - **A registered LaunchAgent is not a running one.** `SMAppService.agent.status == .enabled` held
   for both of this fork's login agents while launchd could not start the app: AMFI kills a self-signed
